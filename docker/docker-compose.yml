@@ -1,0 +1,81 @@
+services:
+  # PostgreSQL - Primary database
+  postgres:
+    image: postgres:16-alpine
+    container_name: magure-postgres
+    environment:
+      POSTGRES_USER: magure
+      POSTGRES_PASSWORD: magure_dev_password
+      POSTGRES_DB: magure_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U magure -d magure_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis - Caching and sessions
+  redis:
+    image: redis:7-alpine
+    container_name: magure-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Qdrant - Vector database for RAG
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: magure-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+
+  # Temporal Server
+  temporal:
+    image: temporalio/auto-setup:latest
+    container_name: magure-temporal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=magure
+      - POSTGRES_PWD=magure_dev_password
+      - POSTGRES_SEEDS=postgres
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development.yaml
+    ports:
+      - "7233:7233"
+    volumes:
+      - ./temporal-config:/etc/temporal/config/dynamicconfig
+
+  # Temporal Web UI
+  temporal-ui:
+    image: temporalio/ui:latest
+    container_name: magure-temporal-ui
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    ports:
+      - "8080:8080"
+
+volumes:
+  postgres_data:
+  redis_data:
+  qdrant_data:

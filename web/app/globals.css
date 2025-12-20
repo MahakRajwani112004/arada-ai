@@ -1,0 +1,116 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Dark theme by default - MagOneAI uses dark mode first */
+    --background: 240 6% 4%;
+    --foreground: 0 0% 98%;
+
+    --card: 240 5% 5%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 5% 5%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 6% 4%;
+
+    --secondary: 240 4% 10%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 240 4% 10%;
+    --muted-foreground: 240 4% 63%;
+
+    --accent: 240 4% 10%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 0 86% 90%;
+
+    --success: 142 76% 36%;
+    --success-foreground: 138 76% 90%;
+
+    --warning: 48 96% 53%;
+    --warning-foreground: 32 95% 44%;
+
+    --border: 240 4% 16%;
+    --input: 240 4% 16%;
+    --ring: 0 0% 98%;
+
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* High contrast mode support */
+  @media (prefers-contrast: high) {
+    :root {
+      --border: 240 4% 32%;
+      --muted-foreground: 0 0% 82%;
+    }
+  }
+
+  /* Reduced motion support */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Focus styles for keyboard navigation */
+  .focus-ring {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  /* Shimmer loading effect */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--card)) 0%,
+      hsl(var(--border)) 50%,
+      hsl(var(--card)) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+
+  /* Subtle glow on focus */
+  .focus-glow:focus-visible {
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+  }
+}
