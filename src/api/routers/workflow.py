@@ -82,6 +82,21 @@ async def execute_agent(
     if config.routing_table:
         workflow_input.routing_table = config.routing_table
 
+    # Add orchestrator config if present
+    if config.orchestrator_config:
+        workflow_input.orchestrator_mode = config.orchestrator_config.mode.value
+        workflow_input.orchestrator_available_agents = [
+            {
+                "agent_id": a.agent_id,
+                "alias": a.alias,
+                "description": a.description,
+            }
+            for a in config.orchestrator_config.available_agents
+        ]
+        workflow_input.orchestrator_max_parallel = config.orchestrator_config.max_parallel
+        workflow_input.orchestrator_max_depth = config.orchestrator_config.max_depth
+        workflow_input.orchestrator_aggregation = config.orchestrator_config.default_aggregation.value
+
     # Execute workflow
     try:
         client = await get_temporal_client()

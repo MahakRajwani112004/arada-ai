@@ -12,6 +12,10 @@ from temporalio.worker import Worker
 # Add src to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.activities.agent_tool_activity import (
+    execute_agent_as_tool,
+    get_agent_tool_definitions,
+)
 from src.activities.knowledge_activity import retrieve_knowledge
 from src.activities.llm_activity import llm_completion
 from src.activities.safety_activity import check_input_safety, check_output_safety
@@ -109,6 +113,8 @@ async def create_worker() -> Worker:
         retrieve_knowledge,
         execute_tool,
         get_tool_definitions,
+        execute_agent_as_tool,
+        get_agent_tool_definitions,
     ]
 
     worker = Worker(

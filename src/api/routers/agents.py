@@ -19,6 +19,7 @@ from src.models.agent_config import AgentConfig
 from src.models.enums import AgentType
 from src.models.knowledge_config import KnowledgeBaseConfig
 from src.models.llm_config import LLMConfig
+from src.models.orchestrator_config import AgentReference, OrchestratorConfig, OrchestratorMode, AggregationStrategy
 from src.models.persona import AgentExample, AgentGoal, AgentInstructions, AgentRole
 from src.models.safety_config import GovernanceConfig, SafetyConfig
 from src.models.tool_config import ToolConfig
@@ -158,6 +159,25 @@ def _to_agent_config(request: CreateAgentRequest) -> AgentConfig:
             similarity_threshold=request.knowledge_base.similarity_threshold,
         )
 
+    orchestrator_config = None
+    if request.orchestrator_config:
+        orchestrator_config = OrchestratorConfig(
+            mode=OrchestratorMode(request.orchestrator_config.mode),
+            available_agents=[
+                AgentReference(
+                    agent_id=a.agent_id,
+                    alias=a.alias,
+                    description=a.description,
+                )
+                for a in request.orchestrator_config.available_agents
+            ],
+            workflow_definition=request.orchestrator_config.workflow_definition,
+            default_aggregation=AggregationStrategy(request.orchestrator_config.default_aggregation),
+            max_parallel=request.orchestrator_config.max_parallel,
+            max_depth=request.orchestrator_config.max_depth,
+            allow_self_reference=request.orchestrator_config.allow_self_reference,
+        )
+
     return AgentConfig(
         id=request.id,
         name=request.name,
@@ -195,6 +215,7 @@ def _to_agent_config(request: CreateAgentRequest) -> AgentConfig:
             for t in request.tools
         ],
         routing_table=request.routing_table,
+        orchestrator_config=orchestrator_config,
         safety=SafetyConfig(
             level=request.safety.level,
             blocked_topics=request.safety.blocked_topics,

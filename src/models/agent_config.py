@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from .enums import AgentType
 from .knowledge_config import KnowledgeBaseConfig
 from .llm_config import LLMConfig
+from .orchestrator_config import OrchestratorConfig
 from .persona import AgentExample, AgentGoal, AgentInstructions, AgentRole
 from .safety_config import GovernanceConfig, SafetyConfig
 from .tool_config import ToolConfig
@@ -61,6 +62,12 @@ class AgentConfig(BaseModel):
         description="Intent to agent_id mapping for routing",
     )
 
+    # For OrchestratorAgent
+    orchestrator_config: Optional[OrchestratorConfig] = Field(
+        default=None,
+        description="Orchestrator configuration for multi-agent coordination",
+    )
+
     # Safety & Governance
     safety: SafetyConfig = Field(
         default_factory=SafetyConfig,
@@ -104,6 +111,7 @@ class AgentConfig(BaseModel):
             AgentType.TOOL,
             AgentType.FULL,
             AgentType.ROUTER,
+            AgentType.ORCHESTRATOR,
         ]
         if self.agent_type in llm_required and not self.llm_config:
             errors.append(f"{self.agent_type.value} requires llm_config")
@@ -121,6 +129,10 @@ class AgentConfig(BaseModel):
         # Routing table required for router
         if self.agent_type == AgentType.ROUTER and not self.routing_table:
             errors.append("RouterAgent requires routing_table")
+
+        # Orchestrator config required for orchestrator
+        if self.agent_type == AgentType.ORCHESTRATOR and not self.orchestrator_config:
+            errors.append("OrchestratorAgent requires orchestrator_config")
 
         return errors
 

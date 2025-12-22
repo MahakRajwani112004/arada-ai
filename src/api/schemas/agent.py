@@ -73,6 +73,26 @@ class SafetyConfigSchema(BaseModel):
     blocked_patterns: List[str] = []
 
 
+class AgentReferenceSchema(BaseModel):
+    """API schema for agent reference in orchestrator."""
+
+    agent_id: str
+    alias: Optional[str] = None
+    description: Optional[str] = None
+
+
+class OrchestratorConfigSchema(BaseModel):
+    """API schema for orchestrator config."""
+
+    mode: str = "llm_driven"  # llm_driven, workflow, hybrid
+    available_agents: List[AgentReferenceSchema] = []
+    workflow_definition: Optional[str] = None
+    default_aggregation: str = "all"  # first, all, vote, merge, best
+    max_parallel: int = 5
+    max_depth: int = 3
+    allow_self_reference: bool = False
+
+
 class CreateAgentRequest(BaseModel):
     """Request to create an agent."""
 
@@ -88,6 +108,7 @@ class CreateAgentRequest(BaseModel):
     knowledge_base: Optional[KnowledgeBaseConfigSchema] = None
     tools: List[ToolConfigSchema] = []
     routing_table: Optional[Dict[str, str]] = None
+    orchestrator_config: Optional[OrchestratorConfigSchema] = None
     safety: SafetyConfigSchema = Field(default_factory=SafetyConfigSchema)
 
 

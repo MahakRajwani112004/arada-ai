@@ -4,6 +4,7 @@ from typing import Dict, Type
 from src.agents.base import BaseAgent
 from src.agents.types.full_agent import FullAgent
 from src.agents.types.llm_agent import LLMAgent
+from src.agents.types.orchestrator_agent import OrchestratorAgent
 from src.agents.types.rag_agent import RAGAgent
 from src.agents.types.router_agent import RouterAgent
 from src.agents.types.simple_agent import SimpleAgent
@@ -29,6 +30,7 @@ class AgentFactory:
         AgentType.TOOL: ToolAgent,
         AgentType.FULL: FullAgent,
         AgentType.ROUTER: RouterAgent,
+        AgentType.ORCHESTRATOR: OrchestratorAgent,
     }
 
     @classmethod

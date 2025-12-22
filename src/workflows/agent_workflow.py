@@ -6,6 +6,14 @@ from typing import Any, Dict, List, Optional
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
+    from src.activities.agent_tool_activity import (
+        AgentToolExecutionInput,
+        AgentToolExecutionOutput,
+        GetAgentToolDefinitionsInput,
+        GetAgentToolDefinitionsOutput,
+        execute_agent_as_tool,
+        get_agent_tool_definitions,
+    )
     from src.activities.knowledge_activity import (
         RetrieveInput,
         RetrieveOutput,
@@ -32,6 +40,7 @@ with workflow.unsafe.imports_passed_through():
         get_tool_definitions,
     )
     from src.models.enums import AgentType
+    from src.models.orchestrator_config import AggregationStrategy, OrchestratorMode
 
 
 @dataclass
@@ -69,6 +78,13 @@ class AgentWorkflowInput:
     # Router settings (for RouterAgent)
     routing_table: Dict[str, str] = field(default_factory=dict)
 
+    # Orchestrator settings (for OrchestratorAgent)
+    orchestrator_mode: str = "llm_driven"
+    orchestrator_available_agents: List[Dict[str, Any]] = field(default_factory=list)
+    orchestrator_max_parallel: int = 5
+    orchestrator_max_depth: int = 3
+    orchestrator_aggregation: str = "all"
+
 
 @dataclass
 class AgentWorkflowOutput:
@@ -80,6 +96,73 @@ class AgentWorkflowOutput:
     success: bool
     error: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+# =============================================================================
+# Helper Functions (shared across handlers)
+# =============================================================================
+
+
+def sanitize_tool_name(name: str) -> str:
+    """
+    Convert tool name to OpenAI-compatible format.
+
+    OpenAI requires tool names to match ^[a-zA-Z0-9_-]+$ (no colons).
+    We convert colons to double underscores.
+    """
+    return name.replace(":", "__")
+
+
+def build_param_schema(param: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build parameter schema with proper array handling.
+
+    Ensures array types have items schema as required by OpenAI.
+    """
+    schema: Dict[str, Any] = {
+        "type": param["type"],
+        "description": param["description"],
+    }
+    # For array types, add items schema
+    if param["type"] == "array":
+        schema["items"] = param.get("items") or {"type": "string"}
+    return schema
+
+
+def build_tool_definitions(
+    definitions: List[Any],
+    tool_name_map: Dict[str, str],
+) -> List["ToolDefinitionInput"]:
+    """
+    Convert tool definitions to LLM activity format.
+
+    Args:
+        definitions: List of tool definition objects
+        tool_name_map: Dict to populate with sanitized -> original name mapping
+
+    Returns:
+        List of ToolDefinitionInput for LLM activity
+    """
+    tools = []
+    for d in definitions:
+        sanitized_name = sanitize_tool_name(d.name)
+        tool_name_map[sanitized_name] = d.name
+        tools.append(
+            ToolDefinitionInput(
+                name=sanitized_name,
+                description=d.description,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        p["name"]: build_param_schema(p) for p in d.parameters
+                    },
+                    "required": [
+                        p["name"] for p in d.parameters if p.get("required", True)
+                    ],
+                },
+            )
+        )
+    return tools
 
 
 @workflow.defn
@@ -137,6 +220,8 @@ class AgentWorkflow:
                 result = await self._handle_full(input)
             elif agent_type == AgentType.ROUTER:
                 result = await self._handle_router(input)
+            elif agent_type == AgentType.ORCHESTRATOR:
+                result = await self._handle_orchestrator(input)
             else:
                 raise ValueError(f"Unknown agent type: {input.agent_type}")
 
@@ -325,47 +410,15 @@ class AgentWorkflow:
             start_to_close_timeout=timedelta(seconds=30),
         )
 
-        # OpenAI requires tool names to match ^[a-zA-Z0-9_-]+$ (no colons)
-        # We'll convert colons to double underscores and keep a mapping
-        tool_name_map: Dict[str, str] = {}  # sanitized_name -> original_name
+        # Convert to LLM format with name sanitization
+        tool_name_map: Dict[str, str] = {}
+        tools = build_tool_definitions(tool_defs_result.definitions, tool_name_map)
 
-        def sanitize_tool_name(name: str) -> str:
-            """Convert tool name to OpenAI-compatible format."""
-            return name.replace(":", "__")
-
-        def build_param_schema(p: Dict[str, Any]) -> Dict[str, Any]:
-            """Build parameter schema with proper array handling."""
-            schema: Dict[str, Any] = {
-                "type": p["type"],
-                "description": p["description"],
-            }
-            # For array types, add items schema
-            if p["type"] == "array":
-                # Use items from parameter if available, otherwise default to string
-                schema["items"] = p.get("items") or {"type": "string"}
-            return schema
-
-        # Convert tool definitions to LLM activity format
-        tools = []
-        for d in tool_defs_result.definitions:
-            sanitized_name = sanitize_tool_name(d.name)
-            tool_name_map[sanitized_name] = d.name
-            tools.append(
-                ToolDefinitionInput(
-                    name=sanitized_name,
-                    description=d.description,
-                    parameters={
-                        "type": "object",
-                        "properties": {
-                            p["name"]: build_param_schema(p)
-                            for p in d.parameters
-                        },
-                        "required": [p["name"] for p in d.parameters if p.get("required", True)],
-                    },
-                )
-            )
+        # Build set of resolved enabled tools (values in tool_name_map are resolved names)
+        resolved_enabled_tools = set(tool_name_map.values())
 
         workflow.logger.info(f"Tool definitions loaded: {[t.name for t in tools]}")
+        workflow.logger.info(f"Resolved enabled tools: {resolved_enabled_tools}")
 
         messages: List[Dict[str, Any]] = [{"role": "system", "content": input.system_prompt}]
         messages.extend(input.conversation_history)
@@ -424,8 +477,8 @@ class AgentWorkflow:
                 original_name = tool_name_map.get(tc.name, tc.name)
                 workflow.logger.info(f"Executing tool: {original_name} (sanitized: {tc.name}) with args: {tc.arguments}")
 
-                # Check if tool is enabled (use original name)
-                if original_name not in input.enabled_tools:
+                # Check if tool is enabled (use resolved name)
+                if original_name not in resolved_enabled_tools:
                     tool_result = {"error": f"Tool {original_name} not enabled"}
                 else:
                     result: ToolExecutionOutput = await workflow.execute_activity(
@@ -506,38 +559,12 @@ class AgentWorkflow:
             start_to_close_timeout=timedelta(seconds=30),
         )
 
-        # OpenAI requires tool names to match ^[a-zA-Z0-9_-]+$ (no colons)
+        # Convert to LLM format with name sanitization
         tool_name_map: Dict[str, str] = {}
+        tools = build_tool_definitions(tool_defs_result.definitions, tool_name_map)
 
-        def sanitize_tool_name(name: str) -> str:
-            return name.replace(":", "__")
-
-        def build_param_schema(p: Dict[str, Any]) -> Dict[str, Any]:
-            schema: Dict[str, Any] = {"type": p["type"], "description": p["description"]}
-            if p["type"] == "array":
-                # Use items from parameter if available, otherwise default to string
-                schema["items"] = p.get("items") or {"type": "string"}
-            return schema
-
-        # Convert tool definitions to LLM activity format
-        tools = []
-        for d in tool_defs_result.definitions:
-            sanitized_name = sanitize_tool_name(d.name)
-            tool_name_map[sanitized_name] = d.name
-            tools.append(
-                ToolDefinitionInput(
-                    name=sanitized_name,
-                    description=d.description,
-                    parameters={
-                        "type": "object",
-                        "properties": {
-                            p["name"]: build_param_schema(p)
-                            for p in d.parameters
-                        },
-                        "required": [p["name"] for p in d.parameters if p.get("required", True)],
-                    },
-                )
-            )
+        # Build set of resolved enabled tools
+        resolved_enabled_tools = set(tool_name_map.values())
 
         # Step 2: Tool loop with RAG context
         MAX_TOOL_ITERATIONS = 10
@@ -592,10 +619,10 @@ class AgentWorkflow:
 
             # Execute each tool
             for tc in llm_result.tool_calls:
-                # Map sanitized name back to original
+                # Map sanitized name back to original (resolved) name
                 original_name = tool_name_map.get(tc.name, tc.name)
 
-                if original_name not in input.enabled_tools:
+                if original_name not in resolved_enabled_tools:
                     tool_result = {"error": f"Tool {original_name} not enabled"}
                 else:
                     result: ToolExecutionOutput = await workflow.execute_activity(
@@ -678,5 +705,227 @@ Respond with ONLY the category name, nothing else."""
                 "classification": classification,
                 "target_agent": target_agent,
                 "routing_table": input.routing_table,
+            },
+        )
+
+    async def _handle_orchestrator(
+        self, input: AgentWorkflowInput
+    ) -> AgentWorkflowOutput:
+        """Handle OrchestratorAgent - coordinate multiple agents via tool calling."""
+        import json
+
+        if not input.llm_provider or not input.llm_model:
+            raise ValueError("OrchestratorAgent requires llm_provider and llm_model")
+        if not input.orchestrator_available_agents:
+            raise ValueError("OrchestratorAgent requires orchestrator_available_agents")
+
+        MAX_ORCHESTRATOR_ITERATIONS = 15
+        tool_calls_made = []
+        agent_results = []
+        iterations = 0
+
+        # Get agent tool definitions for available agents
+        agent_ids = [a.get("agent_id") for a in input.orchestrator_available_agents if a.get("agent_id")]
+
+        agent_tool_defs: GetAgentToolDefinitionsOutput = await workflow.execute_activity(
+            get_agent_tool_definitions,
+            GetAgentToolDefinitionsInput(agent_ids=agent_ids),
+            start_to_close_timeout=timedelta(seconds=30),
+        )
+
+        # Build tool definitions from agent definitions
+        tool_name_map: Dict[str, str] = {}
+        tools = []
+
+        # Agent tools have a fixed parameter schema
+        for agent_def in agent_tool_defs.definitions:
+            sanitized_name = sanitize_tool_name(agent_def.name)
+            tool_name_map[sanitized_name] = agent_def.name
+
+            # Find the matching agent reference for description override
+            agent_ref = next(
+                (a for a in input.orchestrator_available_agents if a.get("agent_id") == agent_def.agent_id),
+                None,
+            )
+            description = agent_ref.get("description", agent_def.description) if agent_ref else agent_def.description
+
+            tools.append(
+                ToolDefinitionInput(
+                    name=sanitized_name,
+                    description=description,
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "The input/query to send to the agent",
+                            },
+                            "context": {
+                                "type": "string",
+                                "description": "Optional additional context",
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                )
+            )
+
+        # Also add regular tools if enabled
+        if input.enabled_tools:
+            regular_tools = [t for t in input.enabled_tools if not t.startswith("agent:")]
+            if regular_tools:
+                tool_defs_result: GetToolDefinitionsOutput = await workflow.execute_activity(
+                    get_tool_definitions,
+                    GetToolDefinitionsInput(tool_names=regular_tools),
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
+                # Use helper to build regular tool definitions
+                tools.extend(build_tool_definitions(tool_defs_result.definitions, tool_name_map))
+
+        workflow.logger.info(f"Orchestrator tools loaded: {[t.name for t in tools]}")
+
+        # Build orchestration system prompt
+        agent_list_items = []
+        for a in input.orchestrator_available_agents:
+            agent_id = a.get("agent_id", "unknown")
+            tool_name = sanitize_tool_name(f"agent:{agent_id}")
+            desc = a.get("description", "Specialized agent")
+            agent_list_items.append(f"- {tool_name}: {desc}")
+        agent_list = "\n".join(agent_list_items)
+
+        orchestration_prompt = f"""{input.system_prompt}
+
+## ORCHESTRATION
+
+You are an orchestrator agent that coordinates specialized agents.
+
+Available agents:
+{agent_list}
+
+Call agents as tools to delegate tasks. Synthesize their results into a coherent response.
+"""
+
+        messages: List[Dict[str, Any]] = [{"role": "system", "content": orchestration_prompt}]
+        messages.extend(input.conversation_history)
+        messages.append({"role": "user", "content": input.user_input})
+
+        while iterations < MAX_ORCHESTRATOR_ITERATIONS:
+            iterations += 1
+
+            # Call LLM with agent tools
+            llm_result: LLMCompletionOutput = await workflow.execute_activity(
+                llm_completion,
+                LLMCompletionInput(
+                    provider=input.llm_provider,
+                    model=input.llm_model,
+                    messages=messages,
+                    temperature=input.llm_temperature,
+                    max_tokens=input.llm_max_tokens,
+                    tools=tools if tools else None,
+                ),
+                start_to_close_timeout=timedelta(seconds=120),
+            )
+
+            # Check for tool calls
+            if not llm_result.tool_calls:
+                # No tool calls, return final response
+                return AgentWorkflowOutput(
+                    content=llm_result.content,
+                    agent_id=input.agent_id,
+                    agent_type=input.agent_type,
+                    success=True,
+                    metadata={
+                        "model": llm_result.model,
+                        "usage": llm_result.usage,
+                        "iterations": iterations,
+                        "tool_calls": tool_calls_made,
+                        "agent_results": agent_results,
+                        "mode": input.orchestrator_mode,
+                    },
+                )
+
+            # Add assistant message with tool calls
+            messages.append({
+                "role": "assistant",
+                "content": llm_result.content or "",
+                "tool_calls": [
+                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                    for tc in llm_result.tool_calls
+                ],
+            })
+
+            # Execute tool calls
+            for tc in llm_result.tool_calls:
+                original_name = tool_name_map.get(tc.name, tc.name)
+                workflow.logger.info(
+                    f"Orchestrator executing: {original_name} (sanitized: {tc.name})"
+                )
+
+                if original_name.startswith("agent:"):
+                    # Execute agent tool
+                    agent_id = original_name.split(":", 1)[1]
+                    agent_result: AgentToolExecutionOutput = await workflow.execute_activity(
+                        execute_agent_as_tool,
+                        AgentToolExecutionInput(
+                            agent_id=agent_id,
+                            query=tc.arguments.get("query", ""),
+                            context={
+                                "additional_context": tc.arguments.get("context", ""),
+                            },
+                            current_depth=0,
+                            max_depth=input.orchestrator_max_depth,
+                        ),
+                        start_to_close_timeout=timedelta(seconds=300),
+                    )
+                    tool_result = {
+                        "success": agent_result.success,
+                        "content": agent_result.content,
+                        "agent_id": agent_result.agent_id,
+                        "error": agent_result.error,
+                    }
+                    agent_results.append({
+                        "agent": original_name,
+                        "result": tool_result,
+                    })
+                else:
+                    # Execute regular tool
+                    result: ToolExecutionOutput = await workflow.execute_activity(
+                        execute_tool,
+                        ToolExecutionInput(
+                            tool_name=original_name,
+                            arguments=tc.arguments,
+                        ),
+                        start_to_close_timeout=timedelta(seconds=60),
+                    )
+                    tool_result = {
+                        "success": result.success,
+                        "output": result.output,
+                        "error": result.error,
+                    }
+
+                tool_calls_made.append({
+                    "tool": original_name,
+                    "args": tc.arguments,
+                    "result": tool_result,
+                })
+
+                # Add tool result message
+                messages.append({
+                    "role": "tool",
+                    "content": json.dumps(tool_result),
+                    "tool_call_id": tc.id,
+                })
+
+        # Max iterations reached
+        return AgentWorkflowOutput(
+            content="Maximum orchestration iterations reached.",
+            agent_id=input.agent_id,
+            agent_type=input.agent_type,
+            success=False,
+            error="Max iterations",
+            metadata={
+                "tool_calls": tool_calls_made,
+                "agent_results": agent_results,
+                "iterations": iterations,
             },
         )

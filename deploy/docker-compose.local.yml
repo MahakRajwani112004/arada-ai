@@ -1,0 +1,165 @@
+# MagOneAI Local Development Docker Compose
+# For local development without SSL/Traefik
+#
+# Usage:
+#   docker-compose -f docker-compose.local.yml up -d
+#
+# This exposes services on localhost ports:
+#   - API: http://localhost:8000
+#   - Web: http://localhost:3000
+#   - Temporal UI: http://localhost:8080
+
+services:
+  # ============================================
+  # PostgreSQL - Primary Database
+  # ============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: magone-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: magone
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-dev_password}
+      POSTGRES_DB: magone_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U magone -d magone_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # Redis - Caching & Sessions
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: magone-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # Qdrant - Vector Database for RAG
+  # ============================================
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: magone-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  # ============================================
+  # Temporal Server - Workflow Orchestration
+  # ============================================
+  temporal:
+    image: temporalio/auto-setup:latest
+    container_name: magone-temporal
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=magone
+      - POSTGRES_PWD=${DB_PASSWORD:-dev_password}
+      - POSTGRES_SEEDS=postgres
+    ports:
+      - "7233:7233"
+
+  # ============================================
+  # Temporal UI - Workflow Monitoring
+  # ============================================
+  temporal-ui:
+    image: temporalio/ui:latest
+    container_name: magone-temporal-ui
+    restart: unless-stopped
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    ports:
+      - "8080:8080"
+
+  # ============================================
+  # MagOneAI API - FastAPI Backend
+  # ============================================
+  api:
+    image: ${DOCKER_REGISTRY:-magoneai}/magoneai-api:${IMAGE_TAG:-latest}
+    container_name: magone-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+asyncpg://magone:${DB_PASSWORD:-dev_password}@postgres:5432/magone_db
+      TEMPORAL_HOST: temporal:7233
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SECRET_KEY: ${SECRET_KEY:-dev_secret_key_change_in_production}
+    ports:
+      - "8000:8000"
+
+  # ============================================
+  # MagOneAI Worker - Temporal Workflow Worker
+  # ============================================
+  worker:
+    image: ${DOCKER_REGISTRY:-magoneai}/magoneai-worker:${IMAGE_TAG:-latest}
+    container_name: magone-worker
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://magone:${DB_PASSWORD:-dev_password}@postgres:5432/magone_db
+      TEMPORAL_HOST: temporal:7233
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SECRET_KEY: ${SECRET_KEY:-dev_secret_key_change_in_production}
+
+  # ============================================
+  # MagOneAI Web - Next.js Frontend
+  # ============================================
+  web:
+    image: ${DOCKER_REGISTRY:-magoneai}/magoneai-web:${IMAGE_TAG:-latest}
+    container_name: magone-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+
+networks:
+  default:
+    name: magone-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  qdrant_data:

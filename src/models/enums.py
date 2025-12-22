@@ -11,6 +11,7 @@ class AgentType(str, Enum):
     TOOL = "ToolAgent"
     FULL = "FullAgent"
     ROUTER = "RouterAgent"
+    ORCHESTRATOR = "OrchestratorAgent"
 
 
 class ResponseType(str, Enum):

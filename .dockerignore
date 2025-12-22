@@ -1,0 +1,65 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv
+ENV
+env
+.eggs
+*.egg-info
+*.egg
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.log
+*.tmp
+data/
+docs/*.pdf
+*.pdf
+
+# Docker
+docker/
+deploy/
+Dockerfile*
+docker-compose*.yml
+
+# Tests
+tests/
+*.test.py
+
+# Development
+.env
+.env.*
+!.env.example
+
+# Node (for web, but excluded from Python builds)
+web/node_modules
+web/.next
+web/out
+
+# Misc
+*.md
+!README.md
+LICENSE
+CHANGELOG*
