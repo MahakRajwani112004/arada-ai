@@ -18,6 +18,12 @@ class ExecuteAgentRequest(BaseModel):
     user_input: str = Field(..., min_length=1)
     conversation_history: List[MessageSchema] = []
     session_id: Optional[str] = None
+    # Optional workflow definition for WORKFLOW mode orchestrators
+    # JSON structure: {"id": "...", "steps": [...], "entry_step": "..."}
+    workflow_definition: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Workflow definition for WORKFLOW mode orchestrators"
+    )
 
 
 class ExecuteAgentResponse(BaseModel):

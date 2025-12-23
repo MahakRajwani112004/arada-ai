@@ -1,9 +1,20 @@
 """Agent Workflow - Main Temporal workflow for all agent types."""
+import json
+import re
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
+
+# =============================================================================
+# Constants for workflow safety limits
+# =============================================================================
+MAX_WORKFLOW_STEPS = 100  # Maximum steps to execute (prevents infinite loops)
+MAX_TEMPLATE_DEPTH = 5  # Maximum depth for template path resolution
+MAX_RESULT_SIZE = 50000  # Maximum characters per step result
+VALID_PATH_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")  # Valid path components
 
 with workflow.unsafe.imports_passed_through():
     from src.activities.agent_tool_activity import (
@@ -41,6 +52,11 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.models.enums import AgentType
     from src.models.orchestrator_config import AggregationStrategy, OrchestratorMode
+    from src.models.workflow_definition import (
+        StepType,
+        WorkflowDefinition,
+        validate_workflow_definition,
+    )
 
 
 @dataclass
@@ -84,6 +100,10 @@ class AgentWorkflowInput:
     orchestrator_max_parallel: int = 5
     orchestrator_max_depth: int = 3
     orchestrator_aggregation: str = "all"
+
+    # Workflow definition (for WORKFLOW mode)
+    # JSON structure: {"id": "...", "steps": [...], "entry_step": "..."}
+    workflow_definition: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -711,7 +731,23 @@ Respond with ONLY the category name, nothing else."""
     async def _handle_orchestrator(
         self, input: AgentWorkflowInput
     ) -> AgentWorkflowOutput:
-        """Handle OrchestratorAgent - coordinate multiple agents via tool calling."""
+        """Handle OrchestratorAgent - supports multiple orchestration modes."""
+        mode = input.orchestrator_mode or "llm_driven"
+
+        if mode == "workflow":
+            # Execute predefined workflow definition
+            return await self._execute_workflow_definition(input)
+        elif mode == "hybrid":
+            # TODO: Implement hybrid mode (workflow + LLM can deviate)
+            return await self._execute_llm_driven_orchestration(input)
+        else:
+            # Default: LLM-driven orchestration
+            return await self._execute_llm_driven_orchestration(input)
+
+    async def _execute_llm_driven_orchestration(
+        self, input: AgentWorkflowInput
+    ) -> AgentWorkflowOutput:
+        """Execute LLM-driven orchestration where LLM decides which agents to call."""
         import json
 
         if not input.llm_provider or not input.llm_model:
@@ -929,3 +965,671 @@ Call agents as tools to delegate tasks. Synthesize their results into a coherent
                 "iterations": iterations,
             },
         )
+
+    # =========================================================================
+    # WORKFLOW MODE - Execute predefined workflow definition
+    # =========================================================================
+
+    async def _execute_workflow_definition(
+        self, input: AgentWorkflowInput
+    ) -> AgentWorkflowOutput:
+        """
+        Execute a predefined workflow definition.
+
+        Each step is executed as a Temporal activity for durability.
+        Supports: agent, parallel, conditional, loop step types.
+
+        Security features:
+        - Validates workflow definition with Pydantic models
+        - Limits max steps to prevent infinite loops
+        - Tracks visited steps to detect cycles at runtime
+        - Sanitizes template paths
+        - Truncates large results
+        """
+        if not input.workflow_definition:
+            raise ValueError("WORKFLOW mode requires workflow_definition")
+
+        # Validate workflow definition with Pydantic model
+        try:
+            validated_def = validate_workflow_definition(input.workflow_definition)
+        except ValueError as e:
+            return AgentWorkflowOutput(
+                content=f"Invalid workflow definition: {str(e)}",
+                agent_id=input.agent_id,
+                agent_type=input.agent_type,
+                success=False,
+                error=f"Validation error: {str(e)}",
+                metadata={"mode": "workflow", "validation_error": str(e)},
+            )
+
+        # Use raw dict for execution (validated structure is guaranteed)
+        definition = input.workflow_definition
+        steps = definition.get("steps", [])
+
+        # Build step index for quick lookup with order tracking
+        steps_by_id: Dict[str, Dict[str, Any]] = {s["id"]: s for s in steps}
+        step_order: Dict[str, int] = {s["id"]: i for i, s in enumerate(steps)}
+
+        # Execution state
+        step_results: Dict[str, Any] = {}
+        steps_executed: List[str] = []
+        visited_steps: Set[str] = set()  # Track visited to detect runtime cycles
+        total_steps_executed = 0  # Safety counter
+
+        # Context for template resolution
+        context = {
+            "user_input": input.user_input,
+            "workflow": definition,
+            **(definition.get("context", {})),
+        }
+
+        # Start from entry step or first step
+        current_step_id = validated_def.entry_step or steps[0]["id"]
+
+        workflow.logger.info(
+            f"Starting workflow: {definition.get('id', 'unknown')}, "
+            f"entry_step: {current_step_id}, total_steps: {len(steps)}"
+        )
+
+        while current_step_id:
+            # Safety check: prevent infinite loops
+            total_steps_executed += 1
+            if total_steps_executed > MAX_WORKFLOW_STEPS:
+                return AgentWorkflowOutput(
+                    content=f"Workflow exceeded maximum steps ({MAX_WORKFLOW_STEPS})",
+                    agent_id=input.agent_id,
+                    agent_type=input.agent_type,
+                    success=False,
+                    error="Max workflow steps exceeded",
+                    metadata={
+                        "mode": "workflow",
+                        "workflow_id": definition.get("id"),
+                        "steps_executed": steps_executed,
+                        "total_steps_executed": total_steps_executed,
+                    },
+                )
+            step = steps_by_id.get(current_step_id)
+            if not step:
+                workflow.logger.error(f"Step not found: {current_step_id}")
+                break
+
+            step_type = step.get("type", "agent")
+            workflow.logger.info(f"Executing step: {step['id']} (type: {step_type})")
+
+            try:
+                # ============================================================
+                # AGENT STEP - Execute single agent
+                # ============================================================
+                if step_type == "agent":
+                    resolved_input = self._resolve_template(
+                        step.get("input", "${user_input}"),
+                        step_results,
+                        context
+                    )
+
+                    result: AgentToolExecutionOutput = await workflow.execute_activity(
+                        execute_agent_as_tool,
+                        AgentToolExecutionInput(
+                            agent_id=step["agent_id"],
+                            query=resolved_input,
+                            context={},
+                            current_depth=0,
+                            max_depth=input.orchestrator_max_depth,
+                        ),
+                        start_to_close_timeout=timedelta(seconds=step.get("timeout", 120)),
+                        retry_policy=RetryPolicy(
+                            maximum_attempts=step.get("retries", 0) + 1,
+                            initial_interval=timedelta(seconds=1),
+                            backoff_coefficient=2.0,
+                            maximum_interval=timedelta(seconds=30),
+                        ),
+                    )
+
+                    step_results[step["id"]] = {
+                        "success": result.success,
+                        "output": result.content,
+                        "error": result.error,
+                        "agent_id": result.agent_id,
+                    }
+                    steps_executed.append(step["id"])
+
+                    # Handle errors
+                    if not result.success:
+                        on_error = step.get("on_error", "fail")
+                        if on_error == "fail":
+                            return AgentWorkflowOutput(
+                                content=f"Workflow failed at step '{step['id']}': {result.error}",
+                                agent_id=input.agent_id,
+                                agent_type=input.agent_type,
+                                success=False,
+                                error=result.error,
+                                metadata={
+                                    "mode": "workflow",
+                                    "workflow_id": definition.get("id"),
+                                    "steps_executed": steps_executed,
+                                    "step_results": step_results,
+                                    "failed_step": step["id"],
+                                },
+                            )
+                        elif on_error == "skip":
+                            workflow.logger.warning(f"Skipping failed step: {step['id']}")
+                        elif on_error in steps_by_id:
+                            current_step_id = on_error
+                            continue
+
+                    current_step_id = self._get_next_step_id(step["id"], step_order)
+
+                # ============================================================
+                # PARALLEL STEP - Execute multiple agents concurrently
+                # ============================================================
+                elif step_type == "parallel":
+                    branches = step.get("branches", [])
+                    if not branches:
+                        workflow.logger.warning(f"Parallel step {step['id']} has no branches")
+                        current_step_id = self._get_next_step_id(step["id"], step_order)
+                        continue
+
+                    # Enforce max_parallel limit
+                    max_parallel = input.orchestrator_max_parallel or 5
+                    if len(branches) > max_parallel:
+                        workflow.logger.warning(
+                            f"Parallel step {step['id']} has {len(branches)} branches, "
+                            f"limiting to {max_parallel}"
+                        )
+                        branches = branches[:max_parallel]
+
+                    # Start all branch activities (Temporal handles true parallelism)
+                    branch_tasks = []
+                    for branch in branches:
+                        resolved_input = self._resolve_template(
+                            branch.get("input", "${user_input}"),
+                            step_results,
+                            context
+                        )
+
+                        task = workflow.execute_activity(
+                            execute_agent_as_tool,
+                            AgentToolExecutionInput(
+                                agent_id=branch["agent_id"],
+                                query=resolved_input,
+                                context={},
+                                current_depth=0,
+                                max_depth=input.orchestrator_max_depth,
+                            ),
+                            start_to_close_timeout=timedelta(seconds=branch.get("timeout", 120)),
+                        )
+                        branch_tasks.append((branch.get("id", branch["agent_id"]), task))
+
+                    # Await all branches concurrently
+                    branch_results = {}
+                    for branch_id, task in branch_tasks:
+                        result = await task
+                        branch_results[branch_id] = {
+                            "success": result.success,
+                            "output": self._truncate_result(result.content),
+                            "error": result.error,
+                            "agent_id": result.agent_id,
+                        }
+
+                    # Aggregate results
+                    aggregation = step.get("aggregation", "all")
+                    aggregated = self._aggregate_parallel_results(branch_results, aggregation)
+
+                    step_results[step["id"]] = {
+                        "branches": branch_results,
+                        "output": aggregated,
+                    }
+                    steps_executed.append(step["id"])
+
+                    current_step_id = self._get_next_step_id(step["id"], step_order)
+
+                # ============================================================
+                # CONDITIONAL STEP - Route based on condition
+                # ============================================================
+                elif step_type == "conditional":
+                    condition_source = step.get("condition_source", "")
+                    value = self._resolve_template(condition_source, step_results, context)
+
+                    # Clean up value for matching (normalize whitespace and case)
+                    value = value.strip().lower()
+
+                    # Support both 'branches' and 'conditional_branches' field names
+                    branches = step.get("conditional_branches") or step.get("branches", {})
+                    next_step = None
+
+                    # Try to match branch (case-insensitive, with partial matching)
+                    for branch_key, branch_target in branches.items():
+                        branch_key_lower = branch_key.lower()
+                        # Exact match or value contains branch key
+                        if branch_key_lower == value or branch_key_lower in value:
+                            next_step = branch_target
+                            break
+
+                    # Use default if no match
+                    if not next_step:
+                        next_step = step.get("default")
+
+                    step_results[step["id"]] = {
+                        "condition_value": value,
+                        "selected_branch": next_step,
+                    }
+                    steps_executed.append(step["id"])
+
+                    if next_step:
+                        current_step_id = next_step
+                    else:
+                        workflow.logger.warning(
+                            f"Conditional step {step['id']} has no matching branch for '{value}'"
+                        )
+                        current_step_id = self._get_next_step_id(step["id"], step_order)
+
+                # ============================================================
+                # LOOP STEP - Iterate until condition met
+                # ============================================================
+                elif step_type == "loop":
+                    max_iterations = min(step.get("max_iterations", 5), 20)  # Cap at 20
+                    exit_condition = step.get("exit_condition", "false")
+                    inner_steps = step.get("steps", [])
+
+                    if not inner_steps:
+                        workflow.logger.warning(f"Loop step {step['id']} has no inner steps")
+                        current_step_id = self._get_next_step_id(step["id"], step_order)
+                        continue
+
+                    loop_results = []
+                    last_inner_output = ""
+
+                    for iteration in range(max_iterations):
+                        workflow.logger.info(
+                            f"Loop '{step['id']}' iteration {iteration + 1}/{max_iterations}"
+                        )
+
+                        iteration_results = {}
+
+                        # Execute inner steps
+                        for inner_step in inner_steps:
+                            resolved_input = self._resolve_template(
+                                inner_step.get("input", "${user_input}"),
+                                step_results,
+                                {**context, "loop_iteration": iteration}
+                            )
+
+                            result = await workflow.execute_activity(
+                                execute_agent_as_tool,
+                                AgentToolExecutionInput(
+                                    agent_id=inner_step["agent_id"],
+                                    query=resolved_input,
+                                    context={},
+                                    current_depth=0,
+                                    max_depth=input.orchestrator_max_depth,
+                                ),
+                                start_to_close_timeout=timedelta(
+                                    seconds=inner_step.get("timeout", 120)
+                                ),
+                            )
+
+                            inner_step_result = {
+                                "success": result.success,
+                                "output": self._truncate_result(result.content),
+                                "iteration": iteration,
+                            }
+                            # Use unique key per iteration to avoid collision
+                            unique_key = f"{inner_step['id']}_iter_{iteration}"
+                            step_results[unique_key] = inner_step_result
+                            # Also store latest under original ID for template access
+                            step_results[inner_step["id"]] = inner_step_result
+                            iteration_results[inner_step["id"]] = inner_step_result
+                            last_inner_output = result.content
+
+                        loop_results.append({
+                            "iteration": iteration,
+                            "results": iteration_results,
+                        })
+
+                        # Check exit condition before next iteration
+                        resolved_condition = self._resolve_template(
+                            exit_condition, step_results, context
+                        )
+
+                        if self._evaluate_condition(resolved_condition):
+                            workflow.logger.info(
+                                f"Loop exit condition met at iteration {iteration + 1}"
+                            )
+                            break
+
+                    step_results[step["id"]] = {
+                        "iterations_completed": len(loop_results),
+                        "results": loop_results,
+                        "output": last_inner_output,  # Use last actual output
+                    }
+                    steps_executed.append(step["id"])
+
+                    current_step_id = self._get_next_step_id(step["id"], step_order)
+
+                else:
+                    workflow.logger.warning(f"Unknown step type: {step_type}")
+                    current_step_id = self._get_next_step_id(step["id"], step_order)
+
+            except Exception as e:
+                workflow.logger.error(f"Error executing step {step['id']}: {e}")
+                return AgentWorkflowOutput(
+                    content=f"Workflow error at step '{step['id']}': {str(e)}",
+                    agent_id=input.agent_id,
+                    agent_type=input.agent_type,
+                    success=False,
+                    error=str(e),
+                    metadata={
+                        "mode": "workflow",
+                        "workflow_id": definition.get("id"),
+                        "steps_executed": steps_executed,
+                        "step_results": step_results,
+                        "failed_step": step["id"],
+                    },
+                )
+
+        # ================================================================
+        # WORKFLOW COMPLETE
+        # ================================================================
+
+        # Handle empty workflow (no steps executed)
+        if not steps_executed:
+            workflow.logger.warning(
+                f"Workflow completed with no steps executed: {definition.get('id', 'unknown')}"
+            )
+            return AgentWorkflowOutput(
+                content="Workflow completed but no steps were executed.",
+                agent_id=input.agent_id,
+                agent_type=input.agent_type,
+                success=False,
+                error="No steps executed",
+                metadata={
+                    "mode": "workflow",
+                    "workflow_id": definition.get("id"),
+                    "steps_executed": [],
+                },
+            )
+
+        final_step_id = steps_executed[-1]
+        final_result = step_results.get(final_step_id, {})
+        final_output = final_result.get("output", "")
+
+        # Convert to string if needed (use compact JSON for internal storage)
+        if not isinstance(final_output, str):
+            final_output = json.dumps(final_output)
+
+        workflow.logger.info(
+            f"Workflow completed: {definition.get('id', 'unknown')}, "
+            f"steps_executed: {len(steps_executed)}"
+        )
+
+        return AgentWorkflowOutput(
+            content=final_output,
+            agent_id=input.agent_id,
+            agent_type=input.agent_type,
+            success=True,
+            metadata={
+                "mode": "workflow",
+                "workflow_id": definition.get("id"),
+                "workflow_name": definition.get("name"),
+                "steps_executed": steps_executed,
+                "step_results": step_results,
+            },
+        )
+
+    # =========================================================================
+    # WORKFLOW HELPER METHODS
+    # =========================================================================
+
+    def _resolve_template(
+        self,
+        template: str,
+        step_results: Dict[str, Any],
+        context: Dict[str, Any]
+    ) -> str:
+        """
+        Resolve ${...} placeholders in template string.
+
+        Supports:
+        - ${user_input} - original user input
+        - ${steps.step_id.output} - output from a previous step
+        - ${steps.step_id.field} - specific field from step result
+        - ${context.key} - context variable
+        - ${loop_iteration} - current loop iteration
+
+        Security: Limits path depth and validates path components.
+        """
+        def replace_match(match: re.Match) -> str:
+            path = match.group(1)
+            # Limit path length to prevent abuse
+            if len(path) > 200:
+                return ""
+            return self._get_path_value(path, step_results, context)
+
+        return re.sub(r'\$\{([^}]+)\}', replace_match, template)
+
+    def _get_path_value(
+        self,
+        path: str,
+        step_results: Dict[str, Any],
+        context: Dict[str, Any]
+    ) -> str:
+        """
+        Get value from dot-notation path like 'steps.fetch.output'.
+
+        Security: Limits depth, validates path components, no attribute access.
+        """
+        parts = path.split('.')
+
+        # Limit path depth
+        if len(parts) > MAX_TEMPLATE_DEPTH:
+            return ""
+
+        # Validate all path components (only allow safe characters)
+        for part in parts:
+            # Allow alphanumeric, underscore, hyphen (for step IDs like "step-1")
+            if not re.match(r'^[a-zA-Z0-9_-]+$', part):
+                return ""
+
+        if parts[0] == "steps" and len(parts) >= 2:
+            step_id = parts[1]
+            result = step_results.get(step_id, {})
+            # Navigate remaining path (dict access only, no getattr)
+            for part in parts[2:]:
+                if isinstance(result, dict):
+                    result = result.get(part, "")
+                else:
+                    result = ""
+                    break
+            return str(result) if result else ""
+
+        elif parts[0] == "context" and len(parts) >= 2:
+            key = parts[1]
+            value = context.get(key, "")
+            return str(value) if value else ""
+
+        elif parts[0] == "user_input":
+            return context.get("user_input", "")
+
+        elif parts[0] == "loop_iteration":
+            return str(context.get("loop_iteration", 0))
+
+        return ""
+
+    def _get_next_step_id(
+        self,
+        current_id: str,
+        step_order: Dict[str, int]
+    ) -> Optional[str]:
+        """
+        Get the next sequential step ID, or None if at end.
+
+        Uses pre-built step_order dict for O(1) lookup instead of O(n) list search.
+        """
+        current_idx = step_order.get(current_id)
+        if current_idx is None:
+            return None
+
+        # Find step with next index
+        next_idx = current_idx + 1
+        for step_id, idx in step_order.items():
+            if idx == next_idx:
+                return step_id
+        return None
+
+    def _aggregate_parallel_results(
+        self,
+        results: Dict[str, Any],
+        strategy: str
+    ) -> Any:
+        """Aggregate results from parallel branches."""
+        if strategy == "all":
+            # Combine all successful outputs
+            outputs = []
+            for branch_id, r in results.items():
+                if r.get("success") and r.get("output"):
+                    outputs.append(f"[{branch_id}]\n{r['output']}")
+            return "\n\n---\n\n".join(outputs)
+
+        elif strategy == "first":
+            # Return first successful result
+            for r in results.values():
+                if r.get("success"):
+                    return r.get("output", "")
+            return ""
+
+        elif strategy == "merge":
+            # Merge into single dict (for structured outputs)
+            merged = {}
+            for branch_id, r in results.items():
+                output = r.get("output")
+                if isinstance(output, dict):
+                    merged.update(output)
+                elif isinstance(output, str):
+                    try:
+                        parsed = json.loads(output)
+                        if isinstance(parsed, dict):
+                            merged.update(parsed)
+                    except (json.JSONDecodeError, TypeError):
+                        merged[branch_id] = output
+                else:
+                    merged[branch_id] = output
+            return merged
+
+        elif strategy == "best":
+            # For now, return first successful (LLM selection would be async)
+            for r in results.values():
+                if r.get("success"):
+                    return r.get("output", "")
+            return ""
+
+        # Default: return all results as dict
+        return {k: v.get("output") for k, v in results.items()}
+
+    def _truncate_result(self, content: Optional[str]) -> str:
+        """Truncate result to prevent Temporal history exhaustion."""
+        if not content:
+            return ""
+        if len(content) > MAX_RESULT_SIZE:
+            return content[:MAX_RESULT_SIZE] + "\n... [truncated]"
+        return content
+
+    def _evaluate_condition(self, condition: str) -> bool:
+        """
+        Safely evaluate a simple condition expression.
+
+        Supports:
+        - Boolean literals: "true", "false"
+        - Simple comparisons: "5 > 3", "'done' == 'done'"
+        - Operators: ==, !=, >=, <=, >, <
+
+        Security:
+        - No eval() or exec()
+        - Limited input length
+        - Explicit operator matching only
+        - Type-safe comparisons
+        """
+        if not condition or not isinstance(condition, str):
+            return False
+
+        # Limit input length to prevent abuse
+        if len(condition) > 500:
+            return False
+
+        condition = condition.strip()
+
+        # Handle simple boolean values
+        condition_lower = condition.lower()
+        if condition_lower == "true":
+            return True
+        if condition_lower == "false":
+            return False
+
+        # Handle simple comparisons with explicit pattern
+        # Pattern is intentionally restrictive for security
+        comparison_pattern = r'^(["\']?[^"\'<>=!]+["\']?)\s*(==|!=|>=|<=|>|<)\s*(["\']?[^"\'<>=!]+["\']?)$'
+
+        try:
+            match = re.match(comparison_pattern, condition, re.DOTALL)
+        except re.error:
+            # Invalid regex input
+            return False
+
+        if not match:
+            return False
+
+        left_raw, op, right_raw = match.groups()
+        left_raw = left_raw.strip()
+        right_raw = right_raw.strip()
+
+        # Parse values with explicit type handling
+        def parse_value(val: str):
+            """Parse a value string into a typed value."""
+            val = val.strip()
+            # Remove quotes if present
+            if (val.startswith('"') and val.endswith('"')) or \
+               (val.startswith("'") and val.endswith("'")):
+                return val[1:-1]
+            # Try numeric conversion
+            try:
+                if '.' in val:
+                    return float(val)
+                return int(val)
+            except ValueError:
+                return val
+
+        left_val = parse_value(left_raw)
+        right_val = parse_value(right_raw)
+
+        # Type-safe comparisons
+        try:
+            if op == "==":
+                return left_val == right_val
+            elif op == "!=":
+                return left_val != right_val
+            elif op in (">=", "<=", ">", "<"):
+                # Numeric comparisons require compatible types
+                if isinstance(left_val, (int, float)) and isinstance(right_val, (int, float)):
+                    if op == ">=":
+                        return left_val >= right_val
+                    elif op == "<=":
+                        return left_val <= right_val
+                    elif op == ">":
+                        return left_val > right_val
+                    elif op == "<":
+                        return left_val < right_val
+                # String comparisons (lexicographic)
+                elif isinstance(left_val, str) and isinstance(right_val, str):
+                    if op == ">=":
+                        return left_val >= right_val
+                    elif op == "<=":
+                        return left_val <= right_val
+                    elif op == ">":
+                        return left_val > right_val
+                    elif op == "<":
+                        return left_val < right_val
+                # Mixed types - not comparable
+                return False
+        except (TypeError, ValueError):
+            return False
+
+        return False
