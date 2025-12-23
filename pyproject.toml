@@ -44,6 +44,15 @@ dependencies = [
 
     # MCP (Model Context Protocol)
     "mcp>=1.0.0",
+
+    # Rate Limiting
+    "slowapi>=0.1.9",
+
+    # Async File I/O
+    "aiofiles>=24.1.0",
+
+    # Circuit Breaker
+    "circuitbreaker>=2.0.0",
 ]
 
 [project.optional-dependencies]

@@ -4,7 +4,10 @@ from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from src.config import get_settings
+from src.config.logging import get_logger
 from src.storage.models import Base
+
+logger = get_logger(__name__)
 
 # Global engine (initialized on startup)
 _engine = None
@@ -17,12 +20,17 @@ async def init_database() -> None:
 
     settings = get_settings()
 
+    # Use settings for pool configuration
+    pool_size = settings.db_pool_size if settings.is_production else 5
+    max_overflow = settings.db_max_overflow if settings.is_production else 10
+
     _engine = create_async_engine(
         settings.database_url,
         echo=settings.is_development,
-        pool_size=5,
-        max_overflow=10,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
         pool_pre_ping=True,
+        pool_recycle=settings.db_pool_recycle,
     )
 
     _session_factory = async_sessionmaker(
@@ -36,6 +44,13 @@ async def init_database() -> None:
     # Create tables if they don't exist
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    logger.info(
+        "database_initialized",
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_recycle=settings.db_pool_recycle,
+    )
 
 
 async def close_database() -> None:
@@ -57,6 +72,12 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         try:
             yield session
             await session.commit()
-        except Exception:
+        except Exception as e:
+            logger.error(
+                "database_transaction_failed",
+                error_type=type(e).__name__,
+                error=str(e),
+                exc_info=True,
+            )
             await session.rollback()
             raise

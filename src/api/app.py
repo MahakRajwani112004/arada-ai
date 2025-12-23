@@ -1,18 +1,37 @@
 """FastAPI Application - Main entry point."""
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
+from src.api.errors import (
+    AppException,
+    app_exception_handler,
+    generic_exception_handler,
+    http_exception_handler,
+)
 from src.api.middleware import RequestLoggingMiddleware
 from src.api.routers import agents, mcp, oauth, workflow
 from src.config.logging import get_logger, setup_logging
+from src.config.settings import get_settings
 from src.mcp import shutdown_mcp_manager
 from src.secrets import init_secrets_manager
 from src.storage import close_database, init_database
 from src.tools.builtin import register_builtin_tools
 
 logger = get_logger(__name__)
+settings = get_settings()
+
+# Rate limiter setup
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=[settings.rate_limit_default] if settings.rate_limit_enabled else [],
+    enabled=settings.rate_limit_enabled,
+)
 
 
 @asynccontextmanager
@@ -38,16 +57,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Add rate limiter to app state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Add custom exception handlers
+app.add_exception_handler(AppException, app_exception_handler)
+app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(Exception, generic_exception_handler)
+
 # Request logging middleware
 app.add_middleware(RequestLoggingMiddleware)
 
-# CORS middleware
+# CORS middleware - using settings instead of hardcoded values
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_origins,
+    allow_credentials=settings.cors_allow_credentials,
+    allow_methods=settings.cors_allow_methods,
+    allow_headers=settings.cors_allow_headers,
 )
 
 # Include routers

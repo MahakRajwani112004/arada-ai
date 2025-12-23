@@ -36,10 +36,10 @@ services:
       # HTTP to HTTPS redirect
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
-      # Let's Encrypt (uncomment for production with valid domain)
-      # - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
-      # - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
-      # - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      # Let's Encrypt SSL certificates
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
       # Logging
       - "--log.level=INFO"
       - "--accesslog=true"
@@ -59,8 +59,9 @@ services:
       - "traefik.http.routers.traefik.entrypoints=websecure"
       - "traefik.http.routers.traefik.tls=true"
       # Basic auth for dashboard (generate with: htpasswd -nb admin password)
+      # REQUIRED: Set TRAEFIK_DASHBOARD_AUTH in production
       - "traefik.http.routers.traefik.middlewares=traefik-auth"
-      - "traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH:-admin:$$apr1$$xyz$$placeholder}"
+      - "traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH:?Error: TRAEFIK_DASHBOARD_AUTH is required for dashboard security}"
 
   # ============================================
   # PostgreSQL - Primary Database
@@ -137,6 +138,12 @@ services:
       - ./temporal-config:/etc/temporal/config/dynamicconfig:ro
     networks:
       - magone-network
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "localhost:7233", "cluster", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
 
   # ============================================
   # Temporal UI - Workflow Monitoring
@@ -158,6 +165,7 @@ services:
       - "traefik.http.routers.temporal.rule=Host(`${DOMAIN:-localhost}`) && PathPrefix(`/temporal`)"
       - "traefik.http.routers.temporal.entrypoints=websecure"
       - "traefik.http.routers.temporal.tls=true"
+      - "traefik.http.routers.temporal.tls.certresolver=letsencrypt"
       - "traefik.http.routers.temporal.service=temporal"
       - "traefik.http.services.temporal.loadbalancer.server.port=8080"
       # Strip /temporal prefix
@@ -177,7 +185,7 @@ services:
       redis:
         condition: service_healthy
       temporal:
-        condition: service_started
+        condition: service_healthy
       qdrant:
         condition: service_started
     environment:
@@ -186,10 +194,15 @@ services:
       APP_DEBUG: "false"
       # Database
       DATABASE_URL: postgresql+asyncpg://magone:${DB_PASSWORD}@postgres:5432/magone_db
+      # Database Pool (production settings)
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-20}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-40}
+      DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-3600}
       # Temporal
       TEMPORAL_HOST: temporal:7233
       TEMPORAL_NAMESPACE: default
       TEMPORAL_TASK_QUEUE: agent-tasks
+      WORKFLOW_TIMEOUT_SECONDS: ${WORKFLOW_TIMEOUT_SECONDS:-600}
       # Redis
       REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379/0
       # Qdrant
@@ -199,8 +212,16 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # Security
-      SECRET_KEY: ${SECRET_KEY}
-      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-}
+      SECRET_KEY: ${SECRET_KEY:?Error: SECRET_KEY is required}
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:?Error: SECRETS_ENCRYPTION_KEY is required}
+      # CORS (production settings)
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://${DOMAIN:-localhost}}
+      CORS_ALLOW_CREDENTIALS: "true"
+      # Rate Limiting
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_WORKFLOW: ${RATE_LIMIT_WORKFLOW:-10/minute}
+      RATE_LIMIT_AGENTS: ${RATE_LIMIT_AGENTS:-20/minute}
+      RATE_LIMIT_DEFAULT: ${RATE_LIMIT_DEFAULT:-100/minute}
       # OAuth (optional)
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
@@ -213,12 +234,14 @@ services:
       - "traefik.http.routers.api.rule=Host(`${DOMAIN:-localhost}`) && PathPrefix(`/api`)"
       - "traefik.http.routers.api.entrypoints=websecure"
       - "traefik.http.routers.api.tls=true"
+      - "traefik.http.routers.api.tls.certresolver=letsencrypt"
       - "traefik.http.routers.api.service=api"
       - "traefik.http.services.api.loadbalancer.server.port=8000"
       # Health endpoint (no /api prefix strip needed as API already uses /api)
       - "traefik.http.routers.api-health.rule=Host(`${DOMAIN:-localhost}`) && Path(`/health`)"
       - "traefik.http.routers.api-health.entrypoints=websecure"
       - "traefik.http.routers.api-health.tls=true"
+      - "traefik.http.routers.api-health.tls.certresolver=letsencrypt"
       - "traefik.http.routers.api-health.service=api"
 
   # ============================================
@@ -272,6 +295,7 @@ services:
       - "traefik.http.routers.web.rule=Host(`${DOMAIN:-localhost}`)"
       - "traefik.http.routers.web.entrypoints=websecure"
       - "traefik.http.routers.web.tls=true"
+      - "traefik.http.routers.web.tls.certresolver=letsencrypt"
       - "traefik.http.routers.web.service=web"
       - "traefik.http.routers.web.priority=1"
       - "traefik.http.services.web.loadbalancer.server.port=3000"

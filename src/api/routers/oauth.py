@@ -1,14 +1,18 @@
 """OAuth callback endpoints for Google services."""
 import os
-from typing import Optional
-from urllib.parse import urlencode
+import uuid
+from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
 from pydantic import BaseModel
 
+from src.config.logging import get_logger
+from src.secrets import get_secrets_manager
+
 router = APIRouter(prefix="/oauth", tags=["oauth"])
+logger = get_logger(__name__)
 
 # Google OAuth Configuration
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -28,10 +32,28 @@ GOOGLE_SCOPES = {
 
 
 class TokenResponse(BaseModel):
-    """Response containing the refresh token."""
-    refresh_token: str
+    """Response containing token reference (not the actual token)."""
+    token_ref: str
     service: str
     message: str
+
+
+async def get_oauth_credentials(token_ref: str) -> Dict[str, str]:
+    """Retrieve OAuth credentials from secure storage.
+
+    This is for internal use only - never expose refresh tokens to clients.
+
+    Args:
+        token_ref: The token reference returned from OAuth callback
+
+    Returns:
+        Dictionary with refresh_token and service
+
+    Raises:
+        KeyError: If token reference not found
+    """
+    secrets_manager = get_secrets_manager()
+    return await secrets_manager.retrieve(token_ref)
 
 
 def _create_google_flow(scopes: list[str]) -> Flow:
@@ -134,12 +156,32 @@ async def google_callback(
             detail="No refresh token received. User may have already authorized. Revoke access at https://myaccount.google.com/permissions and try again."
         )
 
-    # In production: Store in vault and redirect to UI
-    # For now: Return the token directly
+    # Store refresh token securely in vault
+    secrets_manager = get_secrets_manager()
+    token_ref = f"oauth_google_{service}_{uuid.uuid4().hex[:12]}"
+
+    try:
+        await secrets_manager.store(
+            key=token_ref,
+            value={
+                "refresh_token": credentials.refresh_token,
+                "service": service,
+                "provider": "google",
+            }
+        )
+        logger.info("oauth_token_stored", service=service, token_ref=token_ref)
+    except Exception as e:
+        logger.error("oauth_token_storage_failed", service=service, error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to store OAuth credentials securely"
+        )
+
+    # Return only the token reference - never the actual refresh token
     return TokenResponse(
-        refresh_token=credentials.refresh_token,
+        token_ref=token_ref,
         service=service,
-        message=f"Successfully authorized {service}. Use this refresh_token with the MCP server."
+        message=f"Successfully authorized {service}. Use token_ref '{token_ref}' to access this service."
     )
 
 

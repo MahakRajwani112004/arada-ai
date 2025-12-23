@@ -1,24 +1,35 @@
 """Workflow execution API routes."""
 import os
+from datetime import timedelta
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from temporalio.client import Client
+from fastapi import APIRouter, Depends, Request, status
+from temporalio.client import Client, WorkflowFailureError
+from temporalio.exceptions import TimeoutError as TemporalTimeoutError
 
 from src.api.dependencies import get_repository
+from src.api.errors import (
+    ExternalServiceError,
+    NotFoundError,
+    WorkflowError,
+    WorkflowTimeoutError,
+)
 from src.api.schemas.workflow import (
     ExecuteAgentRequest,
     ExecuteAgentResponse,
     WorkflowStatusResponse,
 )
+from src.config.logging import get_logger
 from src.storage import BaseAgentRepository
 from src.workflows.agent_workflow import AgentWorkflow, AgentWorkflowInput
 
 router = APIRouter(prefix="/workflow", tags=["workflow"])
+logger = get_logger(__name__)
 
 # Configuration
 TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
 TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "agent-tasks")
+WORKFLOW_TIMEOUT_SECONDS = int(os.getenv("WORKFLOW_TIMEOUT_SECONDS", "600"))  # 10 minutes default
 
 # Temporal client (lazy initialization)
 _temporal_client = None
@@ -35,16 +46,16 @@ async def get_temporal_client() -> Client:
 @router.post("/execute", response_model=ExecuteAgentResponse)
 async def execute_agent(
     request: ExecuteAgentRequest,
+    http_request: Request,
     repository: BaseAgentRepository = Depends(get_repository),
 ) -> ExecuteAgentResponse:
     """Execute an agent workflow."""
+    request_id = getattr(http_request.state, "request_id", None)
+
     # Get agent config
     config = await repository.get(request.agent_id)
     if not config:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Agent '{request.agent_id}' not found",
-        )
+        raise NotFoundError(resource="Agent", identifier=request.agent_id)
 
     # Build workflow input
     workflow_input = AgentWorkflowInput(
@@ -97,16 +108,38 @@ async def execute_agent(
         workflow_input.orchestrator_max_depth = config.orchestrator_config.max_depth
         workflow_input.orchestrator_aggregation = config.orchestrator_config.default_aggregation.value
 
+    # Add workflow definition if provided in request (for WORKFLOW mode)
+    if request.workflow_definition:
+        workflow_input.workflow_definition = request.workflow_definition
+        # Override mode to workflow if definition is provided
+        workflow_input.orchestrator_mode = "workflow"
+
     # Execute workflow
+    workflow_id = f"agent-{config.id}-{uuid4().hex[:8]}"
+
+    logger.info(
+        "workflow_execution_started",
+        workflow_id=workflow_id,
+        agent_id=config.id,
+        request_id=request_id,
+    )
+
     try:
         client = await get_temporal_client()
-        workflow_id = f"agent-{config.id}-{uuid4().hex[:8]}"
 
         result = await client.execute_workflow(
             AgentWorkflow.run,
             workflow_input,
             id=workflow_id,
             task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=WORKFLOW_TIMEOUT_SECONDS),
+        )
+
+        logger.info(
+            "workflow_execution_completed",
+            workflow_id=workflow_id,
+            success=result.success,
+            request_id=request_id,
         )
 
         return ExecuteAgentResponse(
@@ -118,10 +151,55 @@ async def execute_agent(
             metadata=result.metadata,
             workflow_id=workflow_id,
         )
+
+    except TemporalTimeoutError:
+        logger.error(
+            "workflow_timeout",
+            workflow_id=workflow_id,
+            timeout_seconds=WORKFLOW_TIMEOUT_SECONDS,
+            request_id=request_id,
+        )
+        raise WorkflowTimeoutError(
+            workflow_id=workflow_id,
+            timeout_seconds=WORKFLOW_TIMEOUT_SECONDS,
+        )
+
+    except WorkflowFailureError as e:
+        logger.error(
+            "workflow_failed",
+            workflow_id=workflow_id,
+            error=str(e),
+            request_id=request_id,
+        )
+        raise WorkflowError(
+            message="Workflow execution failed",
+            workflow_id=workflow_id,
+        )
+
+    except ConnectionError as e:
+        logger.error(
+            "temporal_connection_error",
+            workflow_id=workflow_id,
+            error=str(e),
+            request_id=request_id,
+        )
+        raise ExternalServiceError(
+            service="Temporal",
+            message="Failed to connect to workflow service",
+        )
+
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Workflow execution failed: {str(e)}",
+        logger.error(
+            "workflow_unexpected_error",
+            workflow_id=workflow_id,
+            error_type=type(e).__name__,
+            error=str(e),
+            request_id=request_id,
+            exc_info=True,
+        )
+        raise WorkflowError(
+            message="An unexpected error occurred during workflow execution",
+            workflow_id=workflow_id,
         )
 
 
@@ -153,11 +231,20 @@ async def get_workflow_status(workflow_id: str) -> WorkflowStatusResponse:
             status=status_str,
             result=result,
         )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workflow not found: {str(e)}",
+
+    except ConnectionError:
+        raise ExternalServiceError(
+            service="Temporal",
+            message="Failed to connect to workflow service",
         )
+
+    except Exception as e:
+        logger.warning(
+            "workflow_status_lookup_failed",
+            workflow_id=workflow_id,
+            error=str(e),
+        )
+        raise NotFoundError(resource="Workflow", identifier=workflow_id)
 
 
 def _build_system_prompt(config) -> str:
