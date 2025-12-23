@@ -1,13 +1,14 @@
 """Workflow execution API routes."""
 import os
 from datetime import timedelta
+from typing import Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Request, status
 from temporalio.client import Client, WorkflowFailureError
 from temporalio.exceptions import TimeoutError as TemporalTimeoutError
 
-from src.api.dependencies import get_repository
+from src.api.dependencies import get_repository, get_workflow_repository
 from src.api.errors import (
     ExternalServiceError,
     NotFoundError,
@@ -21,6 +22,7 @@ from src.api.schemas.workflow import (
 )
 from src.config.logging import get_logger
 from src.storage import BaseAgentRepository
+from src.storage.workflow_repository import WorkflowRepository
 from src.workflows.agent_workflow import AgentWorkflow, AgentWorkflowInput
 
 router = APIRouter(prefix="/workflow", tags=["workflow"])
@@ -48,9 +50,11 @@ async def execute_agent(
     request: ExecuteAgentRequest,
     http_request: Request,
     repository: BaseAgentRepository = Depends(get_repository),
+    workflow_repo: Optional[WorkflowRepository] = Depends(get_workflow_repository),
 ) -> ExecuteAgentResponse:
     """Execute an agent workflow."""
     request_id = getattr(http_request.state, "request_id", None)
+    execution_id: Optional[str] = None
 
     # Get agent config
     config = await repository.get(request.agent_id)
@@ -124,6 +128,32 @@ async def execute_agent(
         request_id=request_id,
     )
 
+    # Create execution record if tracking a saved workflow
+    if request.source_workflow_id and workflow_repo:
+        try:
+            execution_id = await workflow_repo.create_execution(
+                workflow_id=request.source_workflow_id,
+                temporal_workflow_id=workflow_id,
+                input_data={
+                    "agent_id": request.agent_id,
+                    "user_input": request.user_input,
+                    "session_id": request.session_id,
+                },
+                triggered_by="api",
+            )
+            logger.info(
+                "execution_record_created",
+                execution_id=execution_id,
+                source_workflow_id=request.source_workflow_id,
+            )
+        except Exception as e:
+            # Log but don't fail if execution tracking fails
+            logger.warning(
+                "execution_record_creation_failed",
+                source_workflow_id=request.source_workflow_id,
+                error=str(e),
+            )
+
     try:
         client = await get_temporal_client()
 
@@ -142,6 +172,27 @@ async def execute_agent(
             request_id=request_id,
         )
 
+        # Update execution record on success
+        if execution_id and workflow_repo:
+            try:
+                await workflow_repo.update_execution(
+                    execution_id=execution_id,
+                    status="COMPLETED" if result.success else "FAILED",
+                    output_data={
+                        "content": result.content,
+                        "metadata": result.metadata,
+                    },
+                    error=result.error,
+                    steps_executed=[config.id],
+                    step_results={config.id: {"success": result.success}},
+                )
+            except Exception as e:
+                logger.warning(
+                    "execution_record_update_failed",
+                    execution_id=execution_id,
+                    error=str(e),
+                )
+
         return ExecuteAgentResponse(
             content=result.content,
             agent_id=result.agent_id,
@@ -159,6 +210,16 @@ async def execute_agent(
             timeout_seconds=WORKFLOW_TIMEOUT_SECONDS,
             request_id=request_id,
         )
+        # Update execution record on timeout
+        if execution_id and workflow_repo:
+            try:
+                await workflow_repo.update_execution(
+                    execution_id=execution_id,
+                    status="FAILED",
+                    error=f"Workflow timed out after {WORKFLOW_TIMEOUT_SECONDS} seconds",
+                )
+            except Exception:
+                pass
         raise WorkflowTimeoutError(
             workflow_id=workflow_id,
             timeout_seconds=WORKFLOW_TIMEOUT_SECONDS,
@@ -171,6 +232,16 @@ async def execute_agent(
             error=str(e),
             request_id=request_id,
         )
+        # Update execution record on failure
+        if execution_id and workflow_repo:
+            try:
+                await workflow_repo.update_execution(
+                    execution_id=execution_id,
+                    status="FAILED",
+                    error=str(e),
+                )
+            except Exception:
+                pass
         raise WorkflowError(
             message="Workflow execution failed",
             workflow_id=workflow_id,
@@ -183,6 +254,16 @@ async def execute_agent(
             error=str(e),
             request_id=request_id,
         )
+        # Update execution record on connection error
+        if execution_id and workflow_repo:
+            try:
+                await workflow_repo.update_execution(
+                    execution_id=execution_id,
+                    status="FAILED",
+                    error=f"Temporal connection error: {e}",
+                )
+            except Exception:
+                pass
         raise ExternalServiceError(
             service="Temporal",
             message="Failed to connect to workflow service",
@@ -197,6 +278,16 @@ async def execute_agent(
             request_id=request_id,
             exc_info=True,
         )
+        # Update execution record on unexpected error
+        if execution_id and workflow_repo:
+            try:
+                await workflow_repo.update_execution(
+                    execution_id=execution_id,
+                    status="FAILED",
+                    error=f"{type(e).__name__}: {e}",
+                )
+            except Exception:
+                pass
         raise WorkflowError(
             message="An unexpected error occurred during workflow execution",
             workflow_id=workflow_id,

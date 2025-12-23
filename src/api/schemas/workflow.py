@@ -18,6 +18,12 @@ class ExecuteAgentRequest(BaseModel):
     user_input: str = Field(..., min_length=1)
     conversation_history: List[MessageSchema] = []
     session_id: Optional[str] = None
+    # Optional reference to a saved workflow from the workflows table
+    # If provided, execution history will be saved
+    source_workflow_id: Optional[str] = Field(
+        None,
+        description="ID of the workflow from workflows table (for execution tracking)"
+    )
     # Optional workflow definition for WORKFLOW mode orchestrators
     # JSON structure: {"id": "...", "steps": [...], "entry_step": "..."}
     workflow_definition: Optional[Dict[str, Any]] = Field(
