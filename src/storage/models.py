@@ -70,6 +70,9 @@ class MCPServerModel(Base):
     # Vault reference for credentials (NOT the actual credentials!)
     secret_ref: Mapped[str] = mapped_column(String(500), nullable=False)
 
+    # OAuth token reference (for cascade delete when server is removed)
+    oauth_token_ref: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
     # Headers config (non-sensitive headers only)
     headers_config: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default={})
 

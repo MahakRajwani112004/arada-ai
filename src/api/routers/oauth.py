@@ -2,6 +2,7 @@
 import os
 import uuid
 from typing import Dict, Optional
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse
@@ -18,6 +19,7 @@ logger = get_logger(__name__)
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 OAUTH_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8000/api/v1/oauth/google/callback")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 # Scopes for different services
 GOOGLE_SCOPES = {
@@ -106,7 +108,6 @@ async def google_authorize(
 
     auth_url, _ = flow.authorization_url(
         access_type="offline",  # Required to get refresh_token
-        include_granted_scopes="true",
         prompt="consent",  # Force consent to always get refresh_token
         state=combined_state,
     )
@@ -116,29 +117,44 @@ async def google_authorize(
 
 @router.get("/google/callback")
 async def google_callback(
-    code: str = Query(..., description="Authorization code from Google"),
+    code: Optional[str] = Query(None, description="Authorization code from Google"),
     state: Optional[str] = Query(None, description="State passed through OAuth"),
     error: Optional[str] = Query(None, description="Error from Google"),
 ):
     """
     Google OAuth callback.
 
-    Exchanges authorization code for tokens and returns the refresh_token.
-    In production, this would store the token in vault and redirect to UI.
+    Exchanges authorization code for tokens, stores in vault, and redirects to frontend.
+    Handles both new connections and reconnections (credential updates).
     """
-    if error:
-        raise HTTPException(status_code=400, detail=f"OAuth error: {error}")
-
-    # Parse service from state
+    # Parse state: format is "service" or "service:reconnect:server_id"
     service = "calendar"  # default
-    user_state = None
+    is_reconnect = False
+    server_id = None
+
     if state:
-        parts = state.split(":", 1)
+        parts = state.split(":")
         service = parts[0]
-        user_state = parts[1] if len(parts) > 1 else None
+        if len(parts) >= 3 and parts[1] == "reconnect":
+            is_reconnect = True
+            server_id = parts[2]
 
     if service not in GOOGLE_SCOPES:
         service = "calendar"
+
+    # Determine redirect URL based on reconnect or new connection
+    callback_path = "/oauth/callback"
+
+    # Handle OAuth errors - redirect to frontend with error
+    if error:
+        params = urlencode({"error": error, "service": service})
+        if is_reconnect and server_id:
+            params = urlencode({"error": error, "service": service, "server_id": server_id, "reconnect": "true"})
+        return RedirectResponse(url=f"{FRONTEND_URL}{callback_path}?{params}")
+
+    if not code:
+        params = urlencode({"error": "No authorization code received", "service": service})
+        return RedirectResponse(url=f"{FRONTEND_URL}{callback_path}?{params}")
 
     scopes = GOOGLE_SCOPES[service]
     flow = _create_google_flow(scopes)
@@ -146,15 +162,18 @@ async def google_callback(
     try:
         flow.fetch_token(code=code)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to exchange code: {str(e)}")
+        logger.error("oauth_token_exchange_failed", service=service, error=str(e))
+        params = urlencode({"error": f"Failed to exchange code: {str(e)}", "service": service})
+        return RedirectResponse(url=f"{FRONTEND_URL}{callback_path}?{params}")
 
     credentials = flow.credentials
 
     if not credentials.refresh_token:
-        raise HTTPException(
-            status_code=400,
-            detail="No refresh token received. User may have already authorized. Revoke access at https://myaccount.google.com/permissions and try again."
-        )
+        params = urlencode({
+            "error": "No refresh token received. Please revoke access at https://myaccount.google.com/permissions and try again.",
+            "service": service
+        })
+        return RedirectResponse(url=f"{FRONTEND_URL}{callback_path}?{params}")
 
     # Store refresh token securely in vault
     secrets_manager = get_secrets_manager()
@@ -169,20 +188,24 @@ async def google_callback(
                 "provider": "google",
             }
         )
-        logger.info("oauth_token_stored", service=service, token_ref=token_ref)
+        logger.info("oauth_token_stored", service=service, token_ref=token_ref, is_reconnect=is_reconnect)
     except Exception as e:
         logger.error("oauth_token_storage_failed", service=service, error=str(e))
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to store OAuth credentials securely"
-        )
+        params = urlencode({"error": "Failed to store OAuth credentials securely", "service": service})
+        return RedirectResponse(url=f"{FRONTEND_URL}{callback_path}?{params}")
 
-    # Return only the token reference - never the actual refresh token
-    return TokenResponse(
-        token_ref=token_ref,
-        service=service,
-        message=f"Successfully authorized {service}. Use token_ref '{token_ref}' to access this service."
-    )
+    # Redirect to frontend with token reference
+    if is_reconnect and server_id:
+        params = urlencode({
+            "token_ref": token_ref,
+            "service": service,
+            "server_id": server_id,
+            "reconnect": "true",
+        })
+    else:
+        params = urlencode({"token_ref": token_ref, "service": service})
+
+    return RedirectResponse(url=f"{FRONTEND_URL}{callback_path}?{params}")
 
 
 @router.get("/google/authorize-url")
@@ -208,7 +231,6 @@ async def get_authorize_url(
 
     auth_url, _ = flow.authorization_url(
         access_type="offline",
-        include_granted_scopes="true",
         prompt="consent",
         state=state,
     )
