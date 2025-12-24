@@ -36,6 +36,13 @@ export interface ToolReference {
   tool_id: string;
 }
 
+export interface KnowledgeBaseConfig {
+  collection_name: string;
+  embedding_model?: string;
+  top_k?: number;
+  similarity_threshold?: number;
+}
+
 // API expects lowercase
 export type SafetyLevel = "low" | "standard" | "high" | "maximum";
 
@@ -55,6 +62,7 @@ export interface AgentCreate {
   instructions: AgentInstructions;
   examples: AgentExample[];
   llm_config: LLMConfig;
+  knowledge_base?: KnowledgeBaseConfig;
   tools: ToolReference[];
   safety: SafetyConfig;
 }

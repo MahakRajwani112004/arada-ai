@@ -53,6 +53,13 @@ dependencies = [
 
     # Circuit Breaker
     "circuitbreaker>=2.0.0",
+
+    # Object Storage (MinIO - S3-compatible)
+    "miniopy-async>=1.23.0",
+
+    # Document Processing
+    "pypdf>=5.0.0",
+    "python-docx>=1.1.0",
 ]
 
 [project.optional-dependencies]

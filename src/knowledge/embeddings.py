@@ -1,9 +1,10 @@
 """Embedding generation for vector search."""
-import os
 from abc import ABC, abstractmethod
 from typing import List
 
 from openai import AsyncOpenAI
+
+from src.config.settings import get_settings
 
 
 class BaseEmbedding(ABC):
@@ -37,7 +38,8 @@ class OpenAIEmbedding(BaseEmbedding):
 
     def __init__(self, model: str = "text-embedding-3-small"):
         """Initialize OpenAI embedding client."""
-        api_key = os.getenv("OPENAI_API_KEY")
+        settings = get_settings()
+        api_key = settings.openai_api_key
         if not api_key:
             raise ValueError("OPENAI_API_KEY environment variable not set")
         self.client = AsyncOpenAI(api_key=api_key)

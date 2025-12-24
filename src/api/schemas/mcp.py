@@ -49,8 +49,12 @@ class CreateServerFromTemplateRequest(BaseModel):
     template: str = Field(..., description="Template ID from catalog")
     name: str = Field(..., min_length=1, max_length=200)
     credentials: Dict[str, str] = Field(
-        ...,
+        default_factory=dict,
         description="Credentials as key-value pairs (e.g., GOOGLE_REFRESH_TOKEN)",
+    )
+    oauth_token_ref: Optional[str] = Field(
+        default=None,
+        description="OAuth token reference from /oauth/google/callback. If provided, credentials are resolved from vault.",
     )
     headers: Optional[Dict[str, str]] = Field(
         default=None,

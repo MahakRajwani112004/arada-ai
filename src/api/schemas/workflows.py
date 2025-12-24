@@ -258,34 +258,37 @@ class GenerateWorkflowResponse(BaseModel):
 
 
 class ApplyGeneratedWorkflowRequest(BaseModel):
-    """Request to apply a generated workflow."""
+    """Request to save a generated workflow (without auto-creating agents).
+
+    Per the plan: User creates agents separately. This just saves the workflow.
+    """
 
     workflow: WorkflowDefinitionSchema
     workflow_name: str = Field(..., min_length=1, max_length=200)
     workflow_description: str = Field("", max_length=1000)
-    workflow_category: str = Field("general", max_length=100)
-    agents_to_create: List[GeneratedAgentConfig]
-    mcps_to_setup: List[str] = Field(
-        default_factory=list, description="MCP template names to create"
-    )
+    workflow_category: str = Field("ai-generated", max_length=100)
     created_by: Optional[str] = None
 
 
-class MCPAuthRequired(BaseModel):
-    """MCP that needs OAuth authorization."""
-
-    server_id: str
-    template: str
-    auth_url: str
-
-
 class ApplyGeneratedWorkflowResponse(BaseModel):
-    """Response after applying generated workflow."""
+    """Response after saving generated workflow.
+
+    Indicates which steps are blocked due to missing agents.
+    """
 
     workflow_id: str
-    created_agents: List[str]
-    mcps_needing_auth: List[MCPAuthRequired]
-    ready_to_execute: bool
+    blocked_steps: List[str] = Field(
+        default_factory=list, description="Steps with missing agents"
+    )
+    missing_agents: List[str] = Field(
+        default_factory=list, description="Agent IDs that don't exist"
+    )
+    can_execute: bool = Field(
+        ..., description="True only if all agents exist"
+    )
+    next_action: str = Field(
+        ..., description="'create_agents' or 'ready_to_run'"
+    )
 
 
 # ==================== Workflow Execution Schemas ====================

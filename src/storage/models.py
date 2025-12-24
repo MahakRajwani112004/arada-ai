@@ -218,3 +218,106 @@ class WorkflowExecutionModel(Base):
     def __repr__(self) -> str:
         """String representation."""
         return f"<WorkflowExecutionModel(id={self.id!r}, workflow_id={self.workflow_id!r}, status={self.status!r})>"
+
+
+class KnowledgeBaseModel(Base):
+    """SQLAlchemy model for knowledge bases.
+
+    A knowledge base is a collection of documents that can be searched
+    using vector similarity. Used by RAGAgent and FullAgent types.
+    """
+
+    __tablename__ = "knowledge_bases"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Basic info
+    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    # Vector store configuration
+    collection_name: Mapped[str] = mapped_column(
+        String(100), nullable=False, unique=True
+    )
+    embedding_model: Mapped[str] = mapped_column(
+        String(100), nullable=False, default="text-embedding-3-small"
+    )
+
+    # Stats
+    document_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Status: active, indexing, error
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active", index=True
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Metadata
+    created_by: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<KnowledgeBaseModel(id={self.id!r}, name={self.name!r}, docs={self.document_count})>"
+
+
+class KnowledgeDocumentModel(Base):
+    """SQLAlchemy model for documents within a knowledge base.
+
+    Tracks individual documents uploaded to a knowledge base,
+    their processing status, and chunk counts.
+    """
+
+    __tablename__ = "knowledge_documents"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Reference to knowledge base
+    knowledge_base_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # File info
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(20), nullable=False)  # pdf, txt, md, docx
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)  # bytes
+    file_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # local storage path
+
+    # Processing info
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Status: pending, processing, indexed, error
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", index=True
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    indexed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<KnowledgeDocumentModel(id={self.id!r}, filename={self.filename!r}, status={self.status!r})>"

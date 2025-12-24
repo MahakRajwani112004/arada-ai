@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Type
 
-from fastapi import FastAPI, Header, Request
+from fastapi import FastAPI, Header, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -200,7 +200,8 @@ class BaseMCPServer(ABC):
             if method == "initialize":
                 result = self._handle_initialize(params)
             elif method == "notifications/initialized":
-                return JSONResponse(content=None, status_code=204)
+                # 204 No Content - use Response not JSONResponse to avoid Content-Length issues
+                return Response(status_code=204)
             elif method == "tools/list":
                 result = self._handle_tools_list(params)
             elif method == "tools/call":

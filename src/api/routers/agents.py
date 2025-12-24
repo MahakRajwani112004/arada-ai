@@ -59,12 +59,35 @@ Respond with a JSON object containing:
   "suggested_agent_type": "ToolAgent"
 }
 
-For suggested_agent_type, choose from: ToolAgent, ChatAgent, WorkflowAgent
-- ToolAgent: For agents that use external tools/APIs
-- ChatAgent: For conversational agents
-- WorkflowAgent: For multi-step workflow agents
+For suggested_agent_type, choose ONLY from these exact values:
+- LLMAgent: For simple conversational agents (chat, Q&A)
+- ToolAgent: For agents that use external tools/APIs (most common)
+- RAGAgent: For agents that need to search knowledge bases
+- FullAgent: For complex agents needing both tools and knowledge bases
+- OrchestratorAgent: For agents that coordinate multiple sub-agents
 
 Respond ONLY with the JSON object, no additional text."""
+
+# Mapping for invalid/legacy agent type names to valid ones
+AGENT_TYPE_ALIASES = {
+    "ChatAgent": "LLMAgent",
+    "WorkflowAgent": "FullAgent",
+    "SimpleAgent": "LLMAgent",
+}
+
+
+def _parse_agent_type(value: str) -> AgentType:
+    """Parse agent type string with fallback for invalid values."""
+    # Check if it's an alias
+    if value in AGENT_TYPE_ALIASES:
+        value = AGENT_TYPE_ALIASES[value]
+
+    # Try to parse as AgentType
+    try:
+        return AgentType(value)
+    except ValueError:
+        # Default to ToolAgent if invalid
+        return AgentType.TOOL
 
 
 @router.post("/generate", response_model=GenerateAgentResponse)
@@ -124,7 +147,7 @@ async def generate_agent_config(request: GenerateAgentRequest) -> GenerateAgentR
                 AgentExampleSchema(input=ex.get("input", ""), output=ex.get("output", ""))
                 for ex in data.get("examples", [])
             ],
-            suggested_agent_type=AgentType(data.get("suggested_agent_type", "ToolAgent")),
+            suggested_agent_type=_parse_agent_type(data.get("suggested_agent_type", "ToolAgent")),
         )
 
     except json.JSONDecodeError as e:

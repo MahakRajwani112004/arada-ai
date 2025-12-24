@@ -22,6 +22,7 @@ from src.mcp import MCPManager, get_mcp_manager
 from src.mcp.catalog import get_catalog, get_template
 from src.mcp.models import ServerStatus
 from src.mcp.repository import MCPServerRepository
+from src.secrets import get_secrets_manager
 from src.storage import get_session
 
 logger = get_logger(__name__)
@@ -130,6 +131,9 @@ async def create_server(
     Supports two modes:
     - From template: Provide `template` field with catalog template ID
     - Custom: Provide `url` field with MCP server URL
+
+    For template-based servers with OAuth, you can provide `oauth_token_ref` instead of raw credentials.
+    The token_ref is obtained from the OAuth callback endpoint.
     """
     # Determine if this is template-based or custom
     if isinstance(request, CreateServerFromTemplateRequest):
@@ -141,14 +145,47 @@ async def create_server(
                 detail=f"Template '{request.template}' not found in catalog",
             )
 
+        # Resolve credentials from oauth_token_ref if provided
+        credentials = dict(request.credentials)
+        if request.oauth_token_ref:
+            try:
+                secrets_manager = get_secrets_manager()
+                oauth_data = await secrets_manager.retrieve(request.oauth_token_ref)
+
+                # Map OAuth refresh_token to the template's expected credential name
+                # OAuth stores: {"refresh_token": "...", "service": "...", "provider": "..."}
+                # Template expects: {"GOOGLE_REFRESH_TOKEN": "..."}
+                if "refresh_token" in oauth_data:
+                    # Find the first required credential that looks like a refresh token
+                    for cred_spec in template.credentials_required:
+                        if "REFRESH_TOKEN" in cred_spec.name.upper():
+                            credentials[cred_spec.name] = oauth_data["refresh_token"]
+                            logger.info(
+                                "oauth_token_resolved",
+                                token_ref=request.oauth_token_ref,
+                                credential_name=cred_spec.name,
+                            )
+                            break
+            except KeyError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"OAuth token reference '{request.oauth_token_ref}' not found or expired",
+                )
+            except Exception as e:
+                logger.error("oauth_token_resolution_failed", error=str(e))
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to resolve OAuth token: {str(e)}",
+                )
+
         # Validate required credentials
         required_creds = {c.name for c in template.credentials_required}
-        provided_creds = set(request.credentials.keys())
+        provided_creds = set(credentials.keys())
         missing = required_creds - provided_creds
         if missing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Missing required credentials: {', '.join(missing)}",
+                detail=f"Missing required credentials: {', '.join(missing)}. Provide them directly or use oauth_token_ref.",
             )
 
         url = template.url_template
@@ -162,7 +199,7 @@ async def create_server(
         instance = await repository.create(
             name=request.name,
             url=url,
-            credentials=request.credentials,
+            credentials=credentials,  # Use resolved credentials (from oauth_token_ref or direct)
             template=request.template,
             headers=request.headers,
         )

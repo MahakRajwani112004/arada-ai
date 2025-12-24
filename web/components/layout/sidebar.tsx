@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bot, Plug, Settings, ChevronRight } from "lucide-react";
+import { Bot, Plug, Settings, ChevronRight, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -19,12 +19,18 @@ const navItems: NavItem[] = [
     icon: <Bot className="h-4 w-4" />,
   },
   {
+    label: "Workflows",
+    href: "/workflows",
+    icon: <Workflow className="h-4 w-4" />,
+  },
+  {
     label: "Integrations",
     href: "/integrations",
     icon: <Plug className="h-4 w-4" />,
     children: [
       { label: "Catalog", href: "/integrations" },
       { label: "My Servers", href: "/integrations/servers" },
+      { label: "Knowledge Bases", href: "/integrations/knowledge" },
     ],
   },
 ];

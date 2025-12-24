@@ -1,5 +1,6 @@
 """AI-powered workflow generation from natural language prompts."""
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 from src.api.schemas.workflows import (
@@ -7,7 +8,6 @@ from src.api.schemas.workflows import (
     ApplyGeneratedWorkflowResponse,
     GeneratedAgentConfig,
     GenerateWorkflowResponse,
-    MCPAuthRequired,
     MCPSuggestion,
     WorkflowDefinitionSchema,
     WorkflowStepSchema,
@@ -241,10 +241,18 @@ class WorkflowGenerator:
                 content = content[:-3]
             content = content.strip()
 
-            data = json.loads(content)
+            # Use strict=False to allow control characters in strings
+            data = json.loads(content, strict=False)
         except json.JSONDecodeError as e:
-            logger.error("workflow_generation_json_error", error=str(e), content=response.content[:500])
-            raise ValueError(f"Failed to parse AI response as JSON: {e}")
+            # Try to clean up the content and retry
+            try:
+                # Remove common problematic characters
+                cleaned = re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', content)
+                data = json.loads(cleaned, strict=False)
+                logger.warning("workflow_generation_json_cleaned", original_error=str(e))
+            except json.JSONDecodeError as e2:
+                logger.error("workflow_generation_json_error", error=str(e2), content=response.content[:500])
+                raise ValueError(f"Failed to parse AI response as JSON: {e2}")
 
         # Validate and convert to response schema
         try:
@@ -288,31 +296,19 @@ class WorkflowGenerator:
         agent_repo: BaseAgentRepository,
         workflow_repo: WorkflowRepository,
     ) -> ApplyGeneratedWorkflowResponse:
-        """Apply a generated workflow by creating agents and workflow.
+        """Save a generated workflow and check for missing agents.
+
+        Per the plan: This does NOT auto-create agents. Users create them separately.
 
         Args:
-            request: The apply request with workflow and agents to create
-            agent_repo: Repository for creating agents
-            workflow_repo: Repository for creating workflows
+            request: The apply request with workflow definition
+            agent_repo: Repository for checking existing agents
+            workflow_repo: Repository for saving workflows
 
         Returns:
-            ApplyGeneratedWorkflowResponse with created resource IDs
+            ApplyGeneratedWorkflowResponse with missing agent info
         """
-        created_agents = []
-        mcps_needing_auth: List[MCPAuthRequired] = []
-
-        # Create agents
-        for agent_config in request.agents_to_create:
-            try:
-                agent = self._generated_to_agent_config(agent_config, request.created_by)
-                await agent_repo.save(agent)
-                created_agents.append(agent.id)
-                logger.info("agent_created_from_generation", agent_id=agent.id)
-            except Exception as e:
-                logger.error("agent_creation_failed", agent_id=agent_config.id, error=str(e))
-                raise ValueError(f"Failed to create agent {agent_config.id}: {e}")
-
-        # Create workflow
+        # Save the workflow
         workflow_id = request.workflow.id
         workflow_definition = request.workflow.model_dump()
 
@@ -324,28 +320,39 @@ class WorkflowGenerator:
         )
 
         await workflow_repo.save(workflow_id, workflow_definition, metadata)
-        logger.info("workflow_created_from_generation", workflow_id=workflow_id)
+        logger.info("workflow_saved_from_generation", workflow_id=workflow_id)
 
-        # Check for MCPs that need auth (this would integrate with OAuth flow)
-        for mcp_template in request.mcps_to_setup:
-            # In a full implementation, this would check if the MCP needs OAuth
-            # and return the appropriate auth URL
-            mcps_needing_auth.append(
-                MCPAuthRequired(
-                    server_id=f"srv_{mcp_template}",
-                    template=mcp_template,
-                    auth_url=f"/api/v1/oauth/{mcp_template}/authorize-url",
-                )
-            )
+        # Check for missing agents - identify blocked steps
+        blocked_steps: List[str] = []
+        missing_agents: List[str] = []
 
-        # Workflow is ready if no MCPs need auth
-        ready_to_execute = len(mcps_needing_auth) == 0
+        for step in request.workflow.steps:
+            if step.type == "agent" and step.agent_id:
+                # Check if agent exists
+                agent = await agent_repo.get(step.agent_id)
+                if not agent:
+                    blocked_steps.append(step.id)
+                    if step.agent_id not in missing_agents:
+                        missing_agents.append(step.agent_id)
+
+        # Determine if workflow can execute
+        can_execute = len(missing_agents) == 0
+        next_action = "ready_to_run" if can_execute else "create_agents"
+
+        logger.info(
+            "workflow_apply_result",
+            workflow_id=workflow_id,
+            can_execute=can_execute,
+            missing_agents=missing_agents,
+            blocked_steps=blocked_steps,
+        )
 
         return ApplyGeneratedWorkflowResponse(
             workflow_id=workflow_id,
-            created_agents=created_agents,
-            mcps_needing_auth=mcps_needing_auth,
-            ready_to_execute=ready_to_execute,
+            blocked_steps=blocked_steps,
+            missing_agents=missing_agents,
+            can_execute=can_execute,
+            next_action=next_action,
         )
 
     def _parse_workflow(self, data: Dict[str, Any]) -> WorkflowDefinitionSchema:
@@ -382,15 +389,35 @@ class WorkflowGenerator:
         )
 
     def _parse_agent_config(self, data: Dict[str, Any]) -> GeneratedAgentConfig:
-        """Parse agent config from AI response."""
+        """Parse agent config from AI response.
+
+        Handles both simplified (string) and full (dict) formats for role/goal/instructions.
+        """
+        # Handle role - can be string or dict
+        role = data.get("role", {})
+        if isinstance(role, str):
+            role = {"title": role, "expertise": []}
+
+        # Handle goal - can be string or dict
+        goal = data.get("goal", {})
+        if isinstance(goal, str):
+            goal = {"objective": goal}
+
+        # Handle instructions - can be string or dict
+        instructions = data.get("instructions", {})
+        if isinstance(instructions, str):
+            instructions = {"steps": [instructions]}
+        elif isinstance(instructions, list):
+            instructions = {"steps": instructions}
+
         return GeneratedAgentConfig(
             id=data.get("id", ""),
             name=data.get("name", ""),
             description=data.get("description", ""),
             agent_type=data.get("agent_type", "ChatAgent"),
-            role=data.get("role", {}),
-            goal=data.get("goal", {}),
-            instructions=data.get("instructions", {}),
+            role=role,
+            goal=goal,
+            instructions=instructions,
         )
 
     def _parse_mcp_suggestion(self, data: Dict[str, Any]) -> MCPSuggestion:
