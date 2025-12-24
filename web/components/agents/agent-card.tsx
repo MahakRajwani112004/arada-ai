@@ -1,21 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { Bot, MessageSquare, Workflow, MoreVertical, Trash2 } from "lucide-react";
+import { Bot, MessageSquare, Workflow, Pencil } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import type { Agent, AgentType } from "@/types/agent";
 
 interface AgentCardProps {
   agent: Agent;
-  onDelete?: (id: string) => void;
 }
 
 const agentTypeConfig: Record<AgentType, { label: string; icon: React.ReactNode; color: string }> = {
@@ -57,7 +50,7 @@ const defaultConfig = {
   color: "bg-gray-500/10 text-gray-400 border-gray-500/20",
 };
 
-export function AgentCard({ agent, onDelete }: AgentCardProps) {
+export function AgentCard({ agent }: AgentCardProps) {
   const config = agentTypeConfig[agent.agent_type] || defaultConfig;
 
   return (
@@ -81,29 +74,18 @@ export function AgentCard({ agent, onDelete }: AgentCardProps) {
               </Badge>
             </div>
           </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild onClick={(e) => e.preventDefault()}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 opacity-0 group-hover:opacity-100"
-              >
-                <MoreVertical className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
-                onClick={(e) => {
-                  e.preventDefault();
-                  onDelete?.(agent.id);
-                }}
-              >
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <Link
+            href={`/agents/${agent.id}?edit=true`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 opacity-0 group-hover:opacity-100"
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+          </Link>
         </CardHeader>
         <CardContent>
           <p className="line-clamp-2 text-sm text-muted-foreground">

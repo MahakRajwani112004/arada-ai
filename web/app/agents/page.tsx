@@ -7,7 +7,7 @@ import { PageContainer, PageHeader } from "@/components/layout/page-container";
 import { AgentCard } from "@/components/agents/agent-card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAgents, useDeleteAgent } from "@/lib/hooks/use-agents";
+import { useAgents } from "@/lib/hooks/use-agents";
 
 function AgentCardSkeleton() {
   return (
@@ -47,7 +47,6 @@ function EmptyState() {
 
 export default function AgentsPage() {
   const { data, isLoading, error } = useAgents();
-  const deleteAgent = useDeleteAgent();
 
   return (
     <>
@@ -77,11 +76,7 @@ export default function AgentsPage() {
         {data && data.agents.length > 0 && (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {data.agents.map((agent) => (
-              <AgentCard
-                key={agent.id}
-                agent={agent}
-                onDelete={(id) => deleteAgent.mutate(id)}
-              />
+              <AgentCard key={agent.id} agent={agent} />
             ))}
           </div>
         )}

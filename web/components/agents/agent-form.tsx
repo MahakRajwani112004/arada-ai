@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { ExpandableTextarea } from "@/components/ui/expandable-textarea";
 import {
   Select,
   SelectContent,
@@ -32,13 +33,19 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { useCreateAgent } from "@/lib/hooks/use-agents";
+import { useCreateAgent, useUpdateAgent } from "@/lib/hooks/use-agents";
 import { useCatalog, useServers } from "@/lib/hooks/use-mcp";
 import { generateAgentConfig } from "@/lib/api/agents";
-import type { AgentType, AgentCreate, AgentExample, KnowledgeBaseConfig } from "@/types/agent";
+import type { AgentType, AgentCreate, AgentDetail, AgentExample, KnowledgeBaseConfig } from "@/types/agent";
 import { ToolSelectorSheet } from "./tool-selector-sheet";
 import { SelectedToolsDisplay } from "./selected-tools-display";
 import { KBSelector } from "./kb-selector";
+
+interface AgentFormProps {
+  initialData?: AgentDetail;
+  isEditing?: boolean;
+  onCancel?: () => void;
+}
 
 // Confetti component
 function Confetti() {
@@ -82,36 +89,41 @@ function detectAgentType(purpose: string, tools: string[], hasKnowledgeBase: boo
   return "LLMAgent";
 }
 
-export function AgentForm() {
+export function AgentForm({ initialData, isEditing = false, onCancel }: AgentFormProps) {
   const router = useRouter();
   const createAgent = useCreateAgent();
+  const updateAgent = useUpdateAgent();
   const { data: catalog } = useCatalog();
   const { data: servers } = useServers();
 
-  // Form fields
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [roleTitle, setRoleTitle] = useState("");
-  const [personality, setPersonality] = useState<string[]>([]);
-  const [expertise, setExpertise] = useState<string[]>([]);
-  const [communicationStyle, setCommunicationStyle] = useState("");
-  const [goal, setGoal] = useState("");
-  const [successCriteria, setSuccessCriteria] = useState<string[]>([]);
-  const [instructions, setInstructions] = useState("");
-  const [rules, setRules] = useState<string[]>([]);
-  const [examples, setExamples] = useState<AgentExample[]>([]);
-  const [selectedTools, setSelectedTools] = useState<string[]>([]);
-  const [knowledgeBase, setKnowledgeBase] = useState<KnowledgeBaseConfig | undefined>();
+  // Form fields - initialize from initialData if editing
+  const [name, setName] = useState(initialData?.name ?? "");
+  const [description, setDescription] = useState(initialData?.description ?? "");
+  const [roleTitle, setRoleTitle] = useState(initialData?.role?.title ?? "");
+  const [personality, setPersonality] = useState<string[]>(initialData?.role?.personality ?? []);
+  const [expertise, setExpertise] = useState<string[]>(initialData?.role?.expertise ?? []);
+  const [communicationStyle, setCommunicationStyle] = useState(initialData?.role?.communication_style ?? "");
+  const [goal, setGoal] = useState(initialData?.goal?.objective ?? "");
+  const [successCriteria, setSuccessCriteria] = useState<string[]>(initialData?.goal?.success_criteria ?? []);
+  const [instructions, setInstructions] = useState(initialData?.instructions?.steps?.join("\n") ?? "");
+  const [rules, setRules] = useState<string[]>(initialData?.instructions?.rules ?? []);
+  const [examples, setExamples] = useState<AgentExample[]>(initialData?.examples ?? []);
+  const [selectedTools, setSelectedTools] = useState<string[]>(initialData?.tools?.map(t => t.tool_id) ?? []);
+  const [knowledgeBase, setKnowledgeBase] = useState<KnowledgeBaseConfig | undefined>(
+    initialData?.knowledge_base ?? undefined
+  );
 
   // Temp inputs for list fields
   const [newPersonality, setNewPersonality] = useState("");
   const [newExampleInput, setNewExampleInput] = useState("");
   const [newExampleOutput, setNewExampleOutput] = useState("");
 
-  // Settings
-  const [llmProvider, setLlmProvider] = useState<"openai" | "anthropic">("openai");
-  const [llmModel, setLlmModel] = useState("gpt-4o-mini");
-  const [temperature, setTemperature] = useState(0.7);
+  // Settings - initialize from initialData
+  const [llmProvider, setLlmProvider] = useState<"openai" | "anthropic">(
+    (initialData?.llm_config?.provider as "openai" | "anthropic") ?? "openai"
+  );
+  const [llmModel, setLlmModel] = useState(initialData?.llm_config?.model ?? "gpt-4o-mini");
+  const [temperature, setTemperature] = useState(initialData?.llm_config?.temperature ?? 0.7);
 
   // Handle provider change - reset model to valid option
   const handleProviderChange = (provider: "openai" | "anthropic") => {
@@ -187,7 +199,10 @@ export function AgentForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const agentId = name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+    // Use existing ID when editing, generate new one when creating
+    const agentId = isEditing && initialData
+      ? initialData.id
+      : name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
 
     const agent: AgentCreate = {
       id: agentId,
@@ -226,12 +241,26 @@ export function AgentForm() {
       },
     };
 
-    await createAgent.mutateAsync(agent);
-    setShowSuccess(true);
-    setShowConfetti(true);
-    setTimeout(() => setShowConfetti(false), 4000);
-    setTimeout(() => router.push("/agents"), 2000);
+    if (isEditing && initialData) {
+      await updateAgent.mutateAsync({ agentId: initialData.id, agent });
+      setShowSuccess(true);
+      setTimeout(() => {
+        if (onCancel) {
+          onCancel();
+        } else {
+          router.push(`/agents/${initialData.id}`);
+        }
+      }, 1500);
+    } else {
+      await createAgent.mutateAsync(agent);
+      setShowSuccess(true);
+      setShowConfetti(true);
+      setTimeout(() => setShowConfetti(false), 4000);
+      setTimeout(() => router.push("/agents"), 2000);
+    }
   };
+
+  const isPending = isEditing ? updateAgent.isPending : createAgent.isPending;
 
   return (
     <>
@@ -249,9 +278,9 @@ export function AgentForm() {
               animate={{ scale: 1 }}
               className="bg-card border rounded-2xl p-8 text-center"
             >
-              <div className="text-5xl mb-3">🎉</div>
-              <h2 className="text-xl font-bold">Agent Created!</h2>
-              <p className="text-sm text-muted-foreground mt-1">Redirecting...</p>
+              <div className="text-5xl mb-3">{isEditing ? "✅" : "🎉"}</div>
+              <h2 className="text-xl font-bold">{isEditing ? "Agent Updated!" : "Agent Created!"}</h2>
+              <p className="text-sm text-muted-foreground mt-1">{isEditing ? "Changes saved" : "Redirecting..."}</p>
             </motion.div>
           </motion.div>
         )}
@@ -343,11 +372,13 @@ export function AgentForm() {
 
           <div className="space-y-1.5">
             <Label htmlFor="description">Description</Label>
-            <Input
+            <ExpandableTextarea
               id="description"
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={setDescription}
               placeholder="What does this agent do?"
+              label="Description"
+              rows={1}
             />
           </div>
 
@@ -441,26 +472,26 @@ export function AgentForm() {
           {/* Goal */}
           <div className="space-y-1.5">
             <Label htmlFor="goal">Goal / Objective</Label>
-            <Textarea
+            <ExpandableTextarea
               id="goal"
               value={goal}
-              onChange={(e) => setGoal(e.target.value)}
+              onChange={setGoal}
               placeholder="What is the main objective of this agent?"
+              label="Goal / Objective"
               rows={2}
-              className="resize-none"
             />
           </div>
 
           {/* Instructions */}
           <div className="space-y-1.5">
             <Label htmlFor="instructions">Instructions (one per line)</Label>
-            <Textarea
+            <ExpandableTextarea
               id="instructions"
               value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
+              onChange={setInstructions}
               placeholder="Step-by-step instructions for the agent..."
+              label="Instructions"
               rows={3}
-              className="resize-none"
             />
           </div>
 
@@ -626,20 +657,32 @@ export function AgentForm() {
               </div>
             </div>
 
-            <Button
-              type="submit"
-              disabled={createAgent.isPending || !name.trim()}
-              className="w-full mt-4"
-            >
-              {createAgent.isPending ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Creating...
-                </>
-              ) : (
-                "Create Agent"
+            <div className="space-y-2 mt-4">
+              <Button
+                type="submit"
+                disabled={isPending || !name.trim()}
+                className="w-full"
+              >
+                {isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    {isEditing ? "Saving..." : "Creating..."}
+                  </>
+                ) : (
+                  isEditing ? "Save Changes" : "Create Agent"
+                )}
+              </Button>
+              {isEditing && onCancel && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={onCancel}
+                  className="w-full"
+                >
+                  Cancel
+                </Button>
               )}
-            </Button>
+            </div>
           </div>
         </div>
       </form>

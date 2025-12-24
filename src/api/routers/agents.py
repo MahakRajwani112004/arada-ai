@@ -5,15 +5,22 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.api.schemas.agent import (
+    AgentDetailResponse,
     AgentExampleSchema,
     AgentGoalSchema,
     AgentInstructionsSchema,
     AgentListResponse,
+    AgentReferenceSchema,
     AgentResponse,
     AgentRoleSchema,
     CreateAgentRequest,
     GenerateAgentRequest,
     GenerateAgentResponse,
+    KnowledgeBaseConfigSchema,
+    LLMConfigSchema,
+    OrchestratorConfigSchema,
+    SafetyConfigSchema,
+    ToolConfigSchema,
 )
 from src.models.agent_config import AgentConfig
 from src.models.enums import AgentType
@@ -214,7 +221,7 @@ def _to_agent_config(request: CreateAgentRequest) -> AgentConfig:
         ),
         goal=AgentGoal(
             objective=request.goal.objective,
-            success_criteria=request.goal.success_criteria,
+            success_indicators=request.goal.success_criteria,
             constraints=request.goal.constraints,
         ),
         instructions=AgentInstructions(
@@ -291,18 +298,128 @@ async def list_agents(
     )
 
 
-@router.get("/{agent_id}", response_model=AgentResponse)
+@router.get("/{agent_id}", response_model=AgentDetailResponse)
 async def get_agent(
     agent_id: str,
     repository: BaseAgentRepository = Depends(get_repository),
-) -> AgentResponse:
-    """Get agent by ID."""
+) -> AgentDetailResponse:
+    """Get agent by ID with full details."""
     config = await repository.get(agent_id)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent '{agent_id}' not found",
         )
+
+    return _config_to_detail_response(config)
+
+
+def _config_to_detail_response(config: AgentConfig) -> AgentDetailResponse:
+    """Convert AgentConfig to AgentDetailResponse."""
+    llm_config = None
+    if config.llm_config:
+        llm_config = LLMConfigSchema(
+            provider=config.llm_config.provider,
+            model=config.llm_config.model,
+            temperature=config.llm_config.temperature,
+            max_tokens=config.llm_config.max_tokens,
+        )
+
+    kb_config = None
+    if config.knowledge_base:
+        kb_config = KnowledgeBaseConfigSchema(
+            collection_name=config.knowledge_base.collection_name,
+            embedding_model=config.knowledge_base.embedding_model or "text-embedding-3-small",
+            top_k=config.knowledge_base.top_k or 5,
+            similarity_threshold=config.knowledge_base.similarity_threshold,
+        )
+
+    orchestrator_config = None
+    if config.orchestrator_config:
+        orchestrator_config = OrchestratorConfigSchema(
+            mode=config.orchestrator_config.mode.value,
+            available_agents=[
+                AgentReferenceSchema(
+                    agent_id=a.agent_id,
+                    alias=a.alias,
+                    description=a.description,
+                )
+                for a in config.orchestrator_config.available_agents
+            ],
+            workflow_definition=config.orchestrator_config.workflow_definition,
+            default_aggregation=config.orchestrator_config.default_aggregation.value,
+            max_parallel=config.orchestrator_config.max_parallel,
+            max_depth=config.orchestrator_config.max_depth,
+            allow_self_reference=config.orchestrator_config.allow_self_reference,
+        )
+
+    return AgentDetailResponse(
+        id=config.id,
+        name=config.name,
+        description=config.description or "",
+        agent_type=config.agent_type,
+        role=AgentRoleSchema(
+            title=config.role.title if config.role else "Assistant",
+            expertise=config.role.expertise if config.role else [],
+            personality=config.role.personality if config.role else [],
+            communication_style=config.role.communication_style if config.role else "professional",
+        ),
+        goal=AgentGoalSchema(
+            objective=config.goal.objective if config.goal else "",
+            success_criteria=config.goal.success_indicators if config.goal else [],
+            constraints=config.goal.constraints if config.goal else [],
+        ),
+        instructions=AgentInstructionsSchema(
+            steps=config.instructions.steps if config.instructions else [],
+            rules=config.instructions.rules if config.instructions else [],
+            prohibited=config.instructions.prohibited if config.instructions else [],
+            output_format=config.instructions.output_format if config.instructions else None,
+        ),
+        examples=[
+            AgentExampleSchema(input=e.input, output=e.output)
+            for e in (config.examples or [])
+        ],
+        llm_config=llm_config,
+        knowledge_base=kb_config,
+        tools=[
+            ToolConfigSchema(
+                tool_id=t.tool_id,
+                enabled=t.enabled,
+                requires_confirmation=t.requires_confirmation,
+            )
+            for t in (config.tools or [])
+        ],
+        routing_table=config.routing_table,
+        orchestrator_config=orchestrator_config,
+        safety=SafetyConfigSchema(
+            level=config.safety.level if config.safety else "standard",
+            blocked_topics=config.safety.blocked_topics if config.safety else [],
+            blocked_patterns=config.safety.blocked_patterns if config.safety else [],
+        ),
+    )
+
+
+@router.put("/{agent_id}", response_model=AgentResponse)
+async def update_agent(
+    agent_id: str,
+    request: CreateAgentRequest,
+    repository: BaseAgentRepository = Depends(get_repository),
+) -> AgentResponse:
+    """Update an existing agent."""
+    # Check agent exists
+    existing = await repository.get(agent_id)
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{agent_id}' not found",
+        )
+
+    # Ensure ID in request matches path parameter
+    if request.id != agent_id:
+        request.id = agent_id
+
+    config = _to_agent_config(request)
+    await repository.save(config)
 
     return AgentResponse(
         id=config.id,

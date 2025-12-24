@@ -2,6 +2,7 @@ import { apiClient } from "./client";
 import type {
   Agent,
   AgentCreate,
+  AgentDetail,
   AgentListResponse,
   GenerateAgentRequest,
   GenerateAgentResponse,
@@ -15,13 +16,18 @@ export async function listAgents(): Promise<AgentListResponse> {
   return response.data;
 }
 
-export async function getAgent(agentId: string): Promise<Agent> {
-  const response = await apiClient.get<Agent>(`/agents/${agentId}`);
+export async function getAgent(agentId: string): Promise<AgentDetail> {
+  const response = await apiClient.get<AgentDetail>(`/agents/${agentId}`);
   return response.data;
 }
 
 export async function createAgent(agent: AgentCreate): Promise<Agent> {
   const response = await apiClient.post<Agent>("/agents", agent);
+  return response.data;
+}
+
+export async function updateAgent(agentId: string, agent: AgentCreate): Promise<Agent> {
+  const response = await apiClient.put<Agent>(`/agents/${agentId}`, agent);
   return response.data;
 }
 

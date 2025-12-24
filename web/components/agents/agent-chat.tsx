@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, Bot, User, Loader2 } from "lucide-react";
+import { Send, Bot, User, Loader2, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -19,6 +19,7 @@ interface AgentChatProps {
 export function AgentChat({ agentId }: AgentChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  const [isExpanded, setIsExpanded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const executeWorkflow = useExecuteWorkflow();
 
@@ -137,18 +138,37 @@ export function AgentChat({ agentId }: AgentChatProps) {
       {/* Input */}
       <form onSubmit={handleSubmit} className="border-t border-border p-4">
         <div className="flex gap-2">
-          <Textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message..."
-            rows={1}
-            className="min-h-[44px] resize-none"
-          />
+          <div className="relative flex-1">
+            <Textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Type a message..."
+              rows={isExpanded ? 10 : 1}
+              className={cn(
+                "resize-none pr-10",
+                isExpanded ? "min-h-[240px]" : "min-h-[44px]"
+              )}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute right-1 top-1 h-7 w-7 text-muted-foreground hover:text-foreground"
+              onClick={() => setIsExpanded(!isExpanded)}
+            >
+              {isExpanded ? (
+                <Minimize2 className="h-4 w-4" />
+              ) : (
+                <Maximize2 className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
           <Button
             type="submit"
             size="icon"
             disabled={!input.trim() || executeWorkflow.isPending}
+            className={isExpanded ? "self-end" : ""}
           >
             <Send className="h-4 w-4" />
           </Button>
