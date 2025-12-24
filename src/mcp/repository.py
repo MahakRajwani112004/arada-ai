@@ -244,8 +244,34 @@ class MCPServerRepository:
             return None
 
         # Get credentials from vault
+        import structlog
+        _logger = structlog.get_logger(__name__)
+
         secrets_manager = get_secrets_manager()
-        credentials = await secrets_manager.retrieve(db_model.secret_ref)
+        try:
+            credentials = await secrets_manager.retrieve(db_model.secret_ref)
+            _logger.info("credentials_retrieved", secret_ref=db_model.secret_ref, keys=list(credentials.keys()) if credentials else [])
+        except KeyError as e:
+            _logger.warning("credentials_not_found", secret_ref=db_model.secret_ref, error=str(e))
+            credentials = {}
+        except Exception as e:
+            _logger.error("credentials_retrieval_failed", secret_ref=db_model.secret_ref, error=str(e), error_type=type(e).__name__)
+            credentials = {}
+
+        # Get OAuth token if present and add refresh_token to credentials
+        if db_model.oauth_token_ref:
+            _logger.info("oauth_token_ref_found", oauth_token_ref=db_model.oauth_token_ref)
+            try:
+                oauth_data = await secrets_manager.retrieve(db_model.oauth_token_ref)
+                _logger.info("oauth_data_retrieved", keys=list(oauth_data.keys()) if oauth_data else [])
+                if "refresh_token" in oauth_data:
+                    # Add as GOOGLE_REFRESH_TOKEN for Google services
+                    credentials["GOOGLE_REFRESH_TOKEN"] = oauth_data["refresh_token"]
+                    _logger.info("refresh_token_added_to_credentials")
+            except KeyError as e:
+                _logger.warning("oauth_token_not_found", oauth_token_ref=db_model.oauth_token_ref, error=str(e))
+            except Exception as e:
+                _logger.error("oauth_token_retrieval_failed", oauth_token_ref=db_model.oauth_token_ref, error=str(e), error_type=type(e).__name__)
 
         # Build headers from credentials + stored headers
         headers = dict(db_model.headers_config)

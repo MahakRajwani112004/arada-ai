@@ -1,5 +1,6 @@
 """Base agent class - all agent types inherit from this."""
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import List
 
 from src.models.agent_config import AgentConfig
@@ -44,6 +45,14 @@ class BaseAgent(ABC):
     def build_system_prompt(self) -> str:
         """Build system prompt from config."""
         parts = []
+
+        # Current date/time context
+        now = datetime.now()
+        parts.append(
+            f"## CURRENT DATE/TIME\n"
+            f"Current date and time: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"Today is {now.strftime('%A, %B %d, %Y')}"
+        )
 
         # Role section
         role = self.config.role

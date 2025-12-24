@@ -46,8 +46,24 @@ class ToolAgent(BaseAgent):
 
     async def execute(self, context: AgentContext) -> AgentResponse:
         """Execute agent with tool loop."""
+        import structlog
+        logger = structlog.get_logger(__name__)
+
         messages = self._build_messages(context)
+
+        # Debug logging for tools
+        logger.info(
+            "tool_agent_execute",
+            enabled_tools=self._enabled_tools,
+            registry_tools=self._registry.available_tools,
+        )
+
         tool_definitions = self._registry.get_openai_tools(self._enabled_tools)
+        logger.info(
+            "tool_definitions_retrieved",
+            count=len(tool_definitions),
+            tools=[t.get("function", {}).get("name") for t in tool_definitions] if tool_definitions else [],
+        )
 
         tool_calls_made = []
         iterations = 0
@@ -74,6 +90,24 @@ class ToolAgent(BaseAgent):
                     },
                 )
 
+            # Build ToolCall objects for the assistant message
+            from src.llm.providers.base import ToolCall
+            tc_objects = [
+                ToolCall(
+                    id=tc["id"],
+                    name=tc["name"],
+                    arguments=tc["arguments"],
+                )
+                for tc in tool_calls
+            ]
+
+            # Add assistant message with tool calls
+            messages.append(LLMMessage(
+                role="assistant",
+                content="",
+                tool_calls=tc_objects,
+            ))
+
             # Execute tools and add results to messages
             for tool_call in tool_calls:
                 tool_result = await self._execute_tool(tool_call)
@@ -83,14 +117,11 @@ class ToolAgent(BaseAgent):
                     "result": tool_result,
                 })
 
-                # Add tool call and result to messages
+                # Add tool result message
                 messages.append(LLMMessage(
-                    role="assistant",
-                    content=f"[Tool Call: {tool_call['name']}({json.dumps(tool_call['arguments'])})]",
-                ))
-                messages.append(LLMMessage(
-                    role="user",
-                    content=f"[Tool Result: {json.dumps(tool_result)}]",
+                    role="tool",
+                    content=json.dumps(tool_result),
+                    tool_call_id=tool_call["id"],
                 ))
 
         # Max iterations reached
@@ -110,31 +141,22 @@ class ToolAgent(BaseAgent):
         tools: List[Dict[str, Any]],
     ):
         """Call LLM with tool definitions."""
-        # For now, use standard completion
-        # In production, use provider-specific tool calling
-        return await self._provider.complete(messages)
+        return await self._provider.complete(messages, tools=tools if tools else None)
 
     def _extract_tool_calls(
         self, response
     ) -> List[Dict[str, Any]]:
         """Extract tool calls from LLM response."""
-        # Parse tool calls from response content
-        # Format: [TOOL: name({"arg": "value"})]
-        import re
-
         tool_calls = []
-        pattern = r'\[TOOL:\s*(\w+)\((\{.*?\})\)\]'
 
-        for match in re.finditer(pattern, response.content, re.DOTALL):
-            try:
-                name = match.group(1)
-                args = json.loads(match.group(2))
+        # Use actual tool_calls from LLM response
+        if response.tool_calls:
+            for tc in response.tool_calls:
                 tool_calls.append({
-                    "name": name,
-                    "arguments": args,
+                    "id": tc.id,
+                    "name": tc.name,
+                    "arguments": tc.arguments,
                 })
-            except json.JSONDecodeError:
-                continue
 
         return tool_calls
 

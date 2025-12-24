@@ -1,0 +1,388 @@
+# Docker Compose with Traefik for production deployment
+# Domain: magoneai.magure.ai
+# Usage: docker-compose -f docker/docker-compose.traefik.yml up -d
+
+services:
+  # ============================================
+  # Traefik - Reverse Proxy & SSL
+  # ============================================
+  traefik:
+    image: traefik:v2.11
+    container_name: magure-traefik
+    environment:
+      - DOCKER_API_VERSION=1.44
+    command:
+      # Enable Docker provider
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=magure-network"
+      # Entrypoints
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      # Redirect HTTP to HTTPS
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      # Let's Encrypt SSL
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-admin@magure.ai}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      # Logging
+      - "--log.level=INFO"
+      # Dashboard (disable in production or secure it)
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt_data:/letsencrypt
+    networks:
+      - magure-network
+    restart: unless-stopped
+    labels:
+      # Traefik Dashboard (optional - access via traefik.magoneai.magure.ai)
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.magoneai.magure.ai`)"
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
+      - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.middlewares=dashboard-auth"
+      # Basic auth for dashboard (user: admin, password: change-me) - generate with: htpasswd -nb admin your-password
+      - "traefik.http.middlewares.dashboard-auth.basicauth.users=admin:$$apr1$$xyz$$changethis"
+
+  # ============================================
+  # Infrastructure Services
+  # ============================================
+
+  # PostgreSQL - Primary database
+  postgres:
+    image: postgres:16-alpine
+    container_name: magure-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-magure}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-magure_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-magure_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - magure-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U magure -d magure_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis - Caching and sessions
+  redis:
+    image: redis:7-alpine
+    container_name: magure-redis
+    volumes:
+      - redis_data:/data
+    networks:
+      - magure-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Qdrant - Vector database for RAG
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: magure-qdrant
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    networks:
+      - magure-network
+    restart: unless-stopped
+
+  # Temporal Server
+  temporal:
+    image: temporalio/auto-setup:latest
+    container_name: magure-temporal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-magure}
+      - POSTGRES_PWD=${POSTGRES_PASSWORD:-magure_dev_password}
+      - POSTGRES_SEEDS=postgres
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development.yaml
+    volumes:
+      - ./temporal-config:/etc/temporal/config/dynamicconfig
+    networks:
+      - magure-network
+    restart: unless-stopped
+
+  # Temporal Web UI
+  temporal-ui:
+    image: temporalio/ui:latest
+    container_name: magure-temporal-ui
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=https://magoneai.magure.ai
+    networks:
+      - magure-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.temporal-ui.rule=Host(`temporal.magoneai.magure.ai`)"
+      - "traefik.http.routers.temporal-ui.entrypoints=websecure"
+      - "traefik.http.routers.temporal-ui.tls.certresolver=letsencrypt"
+      - "traefik.http.services.temporal-ui.loadbalancer.server.port=8080"
+    restart: unless-stopped
+
+  # HashiCorp Vault - Secrets Management
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: magure-vault
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_TOKEN:-dev-root-token}
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+      VAULT_ADDR: "http://0.0.0.0:8200"
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - magure-network
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # MinIO - Object storage for documents (S3-compatible)
+  minio:
+    image: minio/minio:latest
+    container_name: magure-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-magure}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-magure_minio_secret}
+    volumes:
+      - minio_data:/data
+    networks:
+      - magure-network
+    labels:
+      # MinIO Console (optional)
+      - "traefik.enable=true"
+      - "traefik.http.routers.minio-console.rule=Host(`minio.magoneai.magure.ai`)"
+      - "traefik.http.routers.minio-console.entrypoints=websecure"
+      - "traefik.http.routers.minio-console.tls.certresolver=letsencrypt"
+      - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================
+  # Application Services
+  # ============================================
+
+  # API Server
+  api:
+    image: magureme/magoneai-api:v3
+    container_name: magure-api
+    environment:
+      # Application
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_NAME: magure-ai-platform
+      SECRET_KEY: ${SECRET_KEY}
+      FRONTEND_URL: https://magoneai.magure.ai
+      # Database
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-magure}:${POSTGRES_PASSWORD:-magure_dev_password}@postgres:5432/${POSTGRES_DB:-magure_db}
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      # Secrets encryption
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY}
+      # Qdrant
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      # Temporal
+      TEMPORAL_HOST: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: agent-tasks
+      # Vault
+      VAULT_PROVIDER: hashicorp
+      VAULT_URL: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN:-dev-root-token}
+      # CORS - Updated for domain
+      CORS_ORIGINS: ${CORS_ORIGINS:-["https://magoneai.magure.ai"]}
+      CORS_ALLOW_CREDENTIALS: "true"
+      # LLM Keys
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Google OAuth - Updated for domain
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      OAUTH_REDIRECT_URI: https://magoneai.magure.ai/api/v1/oauth/google/callback
+      # MCP Server URLs
+      MCP_GOOGLE_CALENDAR_URL: http://mcp-google-calendar:8001/mcp
+      MCP_GOOGLE_GMAIL_URL: http://mcp-google-gmail:8002/mcp
+      # MinIO / Object Storage
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-magure}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-magure_minio_secret}
+      MINIO_USE_SSL: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      temporal:
+        condition: service_started
+    networks:
+      - magure-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`magoneai.magure.ai`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.api.entrypoints=websecure"
+      - "traefik.http.routers.api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.api.loadbalancer.server.port=8000"
+      - "traefik.http.routers.api.priority=10"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Temporal Worker
+  worker:
+    image: magureme/magoneai-worker:v3
+    container_name: magure-worker
+    environment:
+      # Application
+      APP_ENV: production
+      APP_DEBUG: "false"
+      SECRET_KEY: ${SECRET_KEY}
+      # Database
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-magure}:${POSTGRES_PASSWORD:-magure_dev_password}@postgres:5432/${POSTGRES_DB:-magure_db}
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      # Secrets encryption
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY}
+      # Qdrant
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      # Temporal
+      TEMPORAL_HOST: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: agent-tasks
+      # Vault
+      VAULT_PROVIDER: hashicorp
+      VAULT_URL: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN:-dev-root-token}
+      # LLM Keys
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # MCP Server URLs
+      MCP_GOOGLE_CALENDAR_URL: http://mcp-google-calendar:8001/mcp
+      MCP_GOOGLE_GMAIL_URL: http://mcp-google-gmail:8002/mcp
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+      api:
+        condition: service_healthy
+    networks:
+      - magure-network
+    restart: unless-stopped
+
+  # Web UI (Next.js)
+  web:
+    image: magureme/magoneai-web:v3
+    container_name: magure-web
+    environment:
+      NEXT_PUBLIC_API_URL: https://magoneai.magure.ai/api/v1
+      NODE_ENV: production
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - magure-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.web.rule=Host(`magoneai.magure.ai`)"
+      - "traefik.http.routers.web.entrypoints=websecure"
+      - "traefik.http.routers.web.tls.certresolver=letsencrypt"
+      - "traefik.http.services.web.loadbalancer.server.port=3000"
+      - "traefik.http.routers.web.priority=1"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+
+  # ============================================
+  # MCP Servers
+  # ============================================
+
+  # Google Calendar MCP Server
+  mcp-google-calendar:
+    image: magureme/magoneai-mcp-google-calendar:v3
+    container_name: magure-mcp-google-calendar
+    environment:
+      PORT: 8001
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      VAULT_URL: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN:-dev-root-token}
+    depends_on:
+      vault:
+        condition: service_healthy
+    networks:
+      - magure-network
+    restart: unless-stopped
+
+  # Google Gmail MCP Server
+  mcp-google-gmail:
+    image: magureme/magoneai-mcp-google-gmail:v3
+    container_name: magure-mcp-google-gmail
+    environment:
+      PORT: 8002
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      VAULT_URL: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN:-dev-root-token}
+    depends_on:
+      vault:
+        condition: service_healthy
+    networks:
+      - magure-network
+    restart: unless-stopped
+
+networks:
+  magure-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  qdrant_data:
+  minio_data:
+  letsencrypt_data:
+

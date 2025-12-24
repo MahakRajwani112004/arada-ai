@@ -181,8 +181,8 @@ async def google_callback(
 
     try:
         await secrets_manager.store(
-            key=token_ref,
-            value={
+            ref=token_ref,
+            data={
                 "refresh_token": credentials.refresh_token,
                 "service": service,
                 "provider": "google",
