@@ -53,6 +53,9 @@ dependencies = [
 
     # Circuit Breaker
     "circuitbreaker>=2.0.0",
+
+    # OAuth
+    "google-auth-oauthlib>=1.2.0",
 ]
 
 [project.optional-dependencies]

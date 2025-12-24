@@ -5,7 +5,7 @@ from .agent_repository import (
     InMemoryAgentRepository,
     PostgresAgentRepository,
 )
-from .database import close_database, get_session, init_database
+from .database import close_database, get_async_session, get_session, init_database
 from .models import AgentModel, Base, WorkflowExecutionModel, WorkflowModel
 from .workflow_repository import WorkflowRepository
 
@@ -22,4 +22,5 @@ __all__ = [
     "init_database",
     "close_database",
     "get_session",
+    "get_async_session",
 ]

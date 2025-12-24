@@ -12,7 +12,7 @@
 #
 # Optional:
 #   - ACME_EMAIL (for Let's Encrypt)
-#   - IMAGE_TAG (defaults to 'latest')
+#   - IMAGE_TAG (defaults to 'v2')
 
 services:
   # ============================================
@@ -176,7 +176,7 @@ services:
   # MagOneAI API - FastAPI Backend
   # ============================================
   api:
-    image: ${DOCKER_REGISTRY:-magoneai}/magoneai-api:${IMAGE_TAG:-latest}
+    image: ${DOCKER_REGISTRY:-magureme}/magoneai-api:${IMAGE_TAG:-v2}
     container_name: magone-api
     restart: unless-stopped
     depends_on:
@@ -248,7 +248,7 @@ services:
   # MagOneAI Worker - Temporal Workflow Worker
   # ============================================
   worker:
-    image: ${DOCKER_REGISTRY:-magoneai}/magoneai-worker:${IMAGE_TAG:-latest}
+    image: ${DOCKER_REGISTRY:-magureme}/magoneai-worker:${IMAGE_TAG:-v2}
     container_name: magone-worker
     restart: unless-stopped
     depends_on:
@@ -280,7 +280,7 @@ services:
   # MagOneAI Web - Next.js Frontend
   # ============================================
   web:
-    image: ${DOCKER_REGISTRY:-magoneai}/magoneai-web:${IMAGE_TAG:-latest}
+    image: ${DOCKER_REGISTRY:-magureme}/magoneai-web:${IMAGE_TAG:-v2}
     container_name: magone-web
     restart: unless-stopped
     depends_on:
@@ -299,6 +299,44 @@ services:
       - "traefik.http.routers.web.service=web"
       - "traefik.http.routers.web.priority=1"
       - "traefik.http.services.web.loadbalancer.server.port=3000"
+
+  # ============================================
+  # MCP Server - Google Calendar
+  # ============================================
+  mcp-google-calendar:
+    image: ${DOCKER_REGISTRY:-magureme}/magoneai-mcp-calendar:${IMAGE_TAG:-v2}
+    container_name: magone-mcp-calendar
+    restart: unless-stopped
+    environment:
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+    networks:
+      - magone-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # MCP Server - Google Gmail
+  # ============================================
+  mcp-google-gmail:
+    image: ${DOCKER_REGISTRY:-magureme}/magoneai-mcp-gmail:${IMAGE_TAG:-v2}
+    container_name: magone-mcp-gmail
+    restart: unless-stopped
+    environment:
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+    networks:
+      - magone-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 # ============================================
 # Networks

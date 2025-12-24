@@ -99,7 +99,7 @@ services:
   # MagOneAI API - FastAPI Backend
   # ============================================
   api:
-    image: ${DOCKER_REGISTRY:-magoneai}/magoneai-api:${IMAGE_TAG:-latest}
+    image: ${DOCKER_REGISTRY:-magureme}/magoneai-api:${IMAGE_TAG:-v1}
     container_name: magone-api
     restart: unless-stopped
     depends_on:
@@ -119,6 +119,15 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SECRET_KEY: ${SECRET_KEY:-dev_secret_key_change_in_production}
+      SECRETS_ENCRYPTION_KEY: "${SECRETS_ENCRYPTION_KEY:-xnw_ATnA7FfKOHUuVwmUbbybTOnPJzT_T3k0Gg6EIKY=}"
+      # CORS - allow web UI
+      CORS_ORIGINS: '["http://localhost:3001", "http://localhost:3000", "http://localhost:8000", "http://34.56.192.190:3001", "http://34.56.192.190:8000"]'
+      # MCP Server URLs (Docker service names)
+      MCP_GOOGLE_CALENDAR_URL: http://mcp-google-calendar:8000/mcp
+      MCP_GOOGLE_GMAIL_URL: http://mcp-google-gmail:8000/mcp
+      # Google OAuth for MCP servers
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     ports:
       - "8000:8000"
 
@@ -126,7 +135,7 @@ services:
   # MagOneAI Worker - Temporal Workflow Worker
   # ============================================
   worker:
-    image: ${DOCKER_REGISTRY:-magoneai}/magoneai-worker:${IMAGE_TAG:-latest}
+    image: ${DOCKER_REGISTRY:-magureme}/magoneai-worker:${IMAGE_TAG:-v1}
     container_name: magone-worker
     restart: unless-stopped
     depends_on:
@@ -140,20 +149,60 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SECRET_KEY: ${SECRET_KEY:-dev_secret_key_change_in_production}
+      SECRETS_ENCRYPTION_KEY: "${SECRETS_ENCRYPTION_KEY:-xnw_ATnA7FfKOHUuVwmUbbybTOnPJzT_T3k0Gg6EIKY=}"
 
   # ============================================
   # MagOneAI Web - Next.js Frontend
   # ============================================
   web:
-    image: ${DOCKER_REGISTRY:-magoneai}/magoneai-web:${IMAGE_TAG:-latest}
+    image: ${DOCKER_REGISTRY:-magureme}/magoneai-web:${IMAGE_TAG:-v1}
     container_name: magone-web
     restart: unless-stopped
     depends_on:
       - api
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      # Note: NEXT_PUBLIC_* vars are build-time only. Rebuild image with correct API_URL
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://34.56.192.190:8000}
     ports:
-      - "3000:3000"
+      - "3001:3000"
+
+  # ============================================
+  # MCP Server - Google Calendar
+  # ============================================
+  mcp-google-calendar:
+    build:
+      context: ../mcp_servers
+      dockerfile: google-calendar/Dockerfile
+    container_name: magone-mcp-calendar
+    restart: unless-stopped
+    environment:
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # MCP Server - Google Gmail
+  # ============================================
+  mcp-google-gmail:
+    build:
+      context: ../mcp_servers
+      dockerfile: google-gmail/Dockerfile
+    container_name: magone-mcp-gmail
+    restart: unless-stopped
+    environment:
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 networks:
   default:

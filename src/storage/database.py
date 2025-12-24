@@ -81,3 +81,21 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             )
             await session.rollback()
             raise
+
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
+    """Get database session as async context manager (for non-DI use)."""
+    if _session_factory is None:
+        raise RuntimeError("Database not initialized. Call init_database() first.")
+
+    async with _session_factory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise

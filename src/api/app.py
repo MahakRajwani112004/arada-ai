@@ -18,7 +18,7 @@ from src.api.middleware import RequestLoggingMiddleware
 from src.api.routers import agents, mcp, oauth, workflow, workflows
 from src.config.logging import get_logger, setup_logging
 from src.config.settings import get_settings
-from src.mcp import shutdown_mcp_manager
+from src.mcp import reconnect_mcp_servers, shutdown_mcp_manager
 from src.secrets import init_secrets_manager
 from src.storage import close_database, init_database
 from src.tools.builtin import register_builtin_tools
@@ -42,7 +42,9 @@ async def lifespan(app: FastAPI):
     await init_database()
     init_secrets_manager()
     register_builtin_tools()
-    logger.info("application_started", name="Magure AI Platform", version="0.1.0")
+    # Reconnect MCP servers from database
+    mcp_count = await reconnect_mcp_servers()
+    logger.info("application_started", name="Magure AI Platform", version="0.1.0", mcp_servers=mcp_count)
     yield
     # Shutdown
     await shutdown_mcp_manager()

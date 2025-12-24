@@ -201,7 +201,7 @@ class MCPServerRepository:
                     if cred_spec.name in credentials and cred_spec.header_name:
                         headers[cred_spec.header_name] = credentials[cred_spec.name]
 
-        # For custom servers, add credentials as Authorization header
+        # For custom servers, add credentials as headers
         if not db_model.template and credentials:
             # If there's a single credential that looks like a token, use Bearer
             if len(credentials) == 1:
@@ -209,11 +209,11 @@ class MCPServerRepository:
                 if key.lower() in ("token", "api_key", "bearer"):
                     headers["Authorization"] = f"Bearer {value}"
                 else:
-                    headers[f"X-{key}"] = value
+                    headers[self._credential_to_header(key)] = value
             else:
-                # Add each as X-{name} header
+                # Add each as X-{name} header with proper casing
                 for key, value in credentials.items():
-                    headers[f"X-{key}"] = value
+                    headers[self._credential_to_header(key)] = value
 
         return MCPServerConfig(
             id=db_model.id,
@@ -222,6 +222,18 @@ class MCPServerRepository:
             headers=headers,
             template=db_model.template,
         )
+
+    def _credential_to_header(self, key: str) -> str:
+        """Convert credential name to HTTP header format.
+
+        Examples:
+            GOOGLE_REFRESH_TOKEN -> X-Google-Refresh-Token
+            API_KEY -> X-Api-Key
+        """
+        # Split by underscore, title case each part, join with hyphen
+        parts = key.split("_")
+        header_name = "-".join(part.capitalize() for part in parts)
+        return f"X-{header_name}"
 
     def _to_instance(self, db_model: MCPServerModel) -> MCPServerInstance:
         """Convert database model to MCPServerInstance."""

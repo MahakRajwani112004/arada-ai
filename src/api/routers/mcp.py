@@ -298,6 +298,66 @@ async def delete_server(
     logger.info("mcp_server_deleted", server_id=server_id)
 
 
+# ========== Reconnect Endpoint ==========
+
+
+@router.post("/reconnect")
+async def reconnect_server(
+    server_id: str,
+    repository: MCPServerRepository = Depends(get_mcp_repository),
+    manager: MCPManager = Depends(get_mcp_manager),
+) -> MCPServerDetailResponse:
+    """Reconnect an MCP server (useful after API restart)."""
+    instance = await repository.get(server_id)
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"MCP server '{server_id}' not found",
+        )
+
+    # Get config and reconnect
+    try:
+        config = await repository.get_config(server_id)
+        if config:
+            await manager.add_server(config)
+            instance = await repository.update_status(server_id, ServerStatus.ACTIVE)
+            logger.info("mcp_server_reconnected", server_id=server_id)
+    except Exception as e:
+        instance = await repository.update_status(server_id, ServerStatus.ERROR, str(e))
+        logger.error("mcp_server_reconnect_failed", server_id=server_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to reconnect: {str(e)}",
+        )
+
+    # Get tools
+    tools = []
+    try:
+        tool_infos = await manager.get_tools(server_id)
+        tools = [
+            MCPServerToolSchema(
+                name=t.name,
+                description=t.description,
+                input_schema=t.input_schema,
+            )
+            for t in tool_infos
+        ]
+    except Exception:
+        pass
+
+    return MCPServerDetailResponse(
+        id=instance.id,
+        name=instance.name,
+        template=instance.template,
+        url=instance.url,
+        status=instance.status,
+        created_at=instance.created_at,
+        last_used=instance.last_used,
+        error_message=instance.error_message,
+        tools=tools,
+    )
+
+
 # ========== Health Endpoints ==========
 
 
