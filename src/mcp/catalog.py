@@ -13,6 +13,9 @@ MCP_GOOGLE_DRIVE_URL = os.getenv("MCP_GOOGLE_DRIVE_URL", "http://localhost:8003/
 MCP_MICROSOFT_URL = os.getenv("MCP_MICROSOFT_URL", "http://localhost:8004/mcp")
 MCP_SLACK_URL = os.getenv("MCP_SLACK_URL", "http://localhost:8005/mcp")
 
+# Arada Real Estate Analytics
+MCP_ARADA_SQL_URL = os.getenv("MCP_ARADA_SQL_URL", "http://localhost:8002/mcp")
+
 
 def _google_refresh_token_spec() -> CredentialSpec:
     """Google refresh token credential spec."""
@@ -172,6 +175,16 @@ MCP_SERVER_CATALOG: Dict[str, MCPServerTemplate] = {
             ),
         ],
         tools=["send_message", "list_channels", "search_messages"],
+    ),
+    # ========== ARADA REAL ESTATE ==========
+    "arada-sql": MCPServerTemplate(
+        id="arada-sql",
+        name="Arada Real Estate Analytics",
+        url_template=MCP_ARADA_SQL_URL,
+        auth_type="none",
+        scopes=[],
+        credentials_required=[],  # No credentials needed - local database
+        tools=["get_schema", "execute_sql", "get_portfolio_summary"],
     ),
     # ========== UTILITY SERVICES ==========
     "filesystem": MCPServerTemplate(

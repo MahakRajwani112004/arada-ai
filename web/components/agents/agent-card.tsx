@@ -22,39 +22,39 @@ const agentTypeConfig: Record<AgentType, { label: string; icon: React.ReactNode;
   SimpleAgent: {
     label: "Simple",
     icon: <Bot className="h-3 w-3" />,
-    color: "bg-gray-500/10 text-gray-400 border-gray-500/20",
+    color: "bg-slate-100 text-slate-600 border-slate-200",
   },
   LLMAgent: {
     label: "Chat",
     icon: <MessageSquare className="h-3 w-3" />,
-    color: "bg-green-500/10 text-green-400 border-green-500/20",
+    color: "bg-emerald-50 text-emerald-600 border-emerald-200",
   },
   RAGAgent: {
     label: "RAG",
     icon: <Bot className="h-3 w-3" />,
-    color: "bg-cyan-500/10 text-cyan-400 border-cyan-500/20",
+    color: "bg-cyan-50 text-cyan-600 border-cyan-200",
   },
   ToolAgent: {
     label: "Tool Agent",
     icon: <Bot className="h-3 w-3" />,
-    color: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+    color: "bg-blue-50 text-blue-600 border-blue-200",
   },
   FullAgent: {
     label: "Full Agent",
     icon: <Workflow className="h-3 w-3" />,
-    color: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+    color: "bg-violet-50 text-violet-600 border-violet-200",
   },
   RouterAgent: {
     label: "Router",
     icon: <Workflow className="h-3 w-3" />,
-    color: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+    color: "bg-amber-50 text-amber-600 border-amber-200",
   },
 };
 
 const defaultConfig = {
   label: "Agent",
   icon: <Bot className="h-3 w-3" />,
-  color: "bg-gray-500/10 text-gray-400 border-gray-500/20",
+  color: "bg-slate-100 text-slate-600 border-slate-200",
 };
 
 export function AgentCard({ agent, onDelete }: AgentCardProps) {
@@ -62,7 +62,7 @@ export function AgentCard({ agent, onDelete }: AgentCardProps) {
 
   return (
     <Link href={`/agents/${agent.id}`}>
-      <Card className="group h-full cursor-pointer transition-all hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5">
+      <Card className="group h-full cursor-pointer border-border/60 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-md">
         <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-secondary">

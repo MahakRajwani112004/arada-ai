@@ -1,8 +1,8 @@
 """Application settings using Pydantic Settings."""
 from functools import lru_cache
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Union
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,10 +22,18 @@ class Settings(BaseSettings):
     app_name: str = "magure-ai-platform"
 
     # CORS Configuration
-    cors_origins: List[str] = Field(
+    cors_origins: Union[List[str], str] = Field(
         default=["http://localhost:3000", "http://localhost:8000"],
         description="Allowed CORS origins. Set via CORS_ORIGINS env var as comma-separated list.",
     )
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        """Parse comma-separated string into list."""
+        if isinstance(v, str):
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v
     cors_allow_credentials: bool = True
     cors_allow_methods: List[str] = Field(default=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
     cors_allow_headers: List[str] = Field(default=["Authorization", "Content-Type", "X-Request-ID"])

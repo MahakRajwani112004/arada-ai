@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bot, Plug, Settings, ChevronRight } from "lucide-react";
+import { Bot, Plug, Settings, ChevronRight, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -19,6 +19,11 @@ const navItems: NavItem[] = [
     icon: <Bot className="h-4 w-4" />,
   },
   {
+    label: "Workflows",
+    href: "/workflows",
+    icon: <Workflow className="h-4 w-4" />,
+  },
+  {
     label: "Integrations",
     href: "/integrations",
     icon: <Plug className="h-4 w-4" />,
@@ -33,7 +38,7 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="fixed left-0 top-0 z-40 h-screen w-56 border-r border-border bg-background">
+    <aside className="fixed left-0 top-0 z-40 h-screen w-56 border-r border-border bg-[hsl(var(--sidebar))]">
       <div className="flex h-full flex-col">
         {/* Logo */}
         <div className="flex h-14 items-center border-b border-border px-4">
@@ -57,10 +62,10 @@ export function Sidebar() {
                 <Link
                   href={item.href}
                   className={cn(
-                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                    "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200",
                     isActive
-                      ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                      ? "bg-primary/10 text-primary shadow-sm"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground"
                   )}
                 >
                   {item.icon}
@@ -107,10 +112,10 @@ export function Sidebar() {
           <Link
             href="/settings"
             className={cn(
-              "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200",
               pathname === "/settings"
-                ? "bg-accent text-accent-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                ? "bg-primary/10 text-primary shadow-sm"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground"
             )}
           >
             <Settings className="h-4 w-4" />

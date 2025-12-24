@@ -4,42 +4,46 @@
 
 @layer base {
   :root {
-    /* Dark theme by default - MagOneAI uses dark mode first */
-    --background: 240 6% 4%;
-    --foreground: 0 0% 98%;
+    /* Light theme - Clean and modern */
+    --background: 0 0% 100%;
+    --foreground: 224 71% 4%;
 
-    --card: 240 5% 5%;
-    --card-foreground: 0 0% 98%;
+    --card: 0 0% 100%;
+    --card-foreground: 224 71% 4%;
 
-    --popover: 240 5% 5%;
-    --popover-foreground: 0 0% 98%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 71% 4%;
 
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 6% 4%;
+    --primary: 220 90% 56%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 240 4% 10%;
-    --secondary-foreground: 0 0% 98%;
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 220 9% 46%;
 
-    --muted: 240 4% 10%;
-    --muted-foreground: 240 4% 63%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
 
-    --accent: 240 4% 10%;
-    --accent-foreground: 0 0% 98%;
+    --accent: 220 14% 96%;
+    --accent-foreground: 224 71% 4%;
 
-    --destructive: 0 63% 31%;
-    --destructive-foreground: 0 86% 90%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
 
-    --success: 142 76% 36%;
-    --success-foreground: 138 76% 90%;
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
 
-    --warning: 48 96% 53%;
-    --warning-foreground: 32 95% 44%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
 
-    --border: 240 4% 16%;
-    --input: 240 4% 16%;
-    --ring: 0 0% 98%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 220 90% 56%;
 
-    --radius: 0.5rem;
+    --radius: 0.625rem;
+
+    --sidebar: 220 14% 98%;
+    --sidebar-foreground: 224 71% 4%;
+    --sidebar-border: 220 13% 91%;
   }
 }
 
@@ -111,6 +115,19 @@
 
   /* Subtle glow on focus */
   .focus-glow:focus-visible {
-    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+    box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+  }
+
+  /* Card shadows for depth */
+  .card-shadow {
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  }
+
+  .card-shadow-md {
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  }
+
+  .card-shadow-lg {
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
   }
 }

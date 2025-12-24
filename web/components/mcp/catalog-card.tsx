@@ -22,12 +22,12 @@ const serviceIcons: Record<string, React.ReactNode> = {
 };
 
 const serviceColors: Record<string, string> = {
-  "google-calendar": "bg-blue-500/10 text-blue-400",
-  "google-gmail": "bg-red-500/10 text-red-400",
-  "google-drive": "bg-yellow-500/10 text-yellow-400",
-  "outlook-calendar": "bg-blue-600/10 text-blue-300",
-  "outlook-email": "bg-blue-600/10 text-blue-300",
-  slack: "bg-purple-500/10 text-purple-400",
+  "google-calendar": "bg-blue-50 text-blue-600",
+  "google-gmail": "bg-red-50 text-red-600",
+  "google-drive": "bg-amber-50 text-amber-600",
+  "outlook-calendar": "bg-sky-50 text-sky-600",
+  "outlook-email": "bg-sky-50 text-sky-600",
+  slack: "bg-purple-50 text-purple-600",
 };
 
 export function CatalogCard({ item, onConnect, isConnected }: CatalogCardProps) {
@@ -35,7 +35,7 @@ export function CatalogCard({ item, onConnect, isConnected }: CatalogCardProps) 
   const color = serviceColors[item.id] || "bg-secondary text-muted-foreground";
 
   return (
-    <Card className="h-full transition-all hover:border-primary/50">
+    <Card className="h-full border-border/60 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-md">
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
@@ -52,7 +52,7 @@ export function CatalogCard({ item, onConnect, isConnected }: CatalogCardProps) 
             </div>
           </div>
           {isConnected && (
-            <Badge variant="outline" className="bg-success/10 text-success border-success/20">
+            <Badge variant="outline" className="bg-emerald-50 text-emerald-600 border-emerald-200">
               Connected
             </Badge>
           )}

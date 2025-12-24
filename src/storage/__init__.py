@@ -12,8 +12,7 @@ from .workflow_repository import WorkflowRepository
 __all__ = [
     "Base",
     "AgentModel",
-    "WorkflowModel",
-    "WorkflowExecutionModel",
+    "WorkflowDefinitionModel",
     "BaseAgentRepository",
     "InMemoryAgentRepository",
     "FileAgentRepository",
