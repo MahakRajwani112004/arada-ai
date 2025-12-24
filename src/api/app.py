@@ -15,7 +15,7 @@ from src.api.errors import (
     http_exception_handler,
 )
 from src.api.middleware import RequestLoggingMiddleware
-from src.api.routers import agents, mcp, oauth, workflow, workflows
+from src.api.routers import agents, knowledge, mcp, oauth, secrets, workflow, workflows
 from src.config.logging import get_logger, setup_logging
 from src.config.settings import get_settings
 from src.mcp import reconnect_mcp_servers, shutdown_mcp_manager
@@ -82,8 +82,10 @@ app.add_middleware(
 
 # Include routers
 app.include_router(agents.router, prefix="/api/v1")
+app.include_router(knowledge.router, prefix="/api/v1")
 app.include_router(mcp.router, prefix="/api/v1")
 app.include_router(oauth.router, prefix="/api/v1")
+app.include_router(secrets.router, prefix="/api/v1")
 app.include_router(workflow.router, prefix="/api/v1")
 app.include_router(workflows.router, prefix="/api/v1")
 

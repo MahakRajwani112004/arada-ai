@@ -56,6 +56,7 @@ export interface CreateMCPServerFromTemplate {
   template: string;
   name: string;
   credentials: Record<string, string>;
+  oauth_token_ref?: string;
 }
 
 export interface CreateMCPServerCustom {

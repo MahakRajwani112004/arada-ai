@@ -1,10 +1,12 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { ArrowLeft, Trash2, Bot, MessageSquare, Workflow } from "lucide-react";
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowLeft, Trash2, Bot, MessageSquare, Workflow, Pencil } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { PageContainer } from "@/components/layout/page-container";
 import { AgentChat } from "@/components/agents/agent-chat";
+import { AgentForm } from "@/components/agents/agent-form";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -68,8 +70,15 @@ export default function AgentDetailPage({
 }) {
   const { id } = params;
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [isEditing, setIsEditing] = useState(searchParams.get("edit") === "true");
   const { data: agent, isLoading, error } = useAgent(id);
   const deleteAgent = useDeleteAgent();
+
+  // Update isEditing when URL changes
+  useEffect(() => {
+    setIsEditing(searchParams.get("edit") === "true");
+  }, [searchParams]);
 
   const handleDelete = async () => {
     await deleteAgent.mutateAsync(id);
@@ -151,35 +160,59 @@ export default function AgentDetailPage({
               </div>
             </div>
           </div>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="outline" size="sm" className="text-destructive">
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete Agent</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Are you sure you want to delete &quot;{agent.name}&quot;? This
-                  action cannot be undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={handleDelete}
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                >
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (isEditing) {
+                  router.push(`/agents/${id}`);
+                } else {
+                  router.push(`/agents/${id}?edit=true`);
+                }
+              }}
+            >
+              <Pencil className="mr-2 h-4 w-4" />
+              {isEditing ? "Cancel Edit" : "Edit"}
+            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" size="sm" className="text-destructive">
+                  <Trash2 className="mr-2 h-4 w-4" />
                   Delete
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete Agent</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Are you sure you want to delete &quot;{agent.name}&quot;? This
+                    action cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleDelete}
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  >
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
         </div>
 
-        <AgentChat agentId={id} />
+        {isEditing ? (
+          <AgentForm
+            initialData={agent}
+            isEditing={true}
+            onCancel={() => router.push(`/agents/${id}`)}
+          />
+        ) : (
+          <AgentChat agentId={id} />
+        )}
       </PageContainer>
     </>
   );

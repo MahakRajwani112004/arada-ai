@@ -1,7 +1,7 @@
 """MCP (Model Context Protocol) API routes."""
 from typing import Union
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.schemas.mcp import (
@@ -22,6 +22,7 @@ from src.mcp import MCPManager, get_mcp_manager
 from src.mcp.catalog import get_catalog, get_template
 from src.mcp.models import ServerStatus
 from src.mcp.repository import MCPServerRepository
+from src.secrets import get_secrets_manager
 from src.storage import get_session
 
 logger = get_logger(__name__)
@@ -130,6 +131,9 @@ async def create_server(
     Supports two modes:
     - From template: Provide `template` field with catalog template ID
     - Custom: Provide `url` field with MCP server URL
+
+    For template-based servers with OAuth, you can provide `oauth_token_ref` instead of raw credentials.
+    The token_ref is obtained from the OAuth callback endpoint.
     """
     # Determine if this is template-based or custom
     if isinstance(request, CreateServerFromTemplateRequest):
@@ -141,14 +145,47 @@ async def create_server(
                 detail=f"Template '{request.template}' not found in catalog",
             )
 
+        # Resolve credentials from oauth_token_ref if provided
+        credentials = dict(request.credentials)
+        if request.oauth_token_ref:
+            try:
+                secrets_manager = get_secrets_manager()
+                oauth_data = await secrets_manager.retrieve(request.oauth_token_ref)
+
+                # Map OAuth refresh_token to the template's expected credential name
+                # OAuth stores: {"refresh_token": "...", "service": "...", "provider": "..."}
+                # Template expects: {"GOOGLE_REFRESH_TOKEN": "..."}
+                if "refresh_token" in oauth_data:
+                    # Find the first required credential that looks like a refresh token
+                    for cred_spec in template.credentials_required:
+                        if "REFRESH_TOKEN" in cred_spec.name.upper():
+                            credentials[cred_spec.name] = oauth_data["refresh_token"]
+                            logger.info(
+                                "oauth_token_resolved",
+                                token_ref=request.oauth_token_ref,
+                                credential_name=cred_spec.name,
+                            )
+                            break
+            except KeyError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"OAuth token reference '{request.oauth_token_ref}' not found or expired",
+                )
+            except Exception as e:
+                logger.error("oauth_token_resolution_failed", error=str(e))
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to resolve OAuth token: {str(e)}",
+                )
+
         # Validate required credentials
         required_creds = {c.name for c in template.credentials_required}
-        provided_creds = set(request.credentials.keys())
+        provided_creds = set(credentials.keys())
         missing = required_creds - provided_creds
         if missing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Missing required credentials: {', '.join(missing)}",
+                detail=f"Missing required credentials: {', '.join(missing)}. Provide them directly or use oauth_token_ref.",
             )
 
         url = template.url_template
@@ -162,9 +199,10 @@ async def create_server(
         instance = await repository.create(
             name=request.name,
             url=url,
-            credentials=request.credentials,
+            credentials=credentials,  # Use resolved credentials (from oauth_token_ref or direct)
             template=request.template,
             headers=request.headers,
+            oauth_token_ref=request.oauth_token_ref,  # Store for cascade delete
         )
     else:
         # Custom server
@@ -296,6 +334,149 @@ async def delete_server(
         )
 
     logger.info("mcp_server_deleted", server_id=server_id)
+
+
+# ========== Reconnect Endpoints ==========
+
+# Map template IDs to OAuth service names
+OAUTH_SERVICE_MAP = {
+    "google-calendar": "calendar",
+    "gmail": "gmail",
+    "google-drive": "drive",
+}
+
+
+@router.post("/servers/{server_id}/reconnect")
+async def reconnect_server(
+    server_id: str,
+    repository: MCPServerRepository = Depends(get_mcp_repository),
+) -> dict:
+    """Get OAuth URL to reconnect/re-authenticate an MCP server.
+
+    For OAuth-based servers, returns an authorization URL.
+    The user should be redirected to this URL to re-authenticate.
+    After OAuth completes, call PUT /servers/{server_id}/credentials to update.
+    """
+    instance = await repository.get(server_id)
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"MCP server '{server_id}' not found",
+        )
+
+    # Check if this is an OAuth-based template
+    if not instance.template or instance.template not in OAUTH_SERVICE_MAP:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reconnect is only supported for OAuth-based integrations (Google Calendar, Gmail, Drive)",
+        )
+
+    service = OAUTH_SERVICE_MAP[instance.template]
+
+    # Import here to avoid circular imports
+    from src.api.routers.oauth import _create_google_flow, GOOGLE_SCOPES
+
+    scopes = GOOGLE_SCOPES.get(service, [])
+    flow = _create_google_flow(scopes)
+
+    # Include server_id in state for the callback to know which server to update
+    state = f"{service}:reconnect:{server_id}"
+
+    auth_url, _ = flow.authorization_url(
+        access_type="offline",
+        prompt="consent",
+        state=state,
+    )
+
+    logger.info("mcp_server_reconnect_initiated", server_id=server_id, service=service)
+
+    return {
+        "authorization_url": auth_url,
+        "server_id": server_id,
+        "service": service,
+    }
+
+
+@router.put("/servers/{server_id}/credentials", response_model=MCPServerResponse)
+async def update_server_credentials(
+    server_id: str,
+    oauth_token_ref: str = Query(..., description="New OAuth token reference from OAuth callback"),
+    repository: MCPServerRepository = Depends(get_mcp_repository),
+    manager: MCPManager = Depends(get_mcp_manager),
+) -> MCPServerResponse:
+    """Update server credentials after reconnection.
+
+    Called by the frontend after OAuth reconnection completes.
+    Updates the server's credentials in vault and reconnects.
+    """
+    instance = await repository.get(server_id)
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"MCP server '{server_id}' not found",
+        )
+
+    # Get the new OAuth token from vault
+    try:
+        secrets_manager = get_secrets_manager()
+        oauth_data = await secrets_manager.retrieve(oauth_token_ref)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"OAuth token reference '{oauth_token_ref}' not found or expired",
+        )
+
+    # Get template to map credentials
+    template = get_template(instance.template) if instance.template else None
+    credentials = {}
+
+    if template and "refresh_token" in oauth_data:
+        for cred_spec in template.credentials_required:
+            if "REFRESH_TOKEN" in cred_spec.name.upper():
+                credentials[cred_spec.name] = oauth_data["refresh_token"]
+                break
+
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not map OAuth token to server credentials",
+        )
+
+    # Update credentials in repository
+    updated = await repository.update_credentials(
+        server_id=server_id,
+        credentials=credentials,
+        oauth_token_ref=oauth_token_ref,
+    )
+
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update server credentials",
+        )
+
+    # Reconnect to server
+    try:
+        await manager.remove_server(server_id)
+        config = await repository.get_config(server_id)
+        if config:
+            await manager.add_server(config)
+            updated = await repository.update_status(server_id, ServerStatus.ACTIVE)
+        logger.info("mcp_server_reconnected", server_id=server_id)
+    except Exception as e:
+        updated = await repository.update_status(server_id, ServerStatus.ERROR, str(e))
+        logger.error("mcp_server_reconnect_failed", server_id=server_id, error=str(e))
+
+    return MCPServerResponse(
+        id=updated.id,
+        name=updated.name,
+        template=updated.template,
+        url=updated.url,
+        status=updated.status,
+        created_at=updated.created_at,
+        last_used=updated.last_used,
+        error_message=updated.error_message,
+    )
 
 
 # ========== Reconnect Endpoint ==========

@@ -36,6 +36,13 @@ export interface ToolReference {
   tool_id: string;
 }
 
+export interface KnowledgeBaseConfig {
+  collection_name: string;
+  embedding_model?: string;
+  top_k?: number;
+  similarity_threshold?: number;
+}
+
 // API expects lowercase
 export type SafetyLevel = "low" | "standard" | "high" | "maximum";
 
@@ -55,6 +62,7 @@ export interface AgentCreate {
   instructions: AgentInstructions;
   examples: AgentExample[];
   llm_config: LLMConfig;
+  knowledge_base?: KnowledgeBaseConfig;
   tools: ToolReference[];
   safety: SafetyConfig;
 }
@@ -65,6 +73,45 @@ export interface Agent {
   description: string;
   agent_type: AgentType;
   created: boolean;
+}
+
+// Full agent details for editing
+export interface AgentDetail {
+  id: string;
+  name: string;
+  description: string;
+  agent_type: AgentType;
+  role: AgentRole;
+  goal: AgentGoal;
+  instructions: {
+    steps: string[];
+    rules: string[];
+    prohibited: string[];
+    output_format: string | null;
+  };
+  examples: AgentExample[];
+  llm_config: LLMConfig | null;
+  knowledge_base: KnowledgeBaseConfig | null;
+  tools: ToolReference[];
+  routing_table: Record<string, string> | null;
+  orchestrator_config: OrchestratorConfig | null;
+  safety: SafetyConfig;
+}
+
+export interface OrchestratorConfig {
+  mode: string;
+  available_agents: AgentReference[];
+  workflow_definition: string | null;
+  default_aggregation: string;
+  max_parallel: number;
+  max_depth: number;
+  allow_self_reference: boolean;
+}
+
+export interface AgentReference {
+  agent_id: string;
+  alias: string | null;
+  description: string | null;
 }
 
 export interface AgentListResponse {

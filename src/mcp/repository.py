@@ -36,6 +36,7 @@ class MCPServerRepository:
         credentials: Dict[str, str],
         template: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        oauth_token_ref: Optional[str] = None,
     ) -> MCPServerInstance:
         """Create a new MCP server configuration.
 
@@ -45,6 +46,7 @@ class MCPServerRepository:
             credentials: Sensitive credentials to store in vault
             template: Optional catalog template ID
             headers: Optional non-sensitive headers
+            oauth_token_ref: Optional OAuth token reference for cascade delete
 
         Returns:
             Created MCPServerInstance
@@ -65,6 +67,7 @@ class MCPServerRepository:
             url=url,
             status=ServerStatus.DISCONNECTED.value,
             secret_ref=secret_ref,
+            oauth_token_ref=oauth_token_ref,
             headers_config=headers or {},
         )
 
@@ -163,11 +166,65 @@ class MCPServerRepository:
         except KeyError:
             pass  # Secret already deleted
 
+        # Delete OAuth token from vault if present (cascade delete)
+        if db_model.oauth_token_ref:
+            try:
+                await secrets_manager.delete(db_model.oauth_token_ref)
+            except KeyError:
+                pass  # OAuth token already deleted
+
         # Delete database record
         await self._session.delete(db_model)
         await self._session.commit()
 
         return True
+
+    async def update_credentials(
+        self,
+        server_id: str,
+        credentials: Dict[str, str],
+        oauth_token_ref: Optional[str] = None,
+    ) -> Optional[MCPServerInstance]:
+        """Update server credentials in vault.
+
+        Args:
+            server_id: Server ID
+            credentials: New credentials to store
+            oauth_token_ref: Optional new OAuth token reference
+
+        Returns:
+            Updated MCPServerInstance or None if not found
+        """
+        result = await self._session.execute(
+            select(MCPServerModel).where(MCPServerModel.id == server_id)
+        )
+        db_model = result.scalar_one_or_none()
+
+        if db_model is None:
+            return None
+
+        # Update credentials in vault
+        secrets_manager = get_secrets_manager()
+        await secrets_manager.store(db_model.secret_ref, credentials)
+
+        # Delete old OAuth token if replacing with new one
+        if oauth_token_ref and db_model.oauth_token_ref and db_model.oauth_token_ref != oauth_token_ref:
+            try:
+                await secrets_manager.delete(db_model.oauth_token_ref)
+            except KeyError:
+                pass
+
+        # Update OAuth token ref if provided
+        if oauth_token_ref:
+            db_model.oauth_token_ref = oauth_token_ref
+
+        db_model.status = ServerStatus.DISCONNECTED.value
+        db_model.error_message = None
+
+        await self._session.commit()
+        await self._session.refresh(db_model)
+
+        return self._to_instance(db_model)
 
     async def get_config(self, server_id: str) -> Optional[MCPServerConfig]:
         """Get full server config including credentials from vault.
@@ -244,6 +301,7 @@ class MCPServerRepository:
             url=db_model.url,
             status=ServerStatus(db_model.status),
             secret_ref=db_model.secret_ref,
+            oauth_token_ref=db_model.oauth_token_ref,
             created_at=db_model.created_at,
             last_used=db_model.last_used_at,
             error_message=db_model.error_message,

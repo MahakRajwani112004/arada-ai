@@ -6,6 +6,7 @@ import {
   listAgents,
   getAgent,
   createAgent,
+  updateAgent,
   deleteAgent,
   executeWorkflow,
 } from "@/lib/api/agents";
@@ -40,6 +41,23 @@ export function useCreateAgent() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: agentKeys.list() });
       toast.success("Agent created successfully");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+}
+
+export function useUpdateAgent() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ agentId, agent }: { agentId: string; agent: AgentCreate }) =>
+      updateAgent(agentId, agent),
+    onSuccess: (_, { agentId }) => {
+      queryClient.invalidateQueries({ queryKey: agentKeys.list() });
+      queryClient.invalidateQueries({ queryKey: agentKeys.detail(agentId) });
+      toast.success("Agent updated successfully");
     },
     onError: (error: Error) => {
       toast.error(error.message);

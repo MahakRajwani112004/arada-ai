@@ -57,6 +57,7 @@ class MCPServerInstance(BaseModel):
     url: str = Field(..., description="MCP server URL")
     status: ServerStatus = Field(default=ServerStatus.DISCONNECTED)
     secret_ref: str = Field(..., description="Vault reference for credentials")
+    oauth_token_ref: Optional[str] = Field(None, description="OAuth token vault reference for cascade delete")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_used: Optional[datetime] = None
     error_message: Optional[str] = None

@@ -50,3 +50,26 @@ export async function getOAuthUrl(service: string): Promise<OAuthAuthorizeRespon
   );
   return response.data;
 }
+
+export interface ReconnectResponse {
+  authorization_url: string;
+  server_id: string;
+  service: string;
+}
+
+export async function reconnectServer(serverId: string): Promise<ReconnectResponse> {
+  const response = await apiClient.post<ReconnectResponse>(
+    `/mcp/servers/${serverId}/reconnect`
+  );
+  return response.data;
+}
+
+export async function updateServerCredentials(
+  serverId: string,
+  oauthTokenRef: string
+): Promise<MCPServer> {
+  const response = await apiClient.put<MCPServer>(
+    `/mcp/servers/${serverId}/credentials?oauth_token_ref=${encodeURIComponent(oauthTokenRef)}`
+  );
+  return response.data;
+}

@@ -113,13 +113,35 @@ class CreateAgentRequest(BaseModel):
 
 
 class AgentResponse(BaseModel):
-    """Response containing agent details."""
+    """Response containing agent summary."""
 
     id: str
     name: str
     description: str
     agent_type: AgentType
     created: bool = True
+
+    class Config:
+        from_attributes = True
+
+
+class AgentDetailResponse(BaseModel):
+    """Response containing full agent details for editing."""
+
+    id: str
+    name: str
+    description: str
+    agent_type: AgentType
+    role: AgentRoleSchema
+    goal: AgentGoalSchema
+    instructions: AgentInstructionsSchema
+    examples: List[AgentExampleSchema] = []
+    llm_config: Optional[LLMConfigSchema] = None
+    knowledge_base: Optional[KnowledgeBaseConfigSchema] = None
+    tools: List[ToolConfigSchema] = []
+    routing_table: Optional[Dict[str, str]] = None
+    orchestrator_config: Optional[OrchestratorConfigSchema] = None
+    safety: SafetyConfigSchema
 
     class Config:
         from_attributes = True

@@ -102,9 +102,10 @@ class QdrantStore:
         score_threshold: Optional[float] = None,
     ) -> List[SearchResult]:
         """Search for similar vectors."""
-        results = await self.client.search(
+        # qdrant-client 1.7+ uses query_points instead of search
+        response = await self.client.query_points(
             collection_name=collection_name,
-            query_vector=query_vector,
+            query=query_vector,
             limit=top_k,
             score_threshold=score_threshold,
         )
@@ -112,11 +113,11 @@ class QdrantStore:
         return [
             SearchResult(
                 id=str(r.id),
-                content=r.payload.get("content", ""),
+                content=r.payload.get("content", "") if r.payload else "",
                 score=r.score,
-                metadata={k: v for k, v in r.payload.items() if k != "content"},
+                metadata={k: v for k, v in r.payload.items() if k != "content"} if r.payload else {},
             )
-            for r in results
+            for r in response.points
         ]
 
     async def delete_collection(self, collection_name: str) -> bool:

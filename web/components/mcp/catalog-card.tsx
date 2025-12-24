@@ -12,9 +12,16 @@ interface CatalogCardProps {
   isConnected?: boolean;
 }
 
+// Map template IDs to OAuth service names
+const oauthServiceMap: Record<string, string> = {
+  "google-calendar": "calendar",
+  "gmail": "gmail",
+  "google-drive": "drive",
+};
+
 const serviceIcons: Record<string, React.ReactNode> = {
   "google-calendar": <Calendar className="h-5 w-5" />,
-  "google-gmail": <Mail className="h-5 w-5" />,
+  "gmail": <Mail className="h-5 w-5" />,
   "google-drive": <HardDrive className="h-5 w-5" />,
   "outlook-calendar": <Calendar className="h-5 w-5" />,
   "outlook-email": <Mail className="h-5 w-5" />,
@@ -23,7 +30,7 @@ const serviceIcons: Record<string, React.ReactNode> = {
 
 const serviceColors: Record<string, string> = {
   "google-calendar": "bg-blue-500/10 text-blue-400",
-  "google-gmail": "bg-red-500/10 text-red-400",
+  "gmail": "bg-red-500/10 text-red-400",
   "google-drive": "bg-yellow-500/10 text-yellow-400",
   "outlook-calendar": "bg-blue-600/10 text-blue-300",
   "outlook-email": "bg-blue-600/10 text-blue-300",
@@ -33,6 +40,19 @@ const serviceColors: Record<string, string> = {
 export function CatalogCard({ item, onConnect, isConnected }: CatalogCardProps) {
   const icon = serviceIcons[item.id] || <ExternalLink className="h-5 w-5" />;
   const color = serviceColors[item.id] || "bg-secondary text-muted-foreground";
+  const oauthService = oauthServiceMap[item.id];
+  const isGoogleOAuth = !!oauthService; // Only Google services are in the map
+
+  const handleClick = () => {
+    // Always use onConnect to open the sheet for name input
+    onConnect(item);
+  };
+
+  const getButtonText = () => {
+    if (isConnected) return "Manage";
+    if (isGoogleOAuth) return "Sign in with Google";
+    return "Connect";
+  };
 
   return (
     <Card className="h-full transition-all hover:border-primary/50">
@@ -79,9 +99,9 @@ export function CatalogCard({ item, onConnect, isConnected }: CatalogCardProps) 
         <Button
           className="w-full"
           variant={isConnected ? "outline" : "default"}
-          onClick={() => onConnect(item)}
+          onClick={handleClick}
         >
-          {isConnected ? "Manage" : "Connect"}
+          {getButtonText()}
         </Button>
       </CardContent>
     </Card>

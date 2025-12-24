@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { ExpandableTextarea } from "@/components/ui/expandable-textarea";
 import {
   Select,
   SelectContent,
@@ -22,13 +23,29 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { useCreateAgent } from "@/lib/hooks/use-agents";
+import { useCreateAgent, useUpdateAgent } from "@/lib/hooks/use-agents";
 import { useCatalog, useServers } from "@/lib/hooks/use-mcp";
 import { generateAgentConfig } from "@/lib/api/agents";
-import type { AgentType, AgentCreate, AgentExample } from "@/types/agent";
-import { cn } from "@/lib/utils";
+import type { AgentType, AgentCreate, AgentDetail, AgentExample, KnowledgeBaseConfig } from "@/types/agent";
+import { ToolSelectorSheet } from "./tool-selector-sheet";
+import { SelectedToolsDisplay } from "./selected-tools-display";
+import { KBSelector } from "./kb-selector";
+
+interface AgentFormProps {
+  initialData?: AgentDetail;
+  isEditing?: boolean;
+  onCancel?: () => void;
+}
 
 // Confetti component
 function Confetti() {
@@ -58,45 +75,55 @@ function Confetti() {
 }
 
 // Auto-detect agent type based on configuration
-function detectAgentType(purpose: string, tools: string[]): AgentType {
+function detectAgentType(purpose: string, tools: string[], hasKnowledgeBase: boolean): AgentType {
   const lower = purpose.toLowerCase();
+  // If both tools and KB, use FullAgent
+  if (tools.length > 0 && hasKnowledgeBase) return "FullAgent";
   // If tools selected, use ToolAgent (LLM + tools)
   if (tools.length > 0) return "ToolAgent";
+  // If KB selected, use RAGAgent
+  if (hasKnowledgeBase) return "RAGAgent";
   // Multi-step workflows with retrieval
   if (lower.includes("workflow") || lower.includes("multi-step") || lower.includes("research")) return "FullAgent";
   // Default to LLMAgent for simple chat
   return "LLMAgent";
 }
 
-export function AgentForm() {
+export function AgentForm({ initialData, isEditing = false, onCancel }: AgentFormProps) {
   const router = useRouter();
   const createAgent = useCreateAgent();
+  const updateAgent = useUpdateAgent();
   const { data: catalog } = useCatalog();
   const { data: servers } = useServers();
 
-  // Form fields
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [roleTitle, setRoleTitle] = useState("");
-  const [personality, setPersonality] = useState<string[]>([]);
-  const [expertise, setExpertise] = useState<string[]>([]);
-  const [communicationStyle, setCommunicationStyle] = useState("");
-  const [goal, setGoal] = useState("");
-  const [successCriteria, setSuccessCriteria] = useState<string[]>([]);
-  const [instructions, setInstructions] = useState("");
-  const [rules, setRules] = useState<string[]>([]);
-  const [examples, setExamples] = useState<AgentExample[]>([]);
-  const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  // Form fields - initialize from initialData if editing
+  const [name, setName] = useState(initialData?.name ?? "");
+  const [description, setDescription] = useState(initialData?.description ?? "");
+  const [roleTitle, setRoleTitle] = useState(initialData?.role?.title ?? "");
+  const [personality, setPersonality] = useState<string[]>(initialData?.role?.personality ?? []);
+  const [expertise, setExpertise] = useState<string[]>(initialData?.role?.expertise ?? []);
+  const [communicationStyle, setCommunicationStyle] = useState(initialData?.role?.communication_style ?? "");
+  const [goal, setGoal] = useState(initialData?.goal?.objective ?? "");
+  const [successCriteria, setSuccessCriteria] = useState<string[]>(initialData?.goal?.success_criteria ?? []);
+  const [instructions, setInstructions] = useState(initialData?.instructions?.steps?.join("\n") ?? "");
+  const [rules, setRules] = useState<string[]>(initialData?.instructions?.rules ?? []);
+  const [examples, setExamples] = useState<AgentExample[]>(initialData?.examples ?? []);
+  const [selectedTools, setSelectedTools] = useState<string[]>(initialData?.tools?.map(t => t.tool_id) ?? []);
+  const [knowledgeBase, setKnowledgeBase] = useState<KnowledgeBaseConfig | undefined>(
+    initialData?.knowledge_base ?? undefined
+  );
 
   // Temp inputs for list fields
   const [newPersonality, setNewPersonality] = useState("");
   const [newExampleInput, setNewExampleInput] = useState("");
   const [newExampleOutput, setNewExampleOutput] = useState("");
 
-  // Settings
-  const [llmProvider, setLlmProvider] = useState<"openai" | "anthropic">("openai");
-  const [llmModel, setLlmModel] = useState("gpt-4o-mini");
-  const [temperature, setTemperature] = useState(0.7);
+  // Settings - initialize from initialData
+  const [llmProvider, setLlmProvider] = useState<"openai" | "anthropic">(
+    (initialData?.llm_config?.provider as "openai" | "anthropic") ?? "openai"
+  );
+  const [llmModel, setLlmModel] = useState(initialData?.llm_config?.model ?? "gpt-4o-mini");
+  const [temperature, setTemperature] = useState(initialData?.llm_config?.temperature ?? 0.7);
 
   // Handle provider change - reset model to valid option
   const handleProviderChange = (provider: "openai" | "anthropic") => {
@@ -108,19 +135,9 @@ export function AgentForm() {
   const [isAIFilling, setIsAIFilling] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
-  const [showTools, setShowTools] = useState(false);
   const [showExamples, setShowExamples] = useState(false);
-
-  // Available tools from connected servers
-  // Tool ID format must match backend: server_id:tool_name (e.g., srv_xxx:create_event)
-  const availableTools = servers?.servers.flatMap((server) => {
-    const template = catalog?.servers.find((c) => c.id === server.template);
-    return template?.tools.map((tool) => ({
-      id: `${server.id}:${tool}`,  // Use server.id not server.template
-      name: tool,
-      server: server.name,
-    })) || [];
-  }) || [];
+  const [showAIModal, setShowAIModal] = useState(false);
+  const [aiPurpose, setAIPurpose] = useState("");
 
   // Helper to add to list
   const addToList = (
@@ -136,16 +153,17 @@ export function AgentForm() {
   };
 
   // AI Fill - calls real API
-  const handleAIFill = async (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-
+  const handleAIFill = async () => {
     if (!name.trim()) return;
 
     try {
       setIsAIFilling(true);
+      setShowAIModal(false);
 
-      const result = await generateAgentConfig({ name: name.trim() });
+      const result = await generateAgentConfig({
+        name: name.trim(),
+        context: aiPurpose.trim() || undefined,
+      });
 
       // Apply generated config to form
       setDescription(result.description);
@@ -164,6 +182,7 @@ export function AgentForm() {
       console.error("AI Fill error:", error);
     } finally {
       setIsAIFilling(false);
+      setAIPurpose("");
     }
   };
 
@@ -180,13 +199,16 @@ export function AgentForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const agentId = name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+    // Use existing ID when editing, generate new one when creating
+    const agentId = isEditing && initialData
+      ? initialData.id
+      : name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
 
     const agent: AgentCreate = {
       id: agentId,
       name,
       description: description || `${name} agent`,
-      agent_type: detectAgentType(goal, selectedTools),
+      agent_type: detectAgentType(goal, selectedTools, !!knowledgeBase),
       role: {
         title: roleTitle || "AI Assistant",
         expertise: expertise.length > 0 ? expertise : ["general assistance"],
@@ -210,6 +232,7 @@ export function AgentForm() {
         model: llmModel,
         temperature
       },
+      knowledge_base: knowledgeBase,
       tools: selectedTools.map((id) => ({ tool_id: id })),
       safety: {
         level: "standard",  // lowercase as API expects
@@ -218,12 +241,26 @@ export function AgentForm() {
       },
     };
 
-    await createAgent.mutateAsync(agent);
-    setShowSuccess(true);
-    setShowConfetti(true);
-    setTimeout(() => setShowConfetti(false), 4000);
-    setTimeout(() => router.push("/agents"), 2000);
+    if (isEditing && initialData) {
+      await updateAgent.mutateAsync({ agentId: initialData.id, agent });
+      setShowSuccess(true);
+      setTimeout(() => {
+        if (onCancel) {
+          onCancel();
+        } else {
+          router.push(`/agents/${initialData.id}`);
+        }
+      }, 1500);
+    } else {
+      await createAgent.mutateAsync(agent);
+      setShowSuccess(true);
+      setShowConfetti(true);
+      setTimeout(() => setShowConfetti(false), 4000);
+      setTimeout(() => router.push("/agents"), 2000);
+    }
   };
+
+  const isPending = isEditing ? updateAgent.isPending : createAgent.isPending;
 
   return (
     <>
@@ -241,13 +278,71 @@ export function AgentForm() {
               animate={{ scale: 1 }}
               className="bg-card border rounded-2xl p-8 text-center"
             >
-              <div className="text-5xl mb-3">🎉</div>
-              <h2 className="text-xl font-bold">Agent Created!</h2>
-              <p className="text-sm text-muted-foreground mt-1">Redirecting...</p>
+              <div className="text-5xl mb-3">{isEditing ? "✅" : "🎉"}</div>
+              <h2 className="text-xl font-bold">{isEditing ? "Agent Updated!" : "Agent Created!"}</h2>
+              <p className="text-sm text-muted-foreground mt-1">{isEditing ? "Changes saved" : "Redirecting..."}</p>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* AI Generation Modal */}
+      <Dialog open={showAIModal} onOpenChange={setShowAIModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wand2 className="h-5 w-5" />
+              Generate Agent Config
+            </DialogTitle>
+            <DialogDescription>
+              Describe what you want <strong>{name || "this agent"}</strong> to do.
+              The more detail you provide, the better the generated config.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-4">
+            <Textarea
+              value={aiPurpose}
+              onChange={(e) => setAIPurpose(e.target.value)}
+              placeholder="e.g., Help manage my work calendar, send meeting reminders, handle scheduling conflicts, and summarize upcoming events..."
+              rows={4}
+              className="resize-none"
+              autoFocus
+            />
+            <p className="text-xs text-muted-foreground">
+              Tip: Include specific tasks, tools it should use, and any constraints.
+            </p>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setShowAIModal(false);
+                setAIPurpose("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleAIFill}
+              disabled={isAIFilling}
+            >
+              {isAIFilling ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4 mr-2" />
+                  Generate
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column - Main Form */}
@@ -277,11 +372,13 @@ export function AgentForm() {
 
           <div className="space-y-1.5">
             <Label htmlFor="description">Description</Label>
-            <Input
+            <ExpandableTextarea
               id="description"
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={setDescription}
               placeholder="What does this agent do?"
+              label="Description"
+              rows={1}
             />
           </div>
 
@@ -293,12 +390,12 @@ export function AgentForm() {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={handleAIFill}
+                onClick={() => setShowAIModal(true)}
                 disabled={isAIFilling || !name.trim()}
                 className="h-7 text-xs gap-1"
               >
                 {isAIFilling ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
-                Generate with AI
+                {isAIFilling ? "Generating..." : "Generate with AI"}
               </Button>
             </div>
             <div className="flex gap-2">
@@ -375,110 +472,53 @@ export function AgentForm() {
           {/* Goal */}
           <div className="space-y-1.5">
             <Label htmlFor="goal">Goal / Objective</Label>
-            <Textarea
+            <ExpandableTextarea
               id="goal"
               value={goal}
-              onChange={(e) => setGoal(e.target.value)}
+              onChange={setGoal}
               placeholder="What is the main objective of this agent?"
+              label="Goal / Objective"
               rows={2}
-              className="resize-none"
             />
           </div>
 
           {/* Instructions */}
           <div className="space-y-1.5">
             <Label htmlFor="instructions">Instructions (one per line)</Label>
-            <Textarea
+            <ExpandableTextarea
               id="instructions"
               value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
+              onChange={setInstructions}
               placeholder="Step-by-step instructions for the agent..."
+              label="Instructions"
               rows={3}
-              className="resize-none"
             />
           </div>
 
           <Separator />
 
           {/* Tools */}
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label>Tools</Label>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setShowTools(!showTools)}
-                className="h-7 text-xs gap-1"
-              >
-                {showTools ? "Hide" : "Select"} ({selectedTools.length})
-              </Button>
+              <ToolSelectorSheet
+                selectedTools={selectedTools}
+                onToolsChange={setSelectedTools}
+              />
             </div>
-
-            {selectedTools.length > 0 && !showTools && (
-              <div className="flex flex-wrap gap-1">
-                {selectedTools.map((toolId) => {
-                  const tool = availableTools.find((t) => t.id === toolId);
-                  return (
-                    <Badge key={toolId} variant="outline" className="gap-1">
-                      {tool?.name || toolId}
-                      <button type="button" onClick={() => setSelectedTools(selectedTools.filter((t) => t !== toolId))}>
-                        <X className="h-3 w-3" />
-                      </button>
-                    </Badge>
-                  );
-                })}
-              </div>
-            )}
-
-            <AnimatePresence>
-              {showTools && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="overflow-hidden"
-                >
-                  {availableTools.length > 0 ? (
-                    <div className="grid grid-cols-2 gap-2 pt-2">
-                      {availableTools.map((tool) => (
-                        <button
-                          key={tool.id}
-                          type="button"
-                          onClick={() => setSelectedTools((prev) =>
-                            prev.includes(tool.id)
-                              ? prev.filter((t) => t !== tool.id)
-                              : [...prev, tool.id]
-                          )}
-                          className={cn(
-                            "text-left p-2 rounded border text-sm transition-colors",
-                            selectedTools.includes(tool.id)
-                              ? "border-primary bg-primary/10"
-                              : "border-border hover:border-primary/50"
-                          )}
-                        >
-                          <div className="font-medium">{tool.name}</div>
-                          <div className="text-xs text-muted-foreground">{tool.server}</div>
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-4 text-sm text-muted-foreground border border-dashed rounded-lg">
-                      No tools available.{" "}
-                      <a
-                        href="/integrations"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary hover:underline"
-                      >
-                        Connect integrations
-                      </a>
-                    </div>
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
+            <SelectedToolsDisplay
+              selectedTools={selectedTools}
+              servers={servers?.servers}
+              catalog={catalog?.servers}
+              onRemove={(toolId) => setSelectedTools((prev) => prev.filter((t) => t !== toolId))}
+            />
           </div>
+
+          {/* Knowledge Base */}
+          <KBSelector
+            value={knowledgeBase}
+            onChange={setKnowledgeBase}
+          />
 
           {/* Examples */}
           <div className="space-y-1.5">
@@ -617,20 +657,32 @@ export function AgentForm() {
               </div>
             </div>
 
-            <Button
-              type="submit"
-              disabled={createAgent.isPending || !name.trim()}
-              className="w-full mt-4"
-            >
-              {createAgent.isPending ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Creating...
-                </>
-              ) : (
-                "Create Agent"
+            <div className="space-y-2 mt-4">
+              <Button
+                type="submit"
+                disabled={isPending || !name.trim()}
+                className="w-full"
+              >
+                {isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    {isEditing ? "Saving..." : "Creating..."}
+                  </>
+                ) : (
+                  isEditing ? "Save Changes" : "Create Agent"
+                )}
+              </Button>
+              {isEditing && onCancel && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={onCancel}
+                  className="w-full"
+                >
+                  Cancel
+                </Button>
               )}
-            </Button>
+            </div>
           </div>
         </div>
       </form>
