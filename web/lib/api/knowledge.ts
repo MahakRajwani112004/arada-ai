@@ -2,6 +2,7 @@
  * Knowledge Base API client.
  */
 
+import { apiClient } from "./client";
 import type {
   KnowledgeBase,
   KnowledgeBaseListResponse,
@@ -14,76 +15,35 @@ import type {
   SearchKnowledgeBaseResponse,
 } from "@/types/knowledge";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
 // ==================== Knowledge Base API ====================
 
 export async function createKnowledgeBase(
   data: CreateKnowledgeBaseRequest
 ): Promise<KnowledgeBase> {
-  const response = await fetch(`${API_BASE}/api/v1/knowledge-bases`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || "Failed to create knowledge base");
-  }
-
-  return response.json();
+  const response = await apiClient.post<KnowledgeBase>("/knowledge-bases", data);
+  return response.data;
 }
 
 export async function listKnowledgeBases(): Promise<KnowledgeBaseListResponse> {
-  const response = await fetch(`${API_BASE}/api/v1/knowledge-bases`);
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || "Failed to fetch knowledge bases");
-  }
-
-  return response.json();
+  const response = await apiClient.get<KnowledgeBaseListResponse>("/knowledge-bases");
+  return response.data;
 }
 
 export async function getKnowledgeBase(id: string): Promise<KnowledgeBase> {
-  const response = await fetch(`${API_BASE}/api/v1/knowledge-bases/${id}`);
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || "Failed to fetch knowledge base");
-  }
-
-  return response.json();
+  const response = await apiClient.get<KnowledgeBase>(`/knowledge-bases/${id}`);
+  return response.data;
 }
 
 export async function updateKnowledgeBase(
   id: string,
   data: UpdateKnowledgeBaseRequest
 ): Promise<KnowledgeBase> {
-  const response = await fetch(`${API_BASE}/api/v1/knowledge-bases/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || "Failed to update knowledge base");
-  }
-
-  return response.json();
+  const response = await apiClient.patch<KnowledgeBase>(`/knowledge-bases/${id}`, data);
+  return response.data;
 }
 
 export async function deleteKnowledgeBase(id: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/v1/knowledge-bases/${id}`, {
-    method: "DELETE",
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || "Failed to delete knowledge base");
-  }
+  await apiClient.delete(`/knowledge-bases/${id}`);
 }
 
 // ==================== Document API ====================
@@ -91,16 +51,10 @@ export async function deleteKnowledgeBase(id: string): Promise<void> {
 export async function listDocuments(
   kbId: string
 ): Promise<KnowledgeDocumentListResponse> {
-  const response = await fetch(
-    `${API_BASE}/api/v1/knowledge-bases/${kbId}/documents`
+  const response = await apiClient.get<KnowledgeDocumentListResponse>(
+    `/knowledge-bases/${kbId}/documents`
   );
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || "Failed to fetch documents");
-  }
-
-  return response.json();
+  return response.data;
 }
 
 export async function uploadDocument(
@@ -110,20 +64,14 @@ export async function uploadDocument(
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(
-    `${API_BASE}/api/v1/knowledge-bases/${kbId}/documents`,
+  const response = await apiClient.post<UploadDocumentResponse>(
+    `/knowledge-bases/${kbId}/documents`,
+    formData,
     {
-      method: "POST",
-      body: formData,
+      headers: { "Content-Type": "multipart/form-data" },
     }
   );
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || "Failed to upload document");
-  }
-
-  return response.json();
+  return response.data;
 }
 
 export async function uploadDocumentsBatch(
@@ -135,37 +83,21 @@ export async function uploadDocumentsBatch(
     formData.append("files", file);
   });
 
-  const response = await fetch(
-    `${API_BASE}/api/v1/knowledge-bases/${kbId}/documents/batch`,
+  const response = await apiClient.post<BatchUploadResponse>(
+    `/knowledge-bases/${kbId}/documents/batch`,
+    formData,
     {
-      method: "POST",
-      body: formData,
+      headers: { "Content-Type": "multipart/form-data" },
     }
   );
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || "Failed to upload documents");
-  }
-
-  return response.json();
+  return response.data;
 }
 
 export async function deleteDocument(
   kbId: string,
   docId: string
 ): Promise<void> {
-  const response = await fetch(
-    `${API_BASE}/api/v1/knowledge-bases/${kbId}/documents/${docId}`,
-    {
-      method: "DELETE",
-    }
-  );
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || "Failed to delete document");
-  }
+  await apiClient.delete(`/knowledge-bases/${kbId}/documents/${docId}`);
 }
 
 // ==================== Search API ====================
@@ -174,19 +106,9 @@ export async function searchKnowledgeBase(
   kbId: string,
   request: SearchKnowledgeBaseRequest
 ): Promise<SearchKnowledgeBaseResponse> {
-  const response = await fetch(
-    `${API_BASE}/api/v1/knowledge-bases/${kbId}/search`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request),
-    }
+  const response = await apiClient.post<SearchKnowledgeBaseResponse>(
+    `/knowledge-bases/${kbId}/search`,
+    request
   );
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || "Search failed");
-  }
-
-  return response.json();
+  return response.data;
 }

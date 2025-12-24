@@ -58,6 +58,9 @@ dependencies = [
     # Circuit Breaker
     "circuitbreaker>=2.0.0",
 
+    # OAuth
+    "google-auth-oauthlib>=1.2.0",
+
     # Object Storage (MinIO - S3-compatible)
     "miniopy-async>=1.23.0",
 

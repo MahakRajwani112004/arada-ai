@@ -244,8 +244,34 @@ class MCPServerRepository:
             return None
 
         # Get credentials from vault
+        import structlog
+        _logger = structlog.get_logger(__name__)
+
         secrets_manager = get_secrets_manager()
-        credentials = await secrets_manager.retrieve(db_model.secret_ref)
+        try:
+            credentials = await secrets_manager.retrieve(db_model.secret_ref)
+            _logger.info("credentials_retrieved", secret_ref=db_model.secret_ref, keys=list(credentials.keys()) if credentials else [])
+        except KeyError as e:
+            _logger.warning("credentials_not_found", secret_ref=db_model.secret_ref, error=str(e))
+            credentials = {}
+        except Exception as e:
+            _logger.error("credentials_retrieval_failed", secret_ref=db_model.secret_ref, error=str(e), error_type=type(e).__name__)
+            credentials = {}
+
+        # Get OAuth token if present and add refresh_token to credentials
+        if db_model.oauth_token_ref:
+            _logger.info("oauth_token_ref_found", oauth_token_ref=db_model.oauth_token_ref)
+            try:
+                oauth_data = await secrets_manager.retrieve(db_model.oauth_token_ref)
+                _logger.info("oauth_data_retrieved", keys=list(oauth_data.keys()) if oauth_data else [])
+                if "refresh_token" in oauth_data:
+                    # Add as GOOGLE_REFRESH_TOKEN for Google services
+                    credentials["GOOGLE_REFRESH_TOKEN"] = oauth_data["refresh_token"]
+                    _logger.info("refresh_token_added_to_credentials")
+            except KeyError as e:
+                _logger.warning("oauth_token_not_found", oauth_token_ref=db_model.oauth_token_ref, error=str(e))
+            except Exception as e:
+                _logger.error("oauth_token_retrieval_failed", oauth_token_ref=db_model.oauth_token_ref, error=str(e), error_type=type(e).__name__)
 
         # Build headers from credentials + stored headers
         headers = dict(db_model.headers_config)
@@ -258,7 +284,7 @@ class MCPServerRepository:
                     if cred_spec.name in credentials and cred_spec.header_name:
                         headers[cred_spec.header_name] = credentials[cred_spec.name]
 
-        # For custom servers, add credentials as Authorization header
+        # For custom servers, add credentials as headers
         if not db_model.template and credentials:
             # If there's a single credential that looks like a token, use Bearer
             if len(credentials) == 1:
@@ -266,11 +292,11 @@ class MCPServerRepository:
                 if key.lower() in ("token", "api_key", "bearer"):
                     headers["Authorization"] = f"Bearer {value}"
                 else:
-                    headers[f"X-{key}"] = value
+                    headers[self._credential_to_header(key)] = value
             else:
-                # Add each as X-{name} header
+                # Add each as X-{name} header with proper casing
                 for key, value in credentials.items():
-                    headers[f"X-{key}"] = value
+                    headers[self._credential_to_header(key)] = value
 
         return MCPServerConfig(
             id=db_model.id,
@@ -279,6 +305,18 @@ class MCPServerRepository:
             headers=headers,
             template=db_model.template,
         )
+
+    def _credential_to_header(self, key: str) -> str:
+        """Convert credential name to HTTP header format.
+
+        Examples:
+            GOOGLE_REFRESH_TOKEN -> X-Google-Refresh-Token
+            API_KEY -> X-Api-Key
+        """
+        # Split by underscore, title case each part, join with hyphen
+        parts = key.split("_")
+        header_name = "-".join(part.capitalize() for part in parts)
+        return f"X-{header_name}"
 
     def _to_instance(self, db_model: MCPServerModel) -> MCPServerInstance:
         """Convert database model to MCPServerInstance."""

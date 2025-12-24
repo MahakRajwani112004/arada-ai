@@ -2,7 +2,7 @@
 
 from .adapter import MCPToolAdapter
 from .client import MCPClient
-from .manager import MCPManager, get_mcp_manager, shutdown_mcp_manager
+from .manager import MCPManager, get_mcp_manager, reconnect_mcp_servers, shutdown_mcp_manager
 from .models import (
     MCPServerConfig,
     MCPServerInstance,
@@ -21,6 +21,7 @@ __all__ = [
     "MCPManager",
     "get_mcp_manager",
     "shutdown_mcp_manager",
+    "reconnect_mcp_servers",
     # Models
     "MCPServerConfig",
     "MCPServerInstance",
