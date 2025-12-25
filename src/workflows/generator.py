@@ -1,16 +1,25 @@
 """AI-powered workflow generation from natural language prompts."""
 import json
 import re
+import secrets as py_secrets
 from typing import Any, Dict, List, Optional
 
 from src.api.schemas.workflows import (
     ApplyGeneratedWorkflowRequest,
     ApplyGeneratedWorkflowResponse,
     GeneratedAgentConfig,
+    GenerateSkeletonRequest,
+    GenerateSkeletonResponse,
     GenerateWorkflowResponse,
     MCPSuggestion,
+    SkeletonStep,
+    SkeletonStepWithSuggestion,
+    SuggestedAgent,
+    TriggerType,
     WorkflowDefinitionSchema,
+    WorkflowSkeleton,
     WorkflowStepSchema,
+    WorkflowTrigger,
 )
 from src.config.logging import get_logger
 from src.llm import LLMClient, LLMMessage
@@ -24,6 +33,121 @@ from src.storage import BaseAgentRepository
 from src.storage.workflow_repository import WorkflowMetadata, WorkflowRepository
 
 logger = get_logger(__name__)
+
+# Skeleton generation prompt (Phase 1 of two-phase creation)
+GENERATE_SKELETON_PROMPT = """You are an AI workflow architect. Given a user's description,
+design a workflow SKELETON - just the structure and step roles, without creating agents.
+
+## YOUR TASK
+
+Design the workflow structure:
+1. Identify the steps needed to accomplish the user's goal
+2. Give each step a clear name and role description
+3. Suggest the best trigger type (manual or webhook)
+4. Identify what tools/MCPs each step might need
+
+## OUTPUT FORMAT
+
+Return a JSON object with these exact fields:
+
+1. "workflow_name": A descriptive name for the workflow
+2. "workflow_description": What the workflow accomplishes
+3. "trigger_type": "manual" or "webhook" based on the use case
+4. "trigger_reason": Why this trigger type was chosen
+
+5. "steps": Array of workflow steps, each with:
+   - "id": Lowercase identifier with hyphens (e.g., "classify-email")
+   - "name": Human-readable name (e.g., "Classify Email")
+   - "role": What this step should do (1-2 sentences)
+   - "order": Step sequence number (0, 1, 2, ...)
+   - "suggested_agent": {{
+       "name": Suggested agent name,
+       "goal": What the agent should accomplish,
+       "required_mcps": Array of MCP templates needed (e.g., ["gmail", "slack"]),
+       "suggested_tools": Array of tool names (e.g., ["gmail_send_message"])
+     }}
+
+6. "mcp_dependencies": Array of {{
+     "template": MCP template name,
+     "name": Display name,
+     "reason": Why needed
+   }}
+
+7. "explanation": Brief explanation of the workflow design
+8. "warnings": Array of potential issues (can be empty)
+
+## TRIGGER TYPE GUIDELINES
+
+- Use "manual" for:
+  - Chat-initiated workflows
+  - User-driven actions
+  - One-off tasks
+
+- Use "webhook" for:
+  - External event triggers (email received, form submitted)
+  - Scheduled automation
+  - Integration callbacks
+
+## EXAMPLE OUTPUT
+
+{{
+  "workflow_name": "Email Urgency Handler",
+  "workflow_description": "Monitors emails, classifies urgency, and notifies for urgent ones",
+  "trigger_type": "webhook",
+  "trigger_reason": "Triggered by incoming email notifications",
+  "steps": [
+    {{
+      "id": "fetch-email",
+      "name": "Fetch Email",
+      "role": "Retrieve the full email content from the incoming webhook data",
+      "order": 0,
+      "suggested_agent": {{
+        "name": "Email Fetcher",
+        "goal": "Extract and parse email content from webhook payload",
+        "required_mcps": ["gmail"],
+        "suggested_tools": ["gmail_get_message"]
+      }}
+    }},
+    {{
+      "id": "classify-urgency",
+      "name": "Classify Urgency",
+      "role": "Analyze the email content and determine its urgency level",
+      "order": 1,
+      "suggested_agent": {{
+        "name": "Urgency Classifier",
+        "goal": "Classify email urgency as high, medium, or low",
+        "required_mcps": [],
+        "suggested_tools": []
+      }}
+    }},
+    {{
+      "id": "send-notification",
+      "name": "Send Notification",
+      "role": "Notify the user about urgent emails via Slack",
+      "order": 2,
+      "suggested_agent": {{
+        "name": "Slack Notifier",
+        "goal": "Send formatted notifications to Slack for urgent emails",
+        "required_mcps": ["slack"],
+        "suggested_tools": ["slack_send_message"]
+      }}
+    }}
+  ],
+  "mcp_dependencies": [
+    {{"template": "gmail", "name": "Gmail", "reason": "To fetch email content"}},
+    {{"template": "slack", "name": "Slack", "reason": "To send notifications"}}
+  ],
+  "explanation": "This workflow uses a webhook trigger to receive email notifications, then processes each email through classification and notification steps.",
+  "warnings": []
+}}
+
+## USER REQUEST
+
+{user_prompt}
+
+{context_section}
+
+Respond ONLY with valid JSON. No additional text."""
 
 # AI generation prompt template
 GENERATE_WORKFLOW_PROMPT = """You are an AI workflow architect. Given a user's description,
@@ -289,6 +413,142 @@ class WorkflowGenerator:
         except Exception as e:
             logger.error("workflow_generation_parse_error", error=str(e), data=str(data)[:500])
             raise ValueError(f"Failed to parse workflow data: {e}")
+
+    async def generate_skeleton(
+        self,
+        request: GenerateSkeletonRequest,
+        existing_mcps: Optional[List[MCPServerInstance]] = None,
+    ) -> GenerateSkeletonResponse:
+        """Generate a workflow skeleton from natural language prompt.
+
+        This is Phase 1 of the two-phase creation flow. It returns just the
+        structure (steps with roles) without creating agents.
+
+        Args:
+            request: The skeleton generation request
+            existing_mcps: List of existing MCP servers to check connectivity
+
+        Returns:
+            GenerateSkeletonResponse with skeleton structure and suggestions
+        """
+        context_section = f"Additional context: {request.context}" if request.context else ""
+
+        full_prompt = GENERATE_SKELETON_PROMPT.format(
+            user_prompt=request.prompt,
+            context_section=context_section,
+        )
+
+        logger.info("skeleton_generation_started", prompt_length=len(request.prompt))
+
+        messages = [LLMMessage(role="user", content=full_prompt)]
+        response = await self._provider.complete(messages)
+
+        # Parse the response
+        try:
+            content = response.content.strip()
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.startswith("```"):
+                content = content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            content = content.strip()
+
+            data = json.loads(content, strict=False)
+        except json.JSONDecodeError as e:
+            try:
+                cleaned = re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', content)
+                data = json.loads(cleaned, strict=False)
+            except json.JSONDecodeError as e2:
+                logger.error("skeleton_generation_json_error", error=str(e2))
+                raise ValueError(f"Failed to parse AI response as JSON: {e2}")
+
+        # Build skeleton steps
+        skeleton_steps: List[SkeletonStep] = []
+        step_suggestions: List[SkeletonStepWithSuggestion] = []
+
+        for step_data in data.get("steps", []):
+            step = SkeletonStep(
+                id=step_data.get("id", f"step-{len(skeleton_steps)}"),
+                name=step_data.get("name", "Unnamed Step"),
+                role=step_data.get("role", "No role defined"),
+                order=step_data.get("order", len(skeleton_steps)),
+            )
+            skeleton_steps.append(step)
+
+            # Parse agent suggestion if present
+            suggestion = None
+            if "suggested_agent" in step_data:
+                agent_data = step_data["suggested_agent"]
+                suggestion = SuggestedAgent(
+                    name=agent_data.get("name", step.name),
+                    goal=agent_data.get("goal", step.role),
+                    required_mcps=agent_data.get("required_mcps", []),
+                    suggested_tools=agent_data.get("suggested_tools", []),
+                )
+
+            step_suggestions.append(SkeletonStepWithSuggestion(
+                id=step.id,
+                name=step.name,
+                role=step.role,
+                order=step.order,
+                suggestion=suggestion,
+            ))
+
+        # Build trigger configuration
+        trigger_type_str = data.get("trigger_type", "manual")
+        trigger_type = TriggerType.WEBHOOK if trigger_type_str == "webhook" else TriggerType.MANUAL
+
+        # Generate webhook token if webhook trigger
+        webhook_config = None
+        if trigger_type == TriggerType.WEBHOOK:
+            from src.api.schemas.workflows import WebhookTriggerConfig
+            webhook_config = WebhookTriggerConfig(
+                token=py_secrets.token_urlsafe(16),
+                rate_limit=60,
+                max_payload_kb=100,
+            )
+
+        trigger = WorkflowTrigger(
+            type=trigger_type,
+            webhook_config=webhook_config,
+        )
+
+        # Build skeleton
+        skeleton = WorkflowSkeleton(
+            name=data.get("workflow_name", "Untitled Workflow"),
+            description=data.get("workflow_description", ""),
+            trigger=trigger,
+            steps=skeleton_steps,
+        )
+
+        # Check MCP connectivity
+        mcp_dependencies = []
+        existing_mcp_templates = {m.template for m in (existing_mcps or [])}
+
+        for dep in data.get("mcp_dependencies", []):
+            template = dep.get("template", "")
+            mcp_dependencies.append({
+                "template": template,
+                "name": dep.get("name", template),
+                "reason": dep.get("reason", ""),
+                "connected": template in existing_mcp_templates,
+            })
+
+        logger.info(
+            "skeleton_generation_completed",
+            workflow_name=skeleton.name,
+            steps_count=len(skeleton_steps),
+            trigger_type=trigger_type.value,
+        )
+
+        return GenerateSkeletonResponse(
+            skeleton=skeleton,
+            step_suggestions=step_suggestions,
+            mcp_dependencies=mcp_dependencies,
+            explanation=data.get("explanation", ""),
+            warnings=data.get("warnings", []),
+        )
 
     async def apply(
         self,

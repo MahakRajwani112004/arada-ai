@@ -18,7 +18,7 @@ const options = [
       "Smart agent selection",
       "Fully customizable after",
     ],
-    href: "/workflows/generate",
+    href: "/workflows/create",
     recommended: true,
     gradient: "from-purple-500/20 to-blue-500/20",
     iconColor: "text-purple-400",

@@ -105,12 +105,12 @@ class WorkflowRepository:
         workflow_id: str,
         definition: Dict[str, Any],
         metadata: WorkflowMetadata,
-    ) -> str:
-        """Save workflow definition. Returns workflow ID."""
+    ) -> WorkflowWithMetadata:
+        """Save workflow definition. Returns the saved workflow."""
         existing = await self.session.get(WorkflowModel, workflow_id)
 
         if existing:
-            # Update existing workflow
+            # Update existing workflow (re-activate if soft-deleted)
             existing.name = metadata.name
             existing.description = metadata.description
             existing.category = metadata.category
@@ -118,8 +118,11 @@ class WorkflowRepository:
             existing.definition_json = definition
             existing.version = existing.version + 1
             existing.updated_at = datetime.utcnow()
+            existing.is_active = True  # Re-activate if soft-deleted
+            model = existing
         else:
             # Create new workflow
+            now = datetime.utcnow()
             model = WorkflowModel(
                 id=workflow_id,
                 name=metadata.name,
@@ -133,11 +136,14 @@ class WorkflowRepository:
                 is_active=True,
                 is_published=False,
                 created_by=metadata.created_by,
+                created_at=now,
+                updated_at=now,
             )
             self.session.add(model)
 
         await self.session.flush()
-        return workflow_id
+        # Return the model directly to avoid identity map issues with async SQLAlchemy
+        return self._to_workflow_with_metadata(model)
 
     async def get(self, workflow_id: str) -> Optional[WorkflowWithMetadata]:
         """Get workflow by ID."""

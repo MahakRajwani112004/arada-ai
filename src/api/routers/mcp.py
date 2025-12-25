@@ -347,7 +347,7 @@ OAUTH_SERVICE_MAP = {
 
 
 @router.post("/servers/{server_id}/reconnect")
-async def reconnect_server(
+async def get_oauth_reconnect_url(
     server_id: str,
     repository: MCPServerRepository = Depends(get_mcp_repository),
 ) -> dict:

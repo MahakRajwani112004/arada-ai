@@ -2,16 +2,19 @@
 
 import { useState, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { LayoutGrid, List } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { PageContainer } from "@/components/layout/page-container";
 import { WorkflowHeader } from "@/components/workflows/workflow-header";
 import { BlockedWorkflowBanner } from "@/components/workflows/blocked-workflow-banner";
 import { StepList } from "@/components/workflows/steps/step-list";
+import { WorkflowCanvas } from "@/components/workflows/canvas";
 import { RunWorkflowPanel } from "@/components/workflows/execution/run-workflow-panel";
 import { ExecutionHistory } from "@/components/workflows/execution/execution-history";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import {
   useWorkflow,
   useWorkflowExecutions,
@@ -50,12 +53,15 @@ function WorkflowDetailSkeleton() {
   );
 }
 
+type ViewMode = "canvas" | "list";
+
 export default function WorkflowDetailPage() {
   const params = useParams();
   const router = useRouter();
   const workflowId = params.id as string;
 
   const [activeTab, setActiveTab] = useState("definition");
+  const [viewMode, setViewMode] = useState<ViewMode>("canvas");
 
   const { data: workflow, isLoading: isLoadingWorkflow, error } = useWorkflow(workflowId);
   const { data: executionsData, isLoading: isLoadingExecutions } = useWorkflowExecutions(workflowId);
@@ -180,18 +186,68 @@ export default function WorkflowDetailPage() {
                 <div className="grid gap-6 lg:grid-cols-3">
                   <div className="lg:col-span-2">
                     <Card>
-                      <CardContent className="p-6">
-                        <h3 className="font-semibold mb-4">Workflow Steps</h3>
-                        {workflow.definition?.steps && workflow.definition.steps.length > 0 ? (
-                          <StepList
-                            steps={workflow.definition.steps}
-                            missingAgents={missingAgents}
-                            onCreateAgent={handleCreateAgent}
-                          />
-                        ) : (
-                          <p className="text-muted-foreground text-center py-8">
-                            No steps defined yet
-                          </p>
+                      <CardContent className="p-0">
+                        {/* View toggle header */}
+                        <div className="flex items-center justify-between border-b p-4">
+                          <h3 className="font-semibold">Workflow Steps</h3>
+                          <div className="flex items-center gap-1 rounded-lg border p-1">
+                            <Button
+                              variant={viewMode === "canvas" ? "secondary" : "ghost"}
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => setViewMode("canvas")}
+                            >
+                              <LayoutGrid className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant={viewMode === "list" ? "secondary" : "ghost"}
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => setViewMode("list")}
+                            >
+                              <List className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* Canvas View */}
+                        {viewMode === "canvas" && (
+                          <div className="h-[500px]">
+                            {workflow.definition?.steps && workflow.definition.steps.length > 0 ? (
+                              <WorkflowCanvas
+                                definition={workflow.definition}
+                                agents={agentsData?.agents}
+                                baseWebhookUrl={`${typeof window !== "undefined" ? window.location.origin : ""}/api/v1/webhooks`}
+                                onNodeClick={(nodeId) => {
+                                  console.log("Node clicked:", nodeId);
+                                  // TODO: Open node configuration panel
+                                }}
+                              />
+                            ) : (
+                              <div className="flex items-center justify-center h-full">
+                                <p className="text-muted-foreground">
+                                  No steps defined yet
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* List View */}
+                        {viewMode === "list" && (
+                          <div className="p-6">
+                            {workflow.definition?.steps && workflow.definition.steps.length > 0 ? (
+                              <StepList
+                                steps={workflow.definition.steps}
+                                missingAgents={missingAgents}
+                                onCreateAgent={handleCreateAgent}
+                              />
+                            ) : (
+                              <p className="text-muted-foreground text-center py-8">
+                                No steps defined yet
+                              </p>
+                            )}
+                          </div>
                         )}
                       </CardContent>
                     </Card>

@@ -1,8 +1,122 @@
 """API schemas for workflow management, generation, and execution history."""
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+
+# ==================== Trigger Types ====================
+
+
+class TriggerType(str, Enum):
+    """Types of workflow triggers."""
+    MANUAL = "manual"
+    WEBHOOK = "webhook"
+
+
+class ManualTriggerConfig(BaseModel):
+    """Configuration for manual triggers."""
+    pass  # No additional config needed
+
+
+class WebhookTriggerConfig(BaseModel):
+    """Configuration for webhook triggers."""
+    token: str = Field(..., description="Unique token for webhook URL (not workflow_id)")
+    secret: Optional[str] = Field(None, description="HMAC signing secret for verification")
+    rate_limit: int = Field(60, ge=1, le=1000, description="Max requests per minute")
+    max_payload_kb: int = Field(100, ge=1, le=1000, description="Max payload size in KB")
+    expected_fields: List[str] = Field(default_factory=list, description="Expected fields in payload")
+
+
+class WorkflowTrigger(BaseModel):
+    """Workflow trigger configuration."""
+    type: TriggerType
+    manual_config: Optional[ManualTriggerConfig] = None
+    webhook_config: Optional[WebhookTriggerConfig] = None
+
+
+# ==================== Workflow Skeleton Schemas (Two-Phase Creation) ====================
+
+
+class SkeletonStep(BaseModel):
+    """A step in the workflow skeleton (no agent assigned yet)."""
+    id: str = Field(..., description="Unique step identifier")
+    name: str = Field(..., min_length=1, max_length=100, description="Human-readable step name")
+    role: str = Field(..., min_length=1, max_length=500, description="What this step should do")
+    order: int = Field(..., ge=0, description="Step order in the workflow")
+
+
+class WorkflowSkeleton(BaseModel):
+    """Workflow skeleton - structure without agent assignments."""
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str = Field("", max_length=1000)
+    trigger: WorkflowTrigger
+    steps: List[SkeletonStep] = Field(..., min_length=1, max_length=50)
+
+
+class GenerateSkeletonRequest(BaseModel):
+    """Request to generate a workflow skeleton from natural language."""
+    prompt: str = Field(..., min_length=10, max_length=2000)
+    context: Optional[str] = Field(None, max_length=1000)
+
+
+class SuggestedAgent(BaseModel):
+    """AI's suggestion for an agent to fulfill a step."""
+    name: str = Field(..., description="Suggested agent name")
+    description: Optional[str] = Field(None, description="Description of what the agent does")
+    goal: str = Field(..., description="What this agent should accomplish")
+    model: Optional[str] = Field(None, description="LLM model to use (e.g., gpt-4o)")
+    required_mcps: List[str] = Field(default_factory=list, description="MCP servers needed")
+    suggested_tools: List[str] = Field(default_factory=list, description="Tools the agent should use")
+
+
+class SkeletonStepWithSuggestion(BaseModel):
+    """Skeleton step with AI's agent suggestion."""
+    id: str
+    name: str
+    role: str
+    order: int
+    suggestion: Optional[SuggestedAgent] = None
+
+
+class GenerateSkeletonResponse(BaseModel):
+    """Response from skeleton generation."""
+    skeleton: WorkflowSkeleton
+    step_suggestions: List[SkeletonStepWithSuggestion] = Field(
+        default_factory=list,
+        description="Steps with AI agent suggestions"
+    )
+    mcp_dependencies: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="MCP servers needed with connection status"
+    )
+    explanation: str = Field("", description="AI explanation of the workflow structure")
+    warnings: List[str] = Field(default_factory=list)
+
+
+class StepConfiguration(BaseModel):
+    """Configuration for a single step after user review."""
+    step_id: str = Field(..., description="The skeleton step ID")
+    agent_id: Optional[str] = Field(None, description="Existing agent ID to use")
+    create_agent: Optional[SuggestedAgent] = Field(None, description="New agent to create")
+    skipped: bool = Field(False, description="Whether to skip configuring this step for now")
+    input_template: str = Field("${user_input}", description="Input template for the step")
+
+
+class ConfigureStepsRequest(BaseModel):
+    """Request to configure skeleton steps with agents."""
+    skeleton: WorkflowSkeleton
+    configurations: List[StepConfiguration]
+
+
+class ConfigureStepsResponse(BaseModel):
+    """Response after configuring steps."""
+    workflow_id: str
+    agents_created: List[str] = Field(default_factory=list)
+    agents_missing: List[str] = Field(default_factory=list, description="Steps without agents")
+    can_execute: bool
+    warnings: List[str] = Field(default_factory=list)
 
 
 # ==================== Workflow Definition Schemas ====================
@@ -15,7 +129,9 @@ class WorkflowStepSchema(BaseModel):
     type: str = Field(
         ..., description="Step type: agent, parallel, conditional, loop"
     )
+    name: Optional[str] = Field(None, max_length=200, description="Display name for the step")
     agent_id: Optional[str] = Field(None, description="Agent ID for agent steps")
+    suggested_agent: Optional[SuggestedAgent] = Field(None, description="AI suggestion for agent")
     input: Optional[str] = Field(
         "${user_input}", description="Input template with ${...} placeholders"
     )

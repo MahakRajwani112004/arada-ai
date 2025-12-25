@@ -177,12 +177,12 @@ async def google_callback(
 
     # Store refresh token securely in vault
     secrets_manager = get_secrets_manager()
-    token_ref = f"oauth_google_{service}_{uuid.uuid4().hex[:12]}"
+    token_ref = f"oauth_google_{service}_{uuid.uuid4().hex}"
 
     try:
         await secrets_manager.store(
-            ref=token_ref,
-            data={
+            key=token_ref,
+            value={
                 "refresh_token": credentials.refresh_token,
                 "service": service,
                 "provider": "google",

@@ -11,7 +11,9 @@ export type OnErrorAction = "fail" | "skip" | string; // string for step_id jump
 export interface WorkflowStep {
   id: string;
   type: StepType;
+  name?: string; // Display name for the step
   agent_id?: string;
+  suggested_agent?: SuggestedAgent; // AI suggestion (before agent is created)
   input?: string;
   timeout: number;
   retries: number;
@@ -248,6 +250,98 @@ export interface WorkflowFilters {
 
 // Alias for workflow detail page (same as Workflow but explicit)
 export type WorkflowDetail = Workflow;
+
+// ==================== Trigger Types ====================
+
+export type TriggerType = "manual" | "webhook";
+
+export interface ManualTriggerConfig {
+  // No additional config needed for manual triggers
+}
+
+export interface WebhookTriggerConfig {
+  token: string;
+  secret?: string;
+  rate_limit: number;
+  max_payload_kb: number;
+  expected_fields: string[];
+}
+
+export interface WorkflowTrigger {
+  type: TriggerType;
+  manual_config?: ManualTriggerConfig;
+  webhook_config?: WebhookTriggerConfig;
+}
+
+// ==================== Workflow Skeleton (Two-Phase Creation) ====================
+
+export interface SkeletonStep {
+  id: string;
+  name: string;
+  role: string;
+  order: number;
+}
+
+export interface WorkflowSkeleton {
+  name: string;
+  description: string;
+  trigger: WorkflowTrigger;
+  steps: SkeletonStep[];
+}
+
+export interface GenerateSkeletonRequest {
+  prompt: string;
+  context?: string;
+}
+
+export interface SuggestedAgent {
+  name: string;
+  description?: string;
+  goal: string;
+  model?: string;
+  required_mcps: string[];
+  suggested_tools: string[];
+}
+
+export interface SkeletonStepWithSuggestion extends SkeletonStep {
+  suggestion?: SuggestedAgent;
+}
+
+export interface MCPDependency {
+  template: string;
+  name: string;
+  reason: string;
+  connected: boolean;
+}
+
+export interface GenerateSkeletonResponse {
+  skeleton: WorkflowSkeleton;
+  step_suggestions: SkeletonStepWithSuggestion[];
+  mcp_dependencies: MCPDependency[];
+  explanation: string;
+  warnings: string[];
+}
+
+export interface StepConfiguration {
+  step_id: string;
+  agent_id?: string;
+  create_agent?: SuggestedAgent;
+  skipped: boolean;
+  input_template: string;
+}
+
+export interface ConfigureStepsRequest {
+  skeleton: WorkflowSkeleton;
+  configurations: StepConfiguration[];
+}
+
+export interface ConfigureStepsResponse {
+  workflow_id: string;
+  agents_created: string[];
+  agents_missing: string[];
+  can_execute: boolean;
+  warnings: string[];
+}
 
 // ==================== AI Generation ====================
 

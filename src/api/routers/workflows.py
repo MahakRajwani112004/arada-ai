@@ -22,6 +22,8 @@ from src.api.schemas.workflows import (
     CreateWorkflowRequest,
     ExecuteWorkflowRequest,
     ExecuteWorkflowResponse,
+    GenerateSkeletonRequest,
+    GenerateSkeletonResponse,
     GenerateWorkflowRequest,
     GenerateWorkflowResponse,
     MCPToolResponse,
@@ -83,10 +85,9 @@ async def create_workflow(
         tags=request.tags,
         created_by=request.created_by,
     )
-    await workflow_repo.save(request.id, definition_dict, metadata)
+    workflow = await workflow_repo.save(request.id, definition_dict, metadata)
 
-    # Fetch and return the created workflow
-    workflow = await workflow_repo.get(request.id)
+    # Return the created workflow (save now returns the full workflow)
     return WorkflowResponse(
         id=workflow.id,
         name=workflow.name,
@@ -204,10 +205,9 @@ async def update_workflow(
         created_by=existing.created_by,
     )
 
-    await workflow_repo.save(workflow_id, definition, metadata)
+    workflow = await workflow_repo.save(workflow_id, definition, metadata)
 
-    # Fetch and return updated workflow
-    workflow = await workflow_repo.get(workflow_id)
+    # Return updated workflow (save now returns the full workflow)
     return WorkflowResponse(
         id=workflow.id,
         name=workflow.name,
@@ -591,8 +591,30 @@ async def list_available_tools(
     )
 
 
-# ==================== AI Generation (placeholder) ====================
-# These will be fully implemented in generator.py
+# ==================== AI Generation ====================
+
+
+@router.post("/generate/skeleton", response_model=GenerateSkeletonResponse)
+async def generate_workflow_skeleton(
+    request: GenerateSkeletonRequest,
+    mcp_repo: MCPServerRepository = Depends(get_mcp_repository),
+) -> GenerateSkeletonResponse:
+    """Generate a workflow skeleton from natural language (Phase 1 of two-phase creation).
+
+    This generates just the workflow structure with step roles, without creating agents.
+    The user can then edit the structure and configure each step in Phase 2.
+    """
+    from src.workflows.generator import WorkflowGenerator
+
+    generator = WorkflowGenerator()
+
+    # Get existing MCPs to check connectivity
+    existing_mcps = await mcp_repo.list_all()
+
+    return await generator.generate_skeleton(
+        request=request,
+        existing_mcps=existing_mcps,
+    )
 
 
 @router.post("/generate", response_model=GenerateWorkflowResponse)
