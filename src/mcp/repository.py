@@ -7,11 +7,14 @@ from typing import Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config.logging import get_logger
 from src.secrets import get_secrets_manager
 from src.storage.models import MCPServerModel
 
 from .catalog import get_template
 from .models import MCPServerConfig, MCPServerInstance, ServerStatus
+
+logger = get_logger(__name__)
 
 
 class MCPServerRepository:
@@ -59,7 +62,7 @@ class MCPServerRepository:
 
         # Store credentials in vault
         secrets_manager = get_secrets_manager()
-        await secrets_manager.store(secret_ref, credentials)
+        await secrets_manager.store(key=secret_ref, value=credentials)
 
         # Create database record
         db_model = MCPServerModel(
@@ -215,7 +218,7 @@ class MCPServerRepository:
 
         # Update credentials in vault
         secrets_manager = get_secrets_manager()
-        await secrets_manager.store(db_model.secret_ref, credentials)
+        await secrets_manager.store(key=db_model.secret_ref, value=credentials)
 
         # Delete old OAuth token if replacing with new one
         if oauth_token_ref and db_model.oauth_token_ref and db_model.oauth_token_ref != oauth_token_ref:
@@ -255,34 +258,31 @@ class MCPServerRepository:
             return None
 
         # Get credentials from vault
-        import structlog
-        _logger = structlog.get_logger(__name__)
-
         secrets_manager = get_secrets_manager()
         try:
             credentials = await secrets_manager.retrieve(db_model.secret_ref)
-            _logger.info("credentials_retrieved", secret_ref=db_model.secret_ref, keys=list(credentials.keys()) if credentials else [])
+            logger.info("credentials_retrieved", secret_ref=db_model.secret_ref, keys=list(credentials.keys()) if credentials else [])
         except KeyError as e:
-            _logger.warning("credentials_not_found", secret_ref=db_model.secret_ref, error=str(e))
+            logger.warning("credentials_not_found", secret_ref=db_model.secret_ref, error=str(e))
             credentials = {}
         except Exception as e:
-            _logger.error("credentials_retrieval_failed", secret_ref=db_model.secret_ref, error=str(e), error_type=type(e).__name__)
+            logger.error("credentials_retrieval_failed", secret_ref=db_model.secret_ref, error=str(e), error_type=type(e).__name__)
             credentials = {}
 
         # Get OAuth token if present and add refresh_token to credentials
         if db_model.oauth_token_ref:
-            _logger.info("oauth_token_ref_found", oauth_token_ref=db_model.oauth_token_ref)
+            logger.info("oauth_token_ref_found", oauth_token_ref=db_model.oauth_token_ref)
             try:
                 oauth_data = await secrets_manager.retrieve(db_model.oauth_token_ref)
-                _logger.info("oauth_data_retrieved", keys=list(oauth_data.keys()) if oauth_data else [])
+                logger.info("oauth_data_retrieved", keys=list(oauth_data.keys()) if oauth_data else [])
                 if "refresh_token" in oauth_data:
                     # Add as GOOGLE_REFRESH_TOKEN for Google services
                     credentials["GOOGLE_REFRESH_TOKEN"] = oauth_data["refresh_token"]
-                    _logger.info("refresh_token_added_to_credentials")
+                    logger.info("refresh_token_added_to_credentials")
             except KeyError as e:
-                _logger.warning("oauth_token_not_found", oauth_token_ref=db_model.oauth_token_ref, error=str(e))
+                logger.warning("oauth_token_not_found", oauth_token_ref=db_model.oauth_token_ref, error=str(e))
             except Exception as e:
-                _logger.error("oauth_token_retrieval_failed", oauth_token_ref=db_model.oauth_token_ref, error=str(e), error_type=type(e).__name__)
+                logger.error("oauth_token_retrieval_failed", oauth_token_ref=db_model.oauth_token_ref, error=str(e), error_type=type(e).__name__)
 
         # Build headers from credentials + stored headers
         headers = dict(db_model.headers_config)

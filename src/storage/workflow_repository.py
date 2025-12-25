@@ -106,8 +106,8 @@ class WorkflowRepository:
         workflow_id: str,
         definition: Dict[str, Any],
         metadata: WorkflowMetadata,
-    ) -> str:
-        """Save workflow definition. Returns workflow ID."""
+    ) -> WorkflowWithMetadata:
+        """Save workflow definition. Returns the saved workflow."""
         stmt = select(WorkflowModel).where(WorkflowModel.id == workflow_id)
         if self.user_id:
             stmt = stmt.where(WorkflowModel.user_id == self.user_id)
@@ -115,7 +115,7 @@ class WorkflowRepository:
         existing = result.scalar_one_or_none()
 
         if existing:
-            # Update existing workflow
+            # Update existing workflow (re-activate if soft-deleted)
             existing.name = metadata.name
             existing.description = metadata.description
             existing.category = metadata.category
@@ -123,8 +123,11 @@ class WorkflowRepository:
             existing.definition_json = definition
             existing.version = existing.version + 1
             existing.updated_at = datetime.now(timezone.utc)
+            existing.is_active = True  # Re-activate if soft-deleted
+            model = existing
         else:
             # Create new workflow
+            now = datetime.utcnow()
             model = WorkflowModel(
                 id=workflow_id,
                 name=metadata.name,
@@ -138,6 +141,8 @@ class WorkflowRepository:
                 is_active=True,
                 is_published=False,
                 created_by=metadata.created_by,
+                created_at=now,
+                updated_at=now,
             )
             # Set user_id if available
             if self.user_id:
@@ -145,7 +150,8 @@ class WorkflowRepository:
             self.session.add(model)
 
         await self.session.flush()
-        return workflow_id
+        # Return the model directly to avoid identity map issues with async SQLAlchemy
+        return self._to_workflow_with_metadata(model)
 
     async def get(self, workflow_id: str) -> Optional[WorkflowWithMetadata]:
         """Get workflow by ID (scoped to user if user_id is set)."""

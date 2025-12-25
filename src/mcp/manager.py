@@ -75,9 +75,11 @@ class MCPManager:
             self._clients[server_id] = client
             instance.status = ServerStatus.ACTIVE
 
+            # Get tools once and cache
+            tools = await client.list_tools()
+
             # Register tools with global registry
             if register_tools:
-                tools = await client.list_tools()
                 registry = get_registry()
 
                 for tool_info in tools:
@@ -93,7 +95,7 @@ class MCPManager:
                 "mcp_server_added",
                 server_id=server_id,
                 name=config.name,
-                tools_count=len(await client.list_tools()),
+                tools_count=len(tools),
             )
 
         except Exception as e:

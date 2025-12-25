@@ -1,5 +1,6 @@
 """MCP client using Streamable HTTP transport."""
 
+import json
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -288,8 +289,6 @@ class MCPClient:
 
         async for line in response.aiter_lines():
             if line.startswith("data: "):
-                import json
-
                 data = json.loads(line[6:])
                 if "result" in data:
                     result = data["result"]

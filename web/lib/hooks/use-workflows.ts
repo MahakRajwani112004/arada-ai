@@ -17,6 +17,7 @@ import {
   getAvailableMCPs,
   getAvailableTools,
   generateWorkflow,
+  generateWorkflowSkeleton,
   saveGeneratedWorkflow,
   checkWorkflowReadiness,
 } from "@/lib/api/workflows";
@@ -26,6 +27,7 @@ import type {
   CopyWorkflowRequest,
   ExecuteWorkflowRequest,
   WorkflowFilters,
+  GenerateSkeletonRequest,
 } from "@/types/workflow";
 import type {
   GenerateWorkflowRequest,
@@ -234,6 +236,15 @@ export function useAvailableTools() {
 }
 
 // ==================== AI Generation Hooks ====================
+
+export function useGenerateWorkflowSkeleton() {
+  return useMutation({
+    mutationFn: (request: GenerateSkeletonRequest) => generateWorkflowSkeleton(request),
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+}
 
 export function useGenerateWorkflow() {
   return useMutation({

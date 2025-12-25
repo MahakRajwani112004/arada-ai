@@ -1,7 +1,8 @@
 "use client";
 
-import { ArrowLeft, Play, MoreVertical, Trash2, Copy, Edit, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Play, MoreVertical, Trash2, Copy, AlertTriangle, LayoutGrid } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -50,13 +51,19 @@ export function WorkflowHeader({
   isBlocked = false,
   executionCount = 0,
   onRun,
-  onEdit,
+  onEdit: _onEdit,
   onCopy,
   onDelete,
 }: WorkflowHeaderProps) {
+  void _onEdit; // Kept for API compatibility
+  const router = useRouter();
   const updatedAgo = formatDistanceToNow(new Date(workflow.updated_at), {
     addSuffix: true,
   });
+
+  const handleEditInCanvas = () => {
+    router.push(`/workflows/${workflow.id}/canvas`);
+  };
 
   return (
     <div className="space-y-4">
@@ -134,10 +141,10 @@ export function WorkflowHeader({
               variant="outline"
               size="sm"
               className="gap-2"
-              onClick={onEdit}
+              onClick={handleEditInCanvas}
             >
-              <Edit className="h-4 w-4" />
-              Edit
+              <LayoutGrid className="h-4 w-4" />
+              Edit in Canvas
             </Button>
             <Button
               size="sm"

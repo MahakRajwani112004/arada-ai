@@ -1,4 +1,7 @@
 """FastAPI Application - Main entry point."""
+from dotenv import load_dotenv
+load_dotenv()  # Load .env before any other imports read env vars
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request

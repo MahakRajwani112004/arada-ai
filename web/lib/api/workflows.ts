@@ -22,6 +22,10 @@ import type {
   SaveGeneratedWorkflowRequest,
   SaveGeneratedWorkflowResponse,
 } from "@/types/agent-suggestion";
+import type {
+  GenerateSkeletonRequest,
+  GenerateSkeletonResponse,
+} from "@/types/workflow";
 
 // ==================== Workflow CRUD ====================
 
@@ -147,6 +151,16 @@ export async function getAvailableTools(): Promise<AvailableToolsResponse> {
 }
 
 // ==================== AI Generation ====================
+
+export async function generateWorkflowSkeleton(
+  request: GenerateSkeletonRequest
+): Promise<GenerateSkeletonResponse> {
+  const response = await apiClient.post<GenerateSkeletonResponse>(
+    "/workflows/generate/skeleton",
+    request
+  );
+  return response.data;
+}
 
 export async function generateWorkflow(
   request: GenerateWorkflowRequest

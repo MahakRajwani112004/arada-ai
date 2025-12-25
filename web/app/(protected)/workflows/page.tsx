@@ -55,7 +55,7 @@ function EmptyState() {
           </Link>
         </Button>
         <Button asChild className="gap-2">
-          <Link href="/workflows/generate">
+          <Link href="/workflows/create">
             <Sparkles className="h-4 w-4" />
             AI Generate
           </Link>
@@ -85,7 +85,7 @@ export default function WorkflowsPage() {
                 </Link>
               </Button>
               <Button asChild className="gap-2">
-                <Link href="/workflows/generate">
+                <Link href="/workflows/create">
                   <Sparkles className="h-4 w-4" />
                   AI Generate
                 </Link>

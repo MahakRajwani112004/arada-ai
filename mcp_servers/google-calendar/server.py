@@ -16,8 +16,10 @@ from dotenv import load_dotenv
 load_dotenv()  # Load from .env file
 
 from google.auth.transport.requests import Request as GoogleRequest
+from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -63,7 +65,15 @@ class GoogleCalendarServer(BaseMCPServer):
             client_secret=client_secret,
             scopes=["https://www.googleapis.com/auth/calendar"],
         )
-        creds.refresh(GoogleRequest())
+
+        try:
+            creds.refresh(GoogleRequest())
+        except RefreshError as e:
+            raise ValueError(
+                f"Failed to refresh OAuth token. The token may have been revoked "
+                f"or expired. Please re-authenticate. Error: {str(e)}"
+            )
+
         return creds
 
     def _get_service(self, credentials: Dict[str, str]):
@@ -111,25 +121,38 @@ class GoogleCalendarServer(BaseMCPServer):
 
         if date:
             # Parse date and make timezone-aware (UTC)
-            start_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            try:
+                start_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            except ValueError:
+                raise ValueError(f"Invalid date format: '{date}'. Expected YYYY-MM-DD.")
         else:
             # Use current UTC time, reset to start of day
             start_date = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
         end_date = start_date + timedelta(days=days)
 
-        events_result = (
-            service.events()
-            .list(
-                calendarId="primary",
-                timeMin=start_date.isoformat(),
-                timeMax=end_date.isoformat(),
-                maxResults=max_results,
-                singleEvents=True,
-                orderBy="startTime",
+        try:
+            events_result = (
+                service.events()
+                .list(
+                    calendarId="primary",
+                    timeMin=start_date.isoformat() + "Z",
+                    timeMax=end_date.isoformat() + "Z",
+                    maxResults=max_results,
+                    singleEvents=True,
+                    orderBy="startTime",
+                )
+                .execute()
             )
-            .execute()
-        )
+        except HttpError as e:
+            if e.resp.status == 401:
+                raise ValueError("Authentication failed. Please re-authenticate with Google Calendar.")
+            elif e.resp.status == 403:
+                raise ValueError("Access denied. Check calendar permissions.")
+            elif e.resp.status == 429:
+                raise ValueError("Rate limit exceeded. Please try again later.")
+            else:
+                raise ValueError(f"Google Calendar API error: {str(e)}")
 
         events = events_result.get("items", [])
 
@@ -199,7 +222,17 @@ class GoogleCalendarServer(BaseMCPServer):
         if attendees:
             event["attendees"] = [{"email": email} for email in attendees]
 
-        created = service.events().insert(calendarId="primary", body=event).execute()
+        try:
+            created = service.events().insert(calendarId="primary", body=event).execute()
+        except HttpError as e:
+            if e.resp.status == 401:
+                raise ValueError("Authentication failed. Please re-authenticate with Google Calendar.")
+            elif e.resp.status == 403:
+                raise ValueError("Access denied. Check calendar permissions.")
+            elif e.resp.status == 400:
+                raise ValueError(f"Invalid event data: {str(e)}")
+            else:
+                raise ValueError(f"Failed to create event: {str(e)}")
 
         return {
             "success": True,
@@ -227,7 +260,19 @@ class GoogleCalendarServer(BaseMCPServer):
     ) -> Dict[str, Any]:
         """Delete a calendar event."""
         service = self._get_service(credentials)
-        service.events().delete(calendarId="primary", eventId=event_id).execute()
+
+        try:
+            service.events().delete(calendarId="primary", eventId=event_id).execute()
+        except HttpError as e:
+            if e.resp.status == 401:
+                raise ValueError("Authentication failed. Please re-authenticate with Google Calendar.")
+            elif e.resp.status == 404:
+                raise ValueError(f"Event not found: {event_id}")
+            elif e.resp.status == 403:
+                raise ValueError("Access denied. You may not have permission to delete this event.")
+            else:
+                raise ValueError(f"Failed to delete event: {str(e)}")
+
         return {"success": True, "deleted_event_id": event_id}
 
 
