@@ -220,11 +220,12 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_documents_kb_id ON knowledge_documents(
 CREATE INDEX IF NOT EXISTS idx_knowledge_documents_status ON knowledge_documents(status);
 
 -- ============================================
--- LLM Usage tracking table (for analytics)
+-- LLM Usage tracking table (for analytics, user-scoped)
 -- ============================================
 CREATE TABLE IF NOT EXISTS llm_usage (
     id VARCHAR(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     request_id VARCHAR(100),
     agent_id VARCHAR(100),
     workflow_id VARCHAR(100),
@@ -241,6 +242,7 @@ CREATE TABLE IF NOT EXISTS llm_usage (
 );
 
 CREATE INDEX IF NOT EXISTS idx_llm_usage_timestamp ON llm_usage(timestamp);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_user_id ON llm_usage(user_id);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_request_id ON llm_usage(request_id);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_agent_id ON llm_usage(agent_id);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_workflow_id ON llm_usage(workflow_id);
@@ -248,11 +250,12 @@ CREATE INDEX IF NOT EXISTS idx_llm_usage_provider ON llm_usage(provider);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_model ON llm_usage(model);
 
 -- ============================================
--- Agent Executions tracking table (for analytics)
+-- Agent Executions tracking table (for analytics, user-scoped)
 -- ============================================
 CREATE TABLE IF NOT EXISTS agent_executions (
     id VARCHAR(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     request_id VARCHAR(100),
     workflow_id VARCHAR(100),
     agent_id VARCHAR(100) NOT NULL,
@@ -266,6 +269,7 @@ CREATE TABLE IF NOT EXISTS agent_executions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_executions_timestamp ON agent_executions(timestamp);
+CREATE INDEX IF NOT EXISTS idx_agent_executions_user_id ON agent_executions(user_id);
 CREATE INDEX IF NOT EXISTS idx_agent_executions_request_id ON agent_executions(request_id);
 CREATE INDEX IF NOT EXISTS idx_agent_executions_workflow_id ON agent_executions(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_agent_executions_agent_id ON agent_executions(agent_id);

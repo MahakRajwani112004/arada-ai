@@ -81,7 +81,13 @@ class RAGAgent(BaseAgent):
         messages = self._build_messages_with_context(context, retrieved_docs)
 
         # Generate response
-        response = await self._provider.complete(messages)
+        response = await self._provider.complete(
+            messages,
+            user_id=context.user_id,
+            agent_id=self.id,
+            request_id=context.request_id,
+            workflow_id=context.workflow_id,
+        )
 
         return AgentResponse(
             content=response.content,

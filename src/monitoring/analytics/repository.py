@@ -21,6 +21,7 @@ class AnalyticsRepository:
 
     async def save_llm_usage(
         self,
+        user_id: str,
         provider: str,
         model: str,
         prompt_tokens: int,
@@ -36,6 +37,7 @@ class AnalyticsRepository:
     ) -> str:
         """Save LLM usage record. Returns record ID."""
         record = LLMUsageModel(
+            user_id=user_id,
             request_id=request_id,
             agent_id=agent_id,
             workflow_id=workflow_id,
@@ -56,6 +58,7 @@ class AnalyticsRepository:
 
     async def get_llm_usage_stats(
         self,
+        user_id: str,
         hours: int = 24,
         provider: Optional[str] = None,
         model: Optional[str] = None,
@@ -71,7 +74,10 @@ class AnalyticsRepository:
             func.sum(LLMUsageModel.cost_cents).label("total_cost_cents"),
             func.avg(LLMUsageModel.latency_ms).label("avg_latency_ms"),
             func.sum(func.cast(LLMUsageModel.success, type_=int)).label("success_count"),
-        ).where(LLMUsageModel.timestamp >= since)
+        ).where(
+            LLMUsageModel.user_id == user_id,
+            LLMUsageModel.timestamp >= since,
+        )
 
         if provider:
             query = query.where(LLMUsageModel.provider == provider)
@@ -96,6 +102,7 @@ class AnalyticsRepository:
 
     async def get_llm_usage_by_model(
         self,
+        user_id: str,
         hours: int = 24,
     ) -> List[dict]:
         """Get LLM usage grouped by provider and model."""
@@ -109,7 +116,10 @@ class AnalyticsRepository:
                 func.sum(LLMUsageModel.total_tokens).label("tokens"),
                 func.sum(LLMUsageModel.cost_cents).label("cost_cents"),
             )
-            .where(LLMUsageModel.timestamp >= since)
+            .where(
+                LLMUsageModel.user_id == user_id,
+                LLMUsageModel.timestamp >= since,
+            )
             .group_by(LLMUsageModel.provider, LLMUsageModel.model)
             .order_by(func.sum(LLMUsageModel.cost_cents).desc())
         )
@@ -133,6 +143,7 @@ class AnalyticsRepository:
 
     async def save_agent_execution(
         self,
+        user_id: str,
         agent_id: str,
         agent_type: str,
         latency_ms: int,
@@ -146,6 +157,7 @@ class AnalyticsRepository:
     ) -> str:
         """Save agent execution record. Returns record ID."""
         record = AgentExecutionModel(
+            user_id=user_id,
             request_id=request_id,
             workflow_id=workflow_id,
             agent_id=agent_id,
@@ -163,6 +175,7 @@ class AnalyticsRepository:
 
     async def get_agent_stats(
         self,
+        user_id: str,
         hours: int = 24,
         agent_id: Optional[str] = None,
         agent_type: Optional[str] = None,
@@ -176,7 +189,10 @@ class AnalyticsRepository:
             func.sum(AgentExecutionModel.llm_calls_count).label("total_llm_calls"),
             func.sum(AgentExecutionModel.tool_calls_count).label("total_tool_calls"),
             func.sum(func.cast(AgentExecutionModel.success, type_=int)).label("success_count"),
-        ).where(AgentExecutionModel.timestamp >= since)
+        ).where(
+            AgentExecutionModel.user_id == user_id,
+            AgentExecutionModel.timestamp >= since,
+        )
 
         if agent_id:
             query = query.where(AgentExecutionModel.agent_id == agent_id)
@@ -199,6 +215,7 @@ class AnalyticsRepository:
 
     async def get_agent_stats_by_type(
         self,
+        user_id: str,
         hours: int = 24,
     ) -> List[dict]:
         """Get agent execution stats grouped by agent type."""
@@ -211,7 +228,10 @@ class AnalyticsRepository:
                 func.avg(AgentExecutionModel.latency_ms).label("avg_latency_ms"),
                 func.sum(func.cast(AgentExecutionModel.success, type_=int)).label("success_count"),
             )
-            .where(AgentExecutionModel.timestamp >= since)
+            .where(
+                AgentExecutionModel.user_id == user_id,
+                AgentExecutionModel.timestamp >= since,
+            )
             .group_by(AgentExecutionModel.agent_type)
             .order_by(func.count(AgentExecutionModel.id).desc())
         )

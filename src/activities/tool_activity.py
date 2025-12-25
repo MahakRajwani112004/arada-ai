@@ -52,6 +52,7 @@ class ToolExecutionInput:
     """Input for tool execution activity."""
 
     tool_name: str
+    user_id: str  # Required for user-level analytics
     arguments: Dict[str, Any] = field(default_factory=dict)
     # Agent execution context (for nested agent calls)
     current_depth: int = 0
@@ -147,6 +148,7 @@ async def _execute_agent_tool(input: ToolExecutionInput) -> ToolExecutionOutput:
     agent_input = AgentToolExecutionInput(
         agent_id=agent_id,
         query=input.arguments.get("query", ""),
+        user_id=input.user_id,
         context={
             "additional_context": input.arguments.get("context", ""),
             "conversation_history": input.arguments.get("conversation_history", []),

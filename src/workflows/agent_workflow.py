@@ -66,6 +66,7 @@ class AgentWorkflowInput:
     agent_id: str
     agent_type: str
     user_input: str
+    user_id: str  # Required for user-level analytics
     conversation_history: List[Dict[str, str]] = field(default_factory=list)
     session_id: Optional[str] = None
 
@@ -326,6 +327,7 @@ class AgentWorkflow:
                 provider=input.llm_provider,
                 model=input.llm_model,
                 messages=messages,
+                user_id=input.user_id,
                 temperature=input.llm_temperature,
                 max_tokens=input.llm_max_tokens,
             ),
@@ -388,6 +390,7 @@ class AgentWorkflow:
                 provider=input.llm_provider,
                 model=input.llm_model,
                 messages=messages,
+                user_id=input.user_id,
                 temperature=input.llm_temperature,
                 max_tokens=input.llm_max_tokens,
             ),
@@ -454,6 +457,7 @@ class AgentWorkflow:
                     provider=input.llm_provider,
                     model=input.llm_model,
                     messages=messages,
+                    user_id=input.user_id,
                     temperature=input.llm_temperature,
                     max_tokens=input.llm_max_tokens,
                     tools=tools if tools else None,
@@ -505,6 +509,7 @@ class AgentWorkflow:
                         execute_tool,
                         ToolExecutionInput(
                             tool_name=original_name,  # Use original name for execution
+                            user_id=input.user_id,
                             arguments=tc.arguments,
                         ),
                         start_to_close_timeout=timedelta(seconds=60),
@@ -604,6 +609,7 @@ class AgentWorkflow:
                     provider=input.llm_provider,
                     model=input.llm_model,
                     messages=messages,
+                    user_id=input.user_id,
                     temperature=input.llm_temperature,
                     max_tokens=input.llm_max_tokens,
                     tools=tools if tools else None,
@@ -647,7 +653,7 @@ class AgentWorkflow:
                 else:
                     result: ToolExecutionOutput = await workflow.execute_activity(
                         execute_tool,
-                        ToolExecutionInput(tool_name=original_name, arguments=tc.arguments),
+                        ToolExecutionInput(tool_name=original_name, user_id=input.user_id, arguments=tc.arguments),
                         start_to_close_timeout=timedelta(seconds=60),
                     )
                     tool_result = {"success": result.success, "output": result.output, "error": result.error}
@@ -697,6 +703,7 @@ Respond with ONLY the category name, nothing else."""
                 provider=input.llm_provider,
                 model=input.llm_model,
                 messages=messages,
+                user_id=input.user_id,
                 temperature=0.1,
                 max_tokens=50,
             ),
@@ -855,6 +862,7 @@ Call agents as tools to delegate tasks. Synthesize their results into a coherent
                     provider=input.llm_provider,
                     model=input.llm_model,
                     messages=messages,
+                    user_id=input.user_id,
                     temperature=input.llm_temperature,
                     max_tokens=input.llm_max_tokens,
                     tools=tools if tools else None,
@@ -905,6 +913,7 @@ Call agents as tools to delegate tasks. Synthesize their results into a coherent
                         AgentToolExecutionInput(
                             agent_id=agent_id,
                             query=tc.arguments.get("query", ""),
+                            user_id=input.user_id,
                             context={
                                 "additional_context": tc.arguments.get("context", ""),
                             },
@@ -929,6 +938,7 @@ Call agents as tools to delegate tasks. Synthesize their results into a coherent
                         execute_tool,
                         ToolExecutionInput(
                             tool_name=original_name,
+                            user_id=input.user_id,
                             arguments=tc.arguments,
                         ),
                         start_to_close_timeout=timedelta(seconds=60),
@@ -1072,6 +1082,7 @@ Call agents as tools to delegate tasks. Synthesize their results into a coherent
                         AgentToolExecutionInput(
                             agent_id=step["agent_id"],
                             query=resolved_input,
+                            user_id=input.user_id,
                             context={},
                             current_depth=0,
                             max_depth=input.orchestrator_max_depth,
@@ -1152,6 +1163,7 @@ Call agents as tools to delegate tasks. Synthesize their results into a coherent
                             AgentToolExecutionInput(
                                 agent_id=branch["agent_id"],
                                 query=resolved_input,
+                                user_id=input.user_id,
                                 context={},
                                 current_depth=0,
                                 max_depth=input.orchestrator_max_depth,
@@ -1259,6 +1271,7 @@ Call agents as tools to delegate tasks. Synthesize their results into a coherent
                                 AgentToolExecutionInput(
                                     agent_id=inner_step["agent_id"],
                                     query=resolved_input,
+                                    user_id=input.user_id,
                                     context={},
                                     current_depth=0,
                                     max_depth=input.orchestrator_max_depth,

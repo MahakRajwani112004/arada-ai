@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useExecuteWorkflow } from "@/lib/hooks/use-workflows";
 import { useExecuteWorkflow as useExecuteAgent } from "@/lib/hooks/use-agents";
-import type { ExecuteWorkflowResponse, StepExecutionResult } from "@/types/workflow";
+import type { StepExecutionResult } from "@/types/workflow";
 
 interface Message {
   id: string;
@@ -49,7 +49,6 @@ export function CanvasExecutionPanel({
   const executeAgent = useExecuteAgent();
 
   const messages = activeTab === "workflow" ? workflowMessages : agentMessages;
-  const setMessages = activeTab === "workflow" ? setWorkflowMessages : setAgentMessages;
   const isLoading = executeWorkflow.isPending || executeAgent.isPending;
 
   // Update active tab when selected agent changes

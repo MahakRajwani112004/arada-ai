@@ -18,7 +18,16 @@ const signupSchema = z
   .object({
     email: z.string().email("Please enter a valid email"),
     displayName: z.string().optional(),
-    password: z.string().min(8, "Password must be at least 8 characters"),
+    password: z
+      .string()
+      .min(8, "Password must be at least 8 characters")
+      .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
+      .regex(/[a-z]/, "Password must contain at least one lowercase letter")
+      .regex(/\d/, "Password must contain at least one number")
+      .regex(
+        /[!@#$%^&*(),.?":{}|<>]/,
+        "Password must contain at least one special character"
+      ),
     confirmPassword: z.string(),
   })
   .refine((data) => data.password === data.confirmPassword, {
@@ -108,7 +117,7 @@ function SignupForm() {
               <Input
                 id="password"
                 type="password"
-                placeholder="Create a password (min 8 characters)"
+                placeholder="Min 8 chars, uppercase, lowercase, number, special"
                 autoComplete="new-password"
                 {...register("password")}
               />

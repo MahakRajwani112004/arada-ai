@@ -31,6 +31,11 @@ class LLMUsageModel(Base):
         index=True,
     )
 
+    # User ownership - all analytics are user-scoped
+    user_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, index=True
+    )
+
     # Correlation IDs
     request_id: Mapped[Optional[str]] = mapped_column(
         String(100), nullable=True, index=True
@@ -94,6 +99,11 @@ class AgentExecutionModel(Base):
         nullable=False,
         server_default=func.now(),
         index=True,
+    )
+
+    # User ownership - all analytics are user-scoped
+    user_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, index=True
     )
 
     # Correlation IDs

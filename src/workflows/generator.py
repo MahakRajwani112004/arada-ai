@@ -288,6 +288,7 @@ class WorkflowGenerator:
     async def generate(
         self,
         prompt: str,
+        user_id: str,
         context: Optional[str] = None,
         preferred_complexity: str = "auto",
         include_agents: bool = True,
@@ -351,7 +352,7 @@ class WorkflowGenerator:
         logger.info("workflow_generation_started", prompt_length=len(prompt))
 
         messages = [LLMMessage(role="user", content=full_prompt)]
-        response = await self._provider.complete(messages)
+        response = await self._provider.complete(messages, user_id=user_id)
 
         # Parse the response
         try:
@@ -417,6 +418,7 @@ class WorkflowGenerator:
     async def generate_skeleton(
         self,
         request: GenerateSkeletonRequest,
+        user_id: str,
         existing_mcps: Optional[List[MCPServerInstance]] = None,
     ) -> GenerateSkeletonResponse:
         """Generate a workflow skeleton from natural language prompt.
@@ -441,7 +443,7 @@ class WorkflowGenerator:
         logger.info("skeleton_generation_started", prompt_length=len(request.prompt))
 
         messages = [LLMMessage(role="user", content=full_prompt)]
-        response = await self._provider.complete(messages)
+        response = await self._provider.complete(messages, user_id=user_id)
 
         # Parse the response
         try:

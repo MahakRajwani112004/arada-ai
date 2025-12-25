@@ -72,6 +72,8 @@ class BaseLLMProvider(ABC):
         stop_sequences: Optional[List[str]] = None,
         tools: Optional[List[ToolDefinition]] = None,
         *,
+        # Required for user-level analytics
+        user_id: str,
         # Optional context for correlation (passed by agents)
         agent_id: Optional[str] = None,
         request_id: Optional[str] = None,
@@ -141,6 +143,7 @@ class BaseLLMProvider(ABC):
             if settings.analytics_enabled:
                 asyncio.create_task(
                     self._record_analytics(
+                        user_id=user_id,
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                         latency_ms=latency_ms,
@@ -229,6 +232,7 @@ class BaseLLMProvider(ABC):
 
     async def _record_analytics(
         self,
+        user_id: str,
         prompt_tokens: int,
         completion_tokens: int,
         latency_ms: int,
@@ -245,6 +249,7 @@ class BaseLLMProvider(ABC):
 
             service = get_analytics_service()
             await service.record_llm_usage(
+                user_id=user_id,
                 provider=self._provider_name,
                 model=self.model,
                 prompt_tokens=prompt_tokens,

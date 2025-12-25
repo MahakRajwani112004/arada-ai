@@ -67,9 +67,10 @@ class BaseAgent(ABC):
             # Get agent type from config
             agent_type = self.config.type.value if hasattr(self.config.type, "value") else str(self.config.type)
 
-            # Extract request_id and workflow_id from context if available
-            request_id = getattr(context, "request_id", None)
-            workflow_id = getattr(context, "workflow_id", None)
+            # Extract correlation IDs from context
+            user_id = context.user_id
+            request_id = context.request_id
+            workflow_id = context.workflow_id
 
             # Record Prometheus metrics
             if settings.monitoring_enabled:
@@ -83,6 +84,7 @@ class BaseAgent(ABC):
             if settings.analytics_enabled:
                 asyncio.create_task(
                     self._record_analytics(
+                        user_id=user_id,
                         agent_type=agent_type,
                         latency_ms=latency_ms,
                         success=success,
@@ -138,6 +140,7 @@ class BaseAgent(ABC):
 
     async def _record_analytics(
         self,
+        user_id: str,
         agent_type: str,
         latency_ms: int,
         success: bool,
@@ -152,6 +155,7 @@ class BaseAgent(ABC):
 
             service = get_analytics_service()
             await service.record_agent_execution(
+                user_id=user_id,
                 agent_id=self.id,
                 agent_type=agent_type,
                 latency_ms=latency_ms,

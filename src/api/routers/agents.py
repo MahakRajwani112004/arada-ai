@@ -134,7 +134,7 @@ async def generate_agent_config(
             LLMMessage(role="user", content=user_content),
         ]
 
-        response = await provider.complete(messages)
+        response = await provider.complete(messages, user_id=current_user.id)
 
         # Parse JSON from response
         content = response.content.strip()

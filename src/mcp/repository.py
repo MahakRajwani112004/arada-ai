@@ -55,14 +55,24 @@ class MCPServerRepository:
 
         Returns:
             Created MCPServerInstance
+
+        Raises:
+            ValueError: If user_id is not set (required for secure storage)
         """
+        if not self._user_id:
+            raise ValueError("user_id is required for creating MCP servers with secure credential storage")
+
         # Generate unique ID
         server_id = f"srv_{uuid.uuid4().hex[:12]}"
-        secret_ref = f"mcp/servers/{server_id}"
+        # Use user-scoped path for proper credential isolation
+        secret_ref = f"users/{self._user_id}/mcp/servers/{server_id}"
 
-        # Store credentials in vault
+        # Store credentials in vault with user isolation
         secrets_manager = get_secrets_manager()
-        await secrets_manager.store(key=secret_ref, value=credentials)
+        await secrets_manager.store(key=secret_ref, value={
+            **credentials,
+            "user_id": self._user_id,  # Store user_id for validation
+        })
 
         # Create database record
         db_model = MCPServerModel(
@@ -74,10 +84,8 @@ class MCPServerRepository:
             secret_ref=secret_ref,
             oauth_token_ref=oauth_token_ref,
             headers_config=headers or {},
+            user_id=self._user_id,
         )
-        # Set user_id if available
-        if self._user_id:
-            db_model.user_id = self._user_id
 
         self._session.add(db_model)
         await self._session.commit()

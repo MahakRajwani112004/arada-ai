@@ -36,7 +36,13 @@ class RouterAgent(BaseAgent):
         messages = self._build_classification_messages(context)
 
         # Get classification from LLM
-        response = await self._provider.complete(messages)
+        response = await self._provider.complete(
+            messages,
+            user_id=context.user_id,
+            agent_id=self.id,
+            request_id=context.request_id,
+            workflow_id=context.workflow_id,
+        )
 
         # Parse classification
         classification = self._parse_classification(response.content)

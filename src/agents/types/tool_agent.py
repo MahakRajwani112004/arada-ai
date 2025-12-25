@@ -72,7 +72,7 @@ class ToolAgent(BaseAgent):
             iterations += 1
 
             # Call LLM with tools
-            response = await self._call_with_tools(messages, tool_definitions)
+            response = await self._call_with_tools(messages, tool_definitions, context)
 
             # Check if LLM wants to call tools
             tool_calls = self._extract_tool_calls(response)
@@ -139,9 +139,17 @@ class ToolAgent(BaseAgent):
         self,
         messages: List[LLMMessage],
         tools: List[Dict[str, Any]],
+        context: AgentContext,
     ):
         """Call LLM with tool definitions."""
-        return await self._provider.complete(messages, tools=tools if tools else None)
+        return await self._provider.complete(
+            messages,
+            tools=tools if tools else None,
+            user_id=context.user_id,
+            agent_id=self.id,
+            request_id=context.request_id,
+            workflow_id=context.workflow_id,
+        )
 
     def _extract_tool_calls(
         self, response

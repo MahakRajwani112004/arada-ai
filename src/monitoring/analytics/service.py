@@ -24,6 +24,7 @@ class AnalyticsService:
 
     async def record_llm_usage(
         self,
+        user_id: str,
         provider: str,
         model: str,
         prompt_tokens: int,
@@ -52,6 +53,7 @@ class AnalyticsService:
             async with get_async_session() as session:
                 repo = AnalyticsRepository(session)
                 await repo.save_llm_usage(
+                    user_id=user_id,
                     provider=provider,
                     model=model,
                     prompt_tokens=prompt_tokens,
@@ -68,6 +70,7 @@ class AnalyticsService:
 
             logger.debug(
                 "llm_usage_recorded",
+                user_id=user_id,
                 provider=provider,
                 model=model,
                 tokens=prompt_tokens + completion_tokens,
@@ -86,6 +89,7 @@ class AnalyticsService:
 
     async def record_agent_execution(
         self,
+        user_id: str,
         agent_id: str,
         agent_type: str,
         latency_ms: int,
@@ -110,6 +114,7 @@ class AnalyticsService:
             async with get_async_session() as session:
                 repo = AnalyticsRepository(session)
                 await repo.save_agent_execution(
+                    user_id=user_id,
                     agent_id=agent_id,
                     agent_type=agent_type,
                     latency_ms=latency_ms,
@@ -124,6 +129,7 @@ class AnalyticsService:
 
             logger.debug(
                 "agent_execution_recorded",
+                user_id=user_id,
                 agent_id=agent_id,
                 agent_type=agent_type,
                 latency_ms=latency_ms,
@@ -145,37 +151,39 @@ class AnalyticsService:
 
     async def get_llm_usage_stats(
         self,
+        user_id: str,
         hours: int = 24,
         provider: Optional[str] = None,
         model: Optional[str] = None,
     ) -> dict:
-        """Get aggregated LLM usage statistics."""
+        """Get aggregated LLM usage statistics for a user."""
         async with get_async_session() as session:
             repo = AnalyticsRepository(session)
-            return await repo.get_llm_usage_stats(hours, provider, model)
+            return await repo.get_llm_usage_stats(user_id, hours, provider, model)
 
-    async def get_llm_usage_by_model(self, hours: int = 24) -> List[dict]:
-        """Get LLM usage grouped by provider and model."""
+    async def get_llm_usage_by_model(self, user_id: str, hours: int = 24) -> List[dict]:
+        """Get LLM usage grouped by provider and model for a user."""
         async with get_async_session() as session:
             repo = AnalyticsRepository(session)
-            return await repo.get_llm_usage_by_model(hours)
+            return await repo.get_llm_usage_by_model(user_id, hours)
 
     async def get_agent_stats(
         self,
+        user_id: str,
         hours: int = 24,
         agent_id: Optional[str] = None,
         agent_type: Optional[str] = None,
     ) -> dict:
-        """Get aggregated agent execution statistics."""
+        """Get aggregated agent execution statistics for a user."""
         async with get_async_session() as session:
             repo = AnalyticsRepository(session)
-            return await repo.get_agent_stats(hours, agent_id, agent_type)
+            return await repo.get_agent_stats(user_id, hours, agent_id, agent_type)
 
-    async def get_agent_stats_by_type(self, hours: int = 24) -> List[dict]:
-        """Get agent execution stats grouped by type."""
+    async def get_agent_stats_by_type(self, user_id: str, hours: int = 24) -> List[dict]:
+        """Get agent execution stats grouped by type for a user."""
         async with get_async_session() as session:
             repo = AnalyticsRepository(session)
-            return await repo.get_agent_stats_by_type(hours)
+            return await repo.get_agent_stats_by_type(user_id, hours)
 
 
 # Singleton instance

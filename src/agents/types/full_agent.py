@@ -61,7 +61,13 @@ class FullAgent(BaseAgent):
         while iterations < self.MAX_TOOL_ITERATIONS:
             iterations += 1
 
-            response = await self._provider.complete(messages)
+            response = await self._provider.complete(
+                messages,
+                user_id=context.user_id,
+                agent_id=self.id,
+                request_id=context.request_id,
+                workflow_id=context.workflow_id,
+            )
             tool_calls = self._extract_tool_calls(response)
 
             if not tool_calls:

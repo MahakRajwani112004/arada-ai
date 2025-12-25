@@ -132,12 +132,16 @@ class GoogleCalendarServer(BaseMCPServer):
         end_date = start_date + timedelta(days=days)
 
         try:
+            # Use replace to remove tzinfo and add Z suffix for proper RFC3339 format
+            time_min = start_date.replace(tzinfo=None).isoformat() + "Z"
+            time_max = end_date.replace(tzinfo=None).isoformat() + "Z"
+
             events_result = (
                 service.events()
                 .list(
                     calendarId="primary",
-                    timeMin=start_date.isoformat() + "Z",
-                    timeMax=end_date.isoformat() + "Z",
+                    timeMin=time_min,
+                    timeMax=time_max,
                     maxResults=max_results,
                     singleEvents=True,
                     orderBy="startTime",

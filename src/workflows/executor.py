@@ -47,6 +47,7 @@ class WorkflowExecutor:
         self,
         workflow_id: str,
         user_input: str,
+        user_id: str,
         context: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
     ) -> Tuple[str, str, List[StepExecutionResult], Optional[str], Optional[str]]:
@@ -85,6 +86,7 @@ class WorkflowExecutor:
         # Initialize context
         self._context = context or {}
         self._context["user_input"] = user_input
+        self._context["user_id"] = user_id
         self._context["session_id"] = session_id
         self._step_results = {}
 
@@ -125,7 +127,7 @@ class WorkflowExecutor:
 
             try:
                 result = await self._execute_step(
-                    current_step, workflow, user_input, session_id
+                    current_step, workflow, user_input, user_id, session_id
                 )
                 step_end = datetime.now(timezone.utc)
                 duration_ms = int((step_end - step_start).total_seconds() * 1000)
@@ -215,11 +217,12 @@ class WorkflowExecutor:
         step: WorkflowStep,
         workflow: WorkflowDefinition,
         user_input: str,
+        user_id: str,
         session_id: Optional[str],
     ) -> Dict[str, Any]:
         """Execute a single workflow step."""
         if step.type == StepType.AGENT:
-            return await self._execute_agent_step(step, user_input, session_id)
+            return await self._execute_agent_step(step, user_input, user_id, session_id)
         elif step.type == StepType.PARALLEL:
             return await self._execute_parallel_step(step, user_input, session_id)
         elif step.type == StepType.CONDITIONAL:
@@ -233,6 +236,7 @@ class WorkflowExecutor:
         self,
         step: WorkflowStep,
         user_input: str,
+        user_id: str,
         session_id: Optional[str],
     ) -> Dict[str, Any]:
         """Execute an agent step."""
@@ -257,6 +261,7 @@ class WorkflowExecutor:
                 agent_id=agent_config.id,
                 agent_type=agent_config.agent_type.value,
                 user_input=input_text,
+                user_id=user_id,
                 conversation_history=[],
                 session_id=session_id,
                 system_prompt=self._build_system_prompt(agent_config),

@@ -4,10 +4,10 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from src.auth.dependencies import get_current_user
+from src.auth.dependencies import CurrentUser
 from src.config import get_settings
 from src.storage import get_async_session
 
@@ -19,18 +19,28 @@ settings = get_settings()
 # Log Filtering Configuration
 # ============================================
 
-# Events to filter out (noise)
-FILTERED_EVENTS = {
-    "request_started",  # Only show completed requests
-}
-
-# Paths to filter out from request_completed logs
-FILTERED_PATHS = {
-    "/metrics",
-    "/health",
-    "/api/v1/monitoring/logs",
-    "/api/v1/monitoring/analytics/llm",
-    "/api/v1/monitoring/analytics/agents",
+# Important events to show (whitelist approach)
+IMPORTANT_EVENTS = {
+    # Auth
+    "user_logged_in", "user_logged_out", "login_failed", "user_registered", "invite_created",
+    # Agents
+    "agent_created", "agent_updated", "agent_deleted", "agent_generate_started",
+    "agent_generate_completed", "agent_generate_failed",
+    # MCP
+    "mcp_server_created", "mcp_server_deleted", "mcp_server_reconnected",
+    "mcp_server_connection_failed", "mcp_servers_reconnected",
+    # Knowledge Base
+    "knowledge_base_created", "knowledge_base_updated", "knowledge_base_deleted",
+    "document_upload_started", "document_upload_completed", "document_indexed",
+    "document_indexing_failed", "knowledge_base_search_completed",
+    # Workflow
+    "workflow_execution_started", "workflow_execution_completed",
+    # LLM & Agent execution
+    "llm_call_completed", "agent_execution_completed",
+    # Application
+    "application_started",
+    # Errors
+    "http_exception", "database_transaction_failed",
 }
 
 
@@ -86,13 +96,13 @@ class TimeSeriesPoint(BaseModel):
 
 @router.get("/logs", response_model=LogsResponse)
 async def get_logs(
+    current_user: CurrentUser,
     service: Optional[str] = Query(None, description="Filter by service (api, worker, etc.)"),
     level: Optional[str] = Query(None, description="Filter by level (info, error, warning)"),
     search: Optional[str] = Query(None, description="Search in log message"),
     limit: int = Query(100, le=1000, description="Max logs to return"),
     start: Optional[datetime] = Query(None, description="Start time"),
     end: Optional[datetime] = Query(None, description="End time"),
-    _user=Depends(get_current_user),
 ):
     """
     Get logs from Loki.
@@ -106,8 +116,8 @@ async def get_logs(
         container_name = f"magone-{service}"
         label_selectors = [f'container="{container_name}"']
     else:
-        # Match all magone containers
-        label_selectors = ['container=~"magone-.*"']
+        # Only match API and worker containers (not loki, grafana, etc.)
+        label_selectors = ['container=~"magone-(api|worker)"']
 
     query = "{" + ",".join(label_selectors) + "}"
 
@@ -157,13 +167,8 @@ async def get_logs(
                         parsed = json.loads(raw_message)
                         event = parsed.get("event", "")
 
-                        # Filter out noise events
-                        if event in FILTERED_EVENTS:
-                            continue
-
-                        # Filter out noise paths
-                        path = parsed.get("path", "")
-                        if event == "request_completed" and path in FILTERED_PATHS:
+                        # Only show important events (whitelist)
+                        if event not in IMPORTANT_EVENTS:
                             continue
 
                         # Extract level
@@ -175,7 +180,8 @@ async def get_logs(
                         display_message = parsed.get("message", event.replace("_", " ").capitalize())
 
                     except (json.JSONDecodeError, TypeError):
-                        display_message = raw_message
+                        # Skip non-JSON logs (SQLAlchemy, etc.)
+                        continue
 
                     logs.append(LogEntry(
                         timestamp=datetime.fromtimestamp(int(timestamp_ns) / 1e9).isoformat(),
@@ -197,7 +203,7 @@ async def get_logs(
 
 @router.get("/logs/services")
 async def get_log_services(
-    _user=Depends(get_current_user),
+    current_user: CurrentUser,
 ):
     """Get list of available services for log filtering."""
     return {
@@ -218,16 +224,16 @@ async def get_log_services(
 
 @router.get("/analytics/llm", response_model=LLMUsageStats)
 async def get_llm_analytics(
+    current_user: CurrentUser,
     start: Optional[datetime] = Query(None, description="Start time"),
     end: Optional[datetime] = Query(None, description="End time"),
-    _user=Depends(get_current_user),
 ):
     """
-    Get LLM usage analytics.
+    Get LLM usage analytics for the current user.
 
     Returns token usage, costs, and latency statistics.
     """
-    from sqlalchemy import func, select
+    from sqlalchemy import Integer, func, select
     from src.monitoring.analytics.models import LLMUsageModel
 
     if not end:
@@ -236,14 +242,7 @@ async def get_llm_analytics(
         start = end - timedelta(days=7)
 
     async with get_async_session() as session:
-        # Base query with time filter
-        base_query = select(LLMUsageModel).where(
-            LLMUsageModel.timestamp >= start,
-            LLMUsageModel.timestamp <= end,
-        )
-
-        # Get totals
-        from sqlalchemy import Integer
+        # Get totals filtered by user
         totals = await session.execute(
             select(
                 func.count(LLMUsageModel.id).label("total"),
@@ -254,6 +253,7 @@ async def get_llm_analytics(
                 func.avg(LLMUsageModel.latency_ms).label("latency"),
                 func.sum(func.cast(LLMUsageModel.success, Integer)).label("successes"),
             ).where(
+                LLMUsageModel.user_id == current_user.id,
                 LLMUsageModel.timestamp >= start,
                 LLMUsageModel.timestamp <= end,
             )
@@ -270,6 +270,7 @@ async def get_llm_analytics(
                 func.count(LLMUsageModel.id).label("count"),
                 func.sum(LLMUsageModel.cost_cents).label("cost"),
             ).where(
+                LLMUsageModel.user_id == current_user.id,
                 LLMUsageModel.timestamp >= start,
                 LLMUsageModel.timestamp <= end,
             ).group_by(LLMUsageModel.provider)
@@ -283,6 +284,7 @@ async def get_llm_analytics(
                 func.count(LLMUsageModel.id).label("count"),
                 func.sum(LLMUsageModel.total_tokens).label("tokens"),
             ).where(
+                LLMUsageModel.user_id == current_user.id,
                 LLMUsageModel.timestamp >= start,
                 LLMUsageModel.timestamp <= end,
             ).group_by(LLMUsageModel.model)
@@ -304,12 +306,12 @@ async def get_llm_analytics(
 
 @router.get("/analytics/agents", response_model=AgentStats)
 async def get_agent_analytics(
+    current_user: CurrentUser,
     start: Optional[datetime] = Query(None, description="Start time"),
     end: Optional[datetime] = Query(None, description="End time"),
-    _user=Depends(get_current_user),
 ):
     """
-    Get agent execution analytics.
+    Get agent execution analytics for the current user.
 
     Returns execution counts, success rates, and latency by agent type.
     """
@@ -322,13 +324,14 @@ async def get_agent_analytics(
         start = end - timedelta(days=7)
 
     async with get_async_session() as session:
-        # Get totals
+        # Get totals filtered by user
         totals = await session.execute(
             select(
                 func.count(AgentExecutionModel.id).label("total"),
                 func.avg(AgentExecutionModel.latency_ms).label("latency"),
                 func.sum(func.cast(AgentExecutionModel.success, Integer)).label("successes"),
             ).where(
+                AgentExecutionModel.user_id == current_user.id,
                 AgentExecutionModel.timestamp >= start,
                 AgentExecutionModel.timestamp <= end,
             )
@@ -345,6 +348,7 @@ async def get_agent_analytics(
                 func.count(AgentExecutionModel.id).label("count"),
                 func.avg(AgentExecutionModel.latency_ms).label("latency"),
             ).where(
+                AgentExecutionModel.user_id == current_user.id,
                 AgentExecutionModel.timestamp >= start,
                 AgentExecutionModel.timestamp <= end,
             ).group_by(AgentExecutionModel.agent_type)
@@ -364,13 +368,13 @@ async def get_agent_analytics(
 
 @router.get("/analytics/llm/timeseries")
 async def get_llm_timeseries(
+    current_user: CurrentUser,
     metric: str = Query("requests", description="Metric: requests, tokens, cost"),
     interval: str = Query("1h", description="Bucket interval: 1h, 6h, 1d"),
     start: Optional[datetime] = Query(None, description="Start time"),
     end: Optional[datetime] = Query(None, description="End time"),
-    _user=Depends(get_current_user),
 ):
-    """Get LLM usage as time series for charts."""
+    """Get LLM usage as time series for charts for the current user."""
     from sqlalchemy import func, select
     from src.monitoring.analytics.models import LLMUsageModel
 
@@ -397,6 +401,7 @@ async def get_llm_timeseries(
                 func.date_trunc(trunc_interval, LLMUsageModel.timestamp).label("bucket"),
                 metric_col.label("value"),
             ).where(
+                LLMUsageModel.user_id == current_user.id,
                 LLMUsageModel.timestamp >= start,
                 LLMUsageModel.timestamp <= end,
             ).group_by("bucket").order_by("bucket")
