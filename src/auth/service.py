@@ -11,6 +11,7 @@ from src.auth.password import hash_password, verify_password
 from src.auth.schemas import TokenResponse, UserResponse
 from src.config import get_settings
 from src.storage.models import (
+    APIKeyModel,
     DEFAULT_ORG_ID,
     RefreshTokenModel,
     UserInviteModel,
@@ -229,4 +230,127 @@ class AuthService:
         )
         self.session.add(user)
         await self.session.flush()
+        return user
+
+    # ============ Settings Methods ============
+
+    async def update_email(self, user_id: str, new_email: str) -> UserModel:
+        """Update user's email address."""
+        # Check if new email is already taken
+        existing = await self.get_user_by_email(new_email)
+        if existing and existing.id != user_id:
+            raise ValueError("Email address is already in use")
+
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        user.email = new_email.lower()
+        await self.session.flush()
+        return user
+
+    async def update_password(
+        self, user_id: str, current_password: str, new_password: str
+    ) -> bool:
+        """Update user's password after verifying current password."""
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        # Verify current password
+        if not verify_password(current_password, user.password_hash):
+            raise ValueError("Current password is incorrect")
+
+        # Update password
+        user.password_hash = hash_password(new_password)
+        await self.session.flush()
+        return True
+
+    async def update_display_name(
+        self, user_id: str, display_name: Optional[str]
+    ) -> UserModel:
+        """Update user's display name."""
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        user.display_name = display_name
+        await self.session.flush()
+        return user
+
+    # ============ API Key Methods ============
+
+    async def create_api_key(self, user_id: str, name: str) -> tuple[APIKeyModel, str]:
+        """Create a new API key for a user.
+
+        Returns the API key model and the raw key (only available at creation time).
+        """
+        # Generate a secure random key
+        raw_key = f"mk_{secrets.token_urlsafe(32)}"
+        key_prefix = raw_key[:12]  # Store prefix for display
+        key_hash = hash_token(raw_key)
+
+        api_key = APIKeyModel(
+            user_id=user_id,
+            name=name,
+            key_prefix=key_prefix,
+            key_hash=key_hash,
+        )
+        self.session.add(api_key)
+        await self.session.flush()
+
+        return api_key, raw_key
+
+    async def list_api_keys(self, user_id: str) -> list[APIKeyModel]:
+        """List all API keys for a user."""
+        result = await self.session.execute(
+            select(APIKeyModel)
+            .where(APIKeyModel.user_id == user_id)
+            .order_by(APIKeyModel.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def get_api_key(self, key_id: str, user_id: str) -> Optional[APIKeyModel]:
+        """Get an API key by ID for a specific user."""
+        result = await self.session.execute(
+            select(APIKeyModel).where(
+                APIKeyModel.id == key_id,
+                APIKeyModel.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def delete_api_key(self, key_id: str, user_id: str) -> bool:
+        """Delete an API key."""
+        api_key = await self.get_api_key(key_id, user_id)
+        if not api_key:
+            return False
+
+        await self.session.delete(api_key)
+        await self.session.flush()
+        return True
+
+    async def validate_api_key(self, raw_key: str) -> Optional[UserModel]:
+        """Validate an API key and return the associated user."""
+        key_hash = hash_token(raw_key)
+
+        result = await self.session.execute(
+            select(APIKeyModel).where(
+                APIKeyModel.key_hash == key_hash,
+                APIKeyModel.is_active == True,
+            )
+        )
+        api_key = result.scalar_one_or_none()
+
+        if not api_key:
+            return None
+
+        # Update last used timestamp
+        api_key.last_used_at = datetime.now(timezone.utc)
+
+        # Get the user
+        user = await self.get_user_by_id(api_key.user_id)
+        if not user or not user.is_active:
+            return None
+
         return user

@@ -428,6 +428,48 @@ class KnowledgeBaseModel(Base):
         return f"<KnowledgeBaseModel(id={self.id!r}, name={self.name!r}, docs={self.document_count})>"
 
 
+class APIKeyModel(Base):
+    """SQLAlchemy model for user API keys.
+
+    API keys are used for programmatic access to the API.
+    The key itself is hashed for security - we only store the hash.
+    """
+
+    __tablename__ = "api_keys"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Owner - each user owns their own API keys
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Key info
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    key_prefix: Mapped[str] = mapped_column(String(20), nullable=False)  # First 8 chars for display
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+
+    # Status
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Tracking
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<APIKeyModel(id={self.id!r}, name={self.name!r}, prefix={self.key_prefix!r})>"
+
+
 class KnowledgeDocumentModel(Base):
     """SQLAlchemy model for documents within a knowledge base.
 

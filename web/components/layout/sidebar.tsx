@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bot, Plug, Settings, ChevronRight, Workflow, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ThemeToggle } from "./theme-toggle";
 import { UserMenu } from "./user-menu";
 
 interface NavItem {
@@ -130,9 +129,8 @@ export function Sidebar() {
             <span>Settings</span>
           </Link>
 
-          {/* Theme and User */}
-          <div className="flex items-center justify-between px-2 pt-2">
-            <ThemeToggle />
+          {/* User */}
+          <div className="flex items-center justify-end px-2 pt-2">
             <UserMenu />
           </div>
         </div>
