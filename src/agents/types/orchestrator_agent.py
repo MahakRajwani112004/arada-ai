@@ -126,7 +126,7 @@ class OrchestratorAgent(BaseAgent):
 
         return definitions
 
-    async def execute(self, context: AgentContext) -> AgentResponse:
+    async def _execute_impl(self, context: AgentContext) -> AgentResponse:
         """
         Execute OrchestratorAgent in-process.
 
@@ -164,6 +164,9 @@ class OrchestratorAgent(BaseAgent):
         The LLM decides which agents to call based on the input.
         Uses native tool calling for agent invocation.
         """
+        # Store context for use in tool execution
+        self._current_context = context
+
         messages = self._build_messages(context)
         tool_definitions = self._get_all_tool_definitions()
 
@@ -177,6 +180,10 @@ class OrchestratorAgent(BaseAgent):
             response = await self._provider.complete(
                 messages=messages,
                 tools=tool_definitions if tool_definitions else None,
+                user_id=context.user_id,
+                agent_id=self.id,
+                request_id=context.request_id,
+                workflow_id=context.workflow_id,
             )
 
             if not response.tool_calls:
@@ -325,9 +332,12 @@ class OrchestratorAgent(BaseAgent):
 
             child_context = AgentContext(
                 user_input=query,
+                session_id=self._current_context.session_id,
+                user_id=self._current_context.user_id,
                 conversation_history=[],
-                session_id=None,
                 metadata={"parent_orchestrator": self.id},
+                request_id=self._current_context.request_id,
+                workflow_id=self._current_context.workflow_id,
             )
 
             response = await agent.execute(child_context)
@@ -422,10 +432,12 @@ Guidelines:
             for r in results
         ]
 
-        # Create and use aggregator
+        # Create and use aggregator (pass user_id through llm_config for LLM-based aggregators)
+        llm_config = self.config.llm_config.model_dump() if self.config.llm_config else {}
+        llm_config["user_id"] = self._current_context.user_id if hasattr(self, "_current_context") else "system"
         aggregator = create_aggregator(
             strategy,
-            config={"llm_config": self.config.llm_config.model_dump() if self.config.llm_config else {}},
+            config={"llm_config": llm_config},
         )
 
         return await aggregator.aggregate(agent_results)

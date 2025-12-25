@@ -4,6 +4,8 @@ from typing import Union
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.auth.dependencies import get_current_user
+from src.storage.models import UserModel
 from src.api.schemas.mcp import (
     CatalogListResponse,
     CatalogTemplateSchema,
@@ -32,9 +34,10 @@ router = APIRouter(prefix="/mcp", tags=["mcp"])
 
 async def get_mcp_repository(
     session: AsyncSession = Depends(get_session),
+    user: UserModel = Depends(get_current_user),
 ) -> MCPServerRepository:
-    """Get MCP server repository with database session."""
-    return MCPServerRepository(session)
+    """Get MCP server repository with database session and user context."""
+    return MCPServerRepository(session, user_id=user.id)
 
 
 # ========== Catalog Endpoints ==========

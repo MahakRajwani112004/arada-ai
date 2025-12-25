@@ -1,7 +1,7 @@
 """API router for knowledge base management."""
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 from uuid import uuid4
 
@@ -21,6 +21,7 @@ from src.api.schemas.knowledge import (
     UpdateKnowledgeBaseRequest,
     UploadDocumentResponse,
 )
+from src.auth.dependencies import CurrentUser
 from src.config.logging import get_logger
 from src.knowledge.chunker import SUPPORTED_TYPES, get_file_type, process_document
 from src.knowledge.knowledge_base import Document, KnowledgeBase
@@ -44,9 +45,13 @@ CONTENT_TYPES = {
 }
 
 
-def get_repository(session: AsyncSession = Depends(get_session)) -> KnowledgeRepository:
-    """Get knowledge repository with database session."""
-    return KnowledgeRepository(session)
+def get_repository(
+    session: AsyncSession = Depends(get_session),
+    current_user: CurrentUser = None,
+) -> KnowledgeRepository:
+    """Get knowledge repository with database session, scoped to current user."""
+    user_id = current_user.id if current_user else None
+    return KnowledgeRepository(session, user_id=user_id)
 
 
 def _kb_to_response(kb) -> KnowledgeBaseResponse:
@@ -89,10 +94,15 @@ def _doc_to_response(doc) -> KnowledgeDocumentResponse:
 @router.post("", response_model=KnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_knowledge_base(
     request: CreateKnowledgeBaseRequest,
+    current_user: CurrentUser,
     repo: KnowledgeRepository = Depends(get_repository),
 ) -> KnowledgeBaseResponse:
     """Create a new knowledge base."""
-    logger.info("creating_knowledge_base", name=request.name)
+    logger.info(
+        "knowledge_base_create_started",
+        name=request.name,
+        user_id=current_user.id,
+    )
 
     kb = await repo.create_knowledge_base(
         name=request.name,
@@ -100,7 +110,12 @@ async def create_knowledge_base(
         embedding_model=request.embedding_model,
     )
 
-    logger.info("knowledge_base_created", kb_id=kb.id, name=kb.name)
+    logger.info(
+        "knowledge_base_created",
+        kb_id=kb.id,
+        name=kb.name,
+        user_id=current_user.id,
+    )
     return _kb_to_response(kb)
 
 
@@ -138,6 +153,7 @@ async def get_knowledge_base(
 async def update_knowledge_base(
     kb_id: str,
     request: UpdateKnowledgeBaseRequest,
+    current_user: CurrentUser,
     repo: KnowledgeRepository = Depends(get_repository),
 ) -> KnowledgeBaseResponse:
     """Update a knowledge base."""
@@ -148,24 +164,40 @@ async def update_knowledge_base(
     )
 
     if not kb:
+        logger.warning(
+            "knowledge_base_update_not_found",
+            kb_id=kb_id,
+            user_id=current_user.id,
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Knowledge base not found: {kb_id}",
         )
 
-    logger.info("knowledge_base_updated", kb_id=kb_id)
+    logger.info(
+        "knowledge_base_updated",
+        kb_id=kb_id,
+        name=kb.name,
+        user_id=current_user.id,
+    )
     return _kb_to_response(kb)
 
 
 @router.delete("/{kb_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_knowledge_base(
     kb_id: str,
+    current_user: CurrentUser,
     repo: KnowledgeRepository = Depends(get_repository),
 ) -> None:
     """Delete a knowledge base and all its documents."""
     # Get KB to find collection name
     kb = await repo.get_knowledge_base(kb_id)
     if not kb:
+        logger.warning(
+            "knowledge_base_delete_not_found",
+            kb_id=kb_id,
+            user_id=current_user.id,
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Knowledge base not found: {kb_id}",
@@ -203,7 +235,12 @@ async def delete_knowledge_base(
             detail=f"Knowledge base not found: {kb_id}",
         )
 
-    logger.info("knowledge_base_deleted", kb_id=kb_id)
+    logger.info(
+        "knowledge_base_deleted",
+        kb_id=kb_id,
+        name=kb.name,
+        user_id=current_user.id,
+    )
 
 
 # ==================== Document Endpoints ====================
@@ -234,13 +271,26 @@ async def list_documents(
 @router.post("/{kb_id}/documents", response_model=UploadDocumentResponse)
 async def upload_document(
     kb_id: str,
+    current_user: CurrentUser,
     file: UploadFile = File(...),
     repo: KnowledgeRepository = Depends(get_repository),
 ) -> UploadDocumentResponse:
     """Upload and index a document to a knowledge base."""
+    logger.info(
+        "document_upload_started",
+        kb_id=kb_id,
+        filename=file.filename,
+        user_id=current_user.id,
+    )
+
     # Verify KB exists
     kb = await repo.get_knowledge_base(kb_id)
     if not kb:
+        logger.warning(
+            "document_upload_kb_not_found",
+            kb_id=kb_id,
+            user_id=current_user.id,
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Knowledge base not found: {kb_id}",
@@ -288,8 +338,22 @@ async def upload_document(
     try:
         await _process_and_index_document(kb, doc, repo)
         doc = await repo.get_document(doc.id)
+        logger.info(
+            "document_upload_completed",
+            doc_id=doc.id,
+            kb_id=kb_id,
+            filename=file.filename,
+            status=doc.status,
+            user_id=current_user.id,
+        )
     except Exception as e:
-        logger.error("document_indexing_failed", doc_id=doc.id, error=str(e))
+        logger.error(
+            "document_indexing_failed",
+            doc_id=doc.id,
+            kb_id=kb_id,
+            error=str(e),
+            user_id=current_user.id,
+        )
         await repo.update_document(
             doc_id=doc.id,
             status="error",
@@ -428,12 +492,26 @@ async def delete_document(
 async def search_knowledge_base(
     kb_id: str,
     request: SearchKnowledgeBaseRequest,
+    current_user: CurrentUser,
     repo: KnowledgeRepository = Depends(get_repository),
 ) -> SearchKnowledgeBaseResponse:
     """Search a knowledge base."""
+    logger.debug(
+        "knowledge_base_search_started",
+        kb_id=kb_id,
+        query_length=len(request.query),
+        top_k=request.top_k,
+        user_id=current_user.id,
+    )
+
     kb = await repo.get_knowledge_base(kb_id)
 
     if not kb:
+        logger.warning(
+            "knowledge_base_search_kb_not_found",
+            kb_id=kb_id,
+            user_id=current_user.id,
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Knowledge base not found: {kb_id}",
@@ -457,6 +535,13 @@ async def search_knowledge_base(
 
         await knowledge_base.close()
 
+        logger.info(
+            "knowledge_base_search_completed",
+            kb_id=kb_id,
+            results_count=len(result.documents),
+            user_id=current_user.id,
+        )
+
         return SearchKnowledgeBaseResponse(
             results=[
                 SearchResultItem(
@@ -471,7 +556,12 @@ async def search_knowledge_base(
         )
 
     except Exception as e:
-        logger.error("knowledge_base_search_failed", kb_id=kb_id, error=str(e))
+        logger.error(
+            "knowledge_base_search_failed",
+            kb_id=kb_id,
+            error=str(e),
+            user_id=current_user.id,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Search failed: {str(e)}",
@@ -545,7 +635,7 @@ async def _process_and_index_document(kb, doc, repo: KnowledgeRepository) -> Non
             doc_id=doc.id,
             status="indexed",
             chunk_count=len(result.chunks),
-            indexed_at=datetime.utcnow(),
+            indexed_at=datetime.now(timezone.utc),
         )
 
         # Update KB stats

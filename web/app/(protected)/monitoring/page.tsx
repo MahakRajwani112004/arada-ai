@@ -1,0 +1,105 @@
+"use client";
+
+import { useState } from "react";
+import { Header } from "@/components/layout/header";
+import { PageContainer, PageHeader } from "@/components/layout/page-container";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { LogsTable } from "@/components/monitoring/logs-table";
+import { LogFilters } from "@/components/monitoring/log-filters";
+import { AnalyticsOverview } from "@/components/monitoring/analytics-overview";
+import {
+  useLogs,
+  useLogServices,
+  useLLMAnalytics,
+  useAgentAnalytics,
+} from "@/lib/hooks/use-monitoring";
+import { RefreshCw, ExternalLink } from "lucide-react";
+import type { LogFilters as LogFiltersType } from "@/types/monitoring";
+
+export default function MonitoringPage() {
+  const [activeTab, setActiveTab] = useState("logs");
+  const [logFilters, setLogFilters] = useState<LogFiltersType>({ limit: 100 });
+
+  // Fetch data
+  const { data: logsData, isLoading: logsLoading, refetch: refetchLogs } = useLogs(logFilters);
+  const { data: servicesData } = useLogServices();
+  const { data: llmStats, isLoading: llmLoading } = useLLMAnalytics();
+  const { data: agentStats, isLoading: agentLoading } = useAgentAnalytics();
+
+  const handleRefresh = () => {
+    refetchLogs();
+  };
+
+  return (
+    <>
+      <Header />
+      <PageContainer>
+        <PageHeader
+          title="Monitoring"
+          description="View logs and analytics for your AI agents"
+          actions={
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRefresh}
+                className="gap-2"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Refresh
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                asChild
+                className="gap-2"
+              >
+                <a
+                  href="http://localhost:3002"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  Grafana
+                </a>
+              </Button>
+            </div>
+          }
+        />
+
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="logs">Logs</TabsTrigger>
+            <TabsTrigger value="analytics">Analytics</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="logs" className="space-y-4">
+            <LogFilters
+              filters={logFilters}
+              onFiltersChange={setLogFilters}
+              services={servicesData?.services || []}
+            />
+            <LogsTable
+              logs={logsData?.logs || []}
+              isLoading={logsLoading}
+            />
+            {logsData && (
+              <p className="text-sm text-muted-foreground text-center">
+                Showing {logsData.logs.length} of {logsData.total} logs
+              </p>
+            )}
+          </TabsContent>
+
+          <TabsContent value="analytics">
+            <AnalyticsOverview
+              llmStats={llmStats}
+              agentStats={agentStats}
+              isLoading={llmLoading || agentLoading}
+            />
+          </TabsContent>
+        </Tabs>
+      </PageContainer>
+    </>
+  );
+}

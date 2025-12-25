@@ -33,7 +33,7 @@ class SimpleAgent(BaseAgent):
             pattern = re.compile(pattern_str, re.IGNORECASE)
             self._patterns.append((pattern, example.output))
 
-    async def execute(self, context: AgentContext) -> AgentResponse:
+    async def _execute_impl(self, context: AgentContext) -> AgentResponse:
         """Execute simple pattern matching."""
         user_input = context.user_input.lower().strip()
 

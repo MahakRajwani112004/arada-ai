@@ -13,6 +13,8 @@ from .base import BaseLLMProvider, LLMMessage, LLMResponse, ToolCall, ToolDefini
 class AnthropicProvider(BaseLLMProvider):
     """Anthropic Claude provider implementation."""
 
+    _provider_name = "anthropic"
+
     def __init__(self, config: LLMConfig):
         """Initialize Anthropic provider."""
         super().__init__(config)
@@ -87,7 +89,7 @@ class AnthropicProvider(BaseLLMProvider):
             for tool in tools
         ]
 
-    async def complete(
+    async def _complete_impl(
         self,
         messages: List[LLMMessage],
         temperature: Optional[float] = None,

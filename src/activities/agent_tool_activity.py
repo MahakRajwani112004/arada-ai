@@ -18,6 +18,7 @@ class AgentToolExecutionInput:
 
     agent_id: str
     query: str
+    user_id: str  # Required for user-level analytics
     context: Dict[str, Any] = field(default_factory=dict)
     current_depth: int = 0
     max_depth: int = 3
@@ -112,6 +113,7 @@ async def execute_agent_as_tool(
             agent_id=config.id,
             agent_type=config.agent_type.value,
             user_input=full_query,
+            user_id=input.user_id,
             conversation_history=conversation_history,
             session_id=input.parent_session_id,
             system_prompt=system_prompt,

@@ -9,6 +9,7 @@ from temporalio.client import Client, WorkflowFailureError
 from temporalio.exceptions import TimeoutError as TemporalTimeoutError
 
 from src.api.dependencies import get_repository, get_workflow_repository
+from src.auth.dependencies import CurrentUser
 from src.api.errors import (
     ExternalServiceError,
     NotFoundError,
@@ -48,6 +49,7 @@ async def get_temporal_client() -> Client:
 @router.post("/execute", response_model=ExecuteAgentResponse)
 async def execute_agent(
     request: ExecuteAgentRequest,
+    current_user: CurrentUser,
     http_request: Request,
     repository: BaseAgentRepository = Depends(get_repository),
     workflow_repo: Optional[WorkflowRepository] = Depends(get_workflow_repository),
@@ -66,6 +68,7 @@ async def execute_agent(
         agent_id=config.id,
         agent_type=config.agent_type.value,
         user_input=request.user_input,
+        user_id=current_user.id,
         conversation_history=[
             {"role": m.role, "content": m.content}
             for m in request.conversation_history

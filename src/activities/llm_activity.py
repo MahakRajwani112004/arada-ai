@@ -33,10 +33,14 @@ class LLMCompletionInput:
     provider: str
     model: str
     messages: List[Dict[str, Any]]  # List of message dicts
+    user_id: str  # Required for user-level analytics
     temperature: float = 0.7
     max_tokens: int = 1024
     stop_sequences: Optional[List[str]] = None
     tools: Optional[List[ToolDefinitionInput]] = None  # Tools for function calling
+    agent_id: Optional[str] = None  # Optional correlation
+    request_id: Optional[str] = None  # Optional correlation
+    workflow_id: Optional[str] = None  # Optional correlation
 
 
 @dataclass
@@ -109,6 +113,10 @@ async def llm_completion(input: LLMCompletionInput) -> LLMCompletionOutput:
         messages=messages,
         stop_sequences=input.stop_sequences,
         tools=tools,
+        user_id=input.user_id,
+        agent_id=input.agent_id,
+        request_id=input.request_id,
+        workflow_id=input.workflow_id,
     )
 
     activity.logger.info(

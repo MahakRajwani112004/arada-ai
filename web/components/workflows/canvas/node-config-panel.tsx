@@ -33,8 +33,10 @@ export function NodeConfigPanel({
   onCreateAgent,
   onAssignAgent,
 }: NodeConfigPanelProps) {
+  // All hooks must be called before any early returns
   const [isCreating, setIsCreating] = useState(false);
   const [showAgentSheet, setShowAgentSheet] = useState(false);
+  const [isChangingAgent, setIsChangingAgent] = useState(false);
 
   if (node.type === "trigger") {
     return (
@@ -51,12 +53,9 @@ export function NodeConfigPanel({
     );
   }
 
-  const [isChangingAgent, setIsChangingAgent] = useState(false);
-
   const data = node.data as AgentNodeData;
   const isDraft = data.status === "draft";
   const hasSuggestion = !!data.suggestedAgent;
-  const showAgentSelection = isDraft || isChangingAgent;
 
   const handleCreateFromSuggestion = async () => {
     if (!data.suggestedAgent) return;

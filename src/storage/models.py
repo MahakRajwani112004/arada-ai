@@ -1,4 +1,5 @@
 """SQLAlchemy ORM models for database storage."""
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -13,6 +14,132 @@ class Base(DeclarativeBase):
     pass
 
 
+# Default hardcoded organization ID
+DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000000"
+
+
+class OrganizationModel(Base):
+    """SQLAlchemy model for organizations table."""
+
+    __tablename__ = "organizations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<OrganizationModel(id={self.id!r}, name={self.name!r})>"
+
+
+class UserModel(Base):
+    """SQLAlchemy model for users table."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_superuser: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # Organization (hardcoded to default org for now)
+    org_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        default=DEFAULT_ORG_ID,
+    )
+
+    # Tracking
+    invited_by: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True
+    )
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserModel(id={self.id!r}, email={self.email!r}, is_superuser={self.is_superuser})>"
+
+
+class UserInviteModel(Base):
+    """SQLAlchemy model for user invites table."""
+
+    __tablename__ = "user_invites"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    invite_code: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    invited_by: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False
+    )
+    org_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id"), nullable=False
+    )
+    is_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    used_by: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserInviteModel(id={self.id!r}, email={self.email!r}, is_used={self.is_used})>"
+
+
+class RefreshTokenModel(Base):
+    """SQLAlchemy model for refresh tokens."""
+
+    __tablename__ = "refresh_tokens"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    is_revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class AgentModel(Base):
     """SQLAlchemy model for agents table."""
 
@@ -20,6 +147,11 @@ class AgentModel(Base):
 
     # Primary key
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Owner - each user owns their own agents
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     # Indexed columns for queries
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
@@ -59,6 +191,11 @@ class MCPServerModel(Base):
 
     # Primary key
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Owner - each user owns their own MCP servers
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     # Server info
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
@@ -109,6 +246,11 @@ class WorkflowModel(Base):
 
     # Primary key (pattern: [a-zA-Z][a-zA-Z0-9_-]{0,99})
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Owner - each user owns their own workflows
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     # Basic info
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
@@ -170,6 +312,11 @@ class WorkflowExecutionModel(Base):
 
     # Primary key (format: execution-{uuid})
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Owner - track who executed the workflow
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     # Reference to workflow
     workflow_id: Mapped[str] = mapped_column(
@@ -234,6 +381,11 @@ class KnowledgeBaseModel(Base):
 
     # Primary key
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Owner - each user owns their own knowledge bases
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     # Basic info
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)

@@ -1,6 +1,6 @@
 """Workflow Repository - stores and retrieves workflow definitions and execution history."""
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -94,9 +94,10 @@ class WorkflowFilters:
 class WorkflowRepository:
     """PostgreSQL-backed workflow repository."""
 
-    def __init__(self, session: AsyncSession):
-        """Initialize with database session."""
+    def __init__(self, session: AsyncSession, user_id: str | None = None):
+        """Initialize with database session and optional user_id for filtering."""
         self.session = session
+        self.user_id = user_id
 
     # ==================== Workflow CRUD ====================
 
@@ -107,7 +108,11 @@ class WorkflowRepository:
         metadata: WorkflowMetadata,
     ) -> WorkflowWithMetadata:
         """Save workflow definition. Returns the saved workflow."""
-        existing = await self.session.get(WorkflowModel, workflow_id)
+        stmt = select(WorkflowModel).where(WorkflowModel.id == workflow_id)
+        if self.user_id:
+            stmt = stmt.where(WorkflowModel.user_id == self.user_id)
+        result = await self.session.execute(stmt)
+        existing = result.scalar_one_or_none()
 
         if existing:
             # Update existing workflow (re-activate if soft-deleted)
@@ -117,7 +122,7 @@ class WorkflowRepository:
             existing.tags = metadata.tags or []
             existing.definition_json = definition
             existing.version = existing.version + 1
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = datetime.now(timezone.utc)
             existing.is_active = True  # Re-activate if soft-deleted
             model = existing
         else:
@@ -139,6 +144,9 @@ class WorkflowRepository:
                 created_at=now,
                 updated_at=now,
             )
+            # Set user_id if available
+            if self.user_id:
+                model.user_id = self.user_id
             self.session.add(model)
 
         await self.session.flush()
@@ -146,16 +154,23 @@ class WorkflowRepository:
         return self._to_workflow_with_metadata(model)
 
     async def get(self, workflow_id: str) -> Optional[WorkflowWithMetadata]:
-        """Get workflow by ID."""
-        model = await self.session.get(WorkflowModel, workflow_id)
-        if model is None or not model.is_active:
+        """Get workflow by ID (scoped to user if user_id is set)."""
+        stmt = select(WorkflowModel).where(
+            WorkflowModel.id == workflow_id,
+            WorkflowModel.is_active == True,
+        )
+        if self.user_id:
+            stmt = stmt.where(WorkflowModel.user_id == self.user_id)
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
+        if model is None:
             return None
         return self._to_workflow_with_metadata(model)
 
     async def list(
         self, filters: Optional[WorkflowFilters] = None
     ) -> List[WorkflowSummary]:
-        """List workflows with optional filters."""
+        """List workflows with optional filters (scoped to user if user_id is set)."""
         stmt = select(WorkflowModel)
 
         if filters:
@@ -169,6 +184,10 @@ class WorkflowRepository:
             # Default: only active workflows
             stmt = stmt.where(WorkflowModel.is_active == True)
 
+        # Filter by user_id if set
+        if self.user_id:
+            stmt = stmt.where(WorkflowModel.user_id == self.user_id)
+
         stmt = stmt.order_by(WorkflowModel.updated_at.desc())
 
         result = await self.session.execute(stmt)
@@ -176,20 +195,32 @@ class WorkflowRepository:
         return [self._to_summary(m) for m in models]
 
     async def delete(self, workflow_id: str) -> bool:
-        """Soft delete workflow. Returns True if deleted."""
-        model = await self.session.get(WorkflowModel, workflow_id)
+        """Soft delete workflow (scoped to user if user_id is set). Returns True if deleted."""
+        stmt = select(WorkflowModel).where(WorkflowModel.id == workflow_id)
+        if self.user_id:
+            stmt = stmt.where(WorkflowModel.user_id == self.user_id)
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
+
         if model is None:
             return False
 
         model.is_active = False
-        model.updated_at = datetime.utcnow()
+        model.updated_at = datetime.now(timezone.utc)
         await self.session.flush()
         return True
 
     async def exists(self, workflow_id: str) -> bool:
-        """Check if workflow exists and is active."""
-        model = await self.session.get(WorkflowModel, workflow_id)
-        return model is not None and model.is_active
+        """Check if workflow exists and is active (scoped to user if user_id is set)."""
+        stmt = select(WorkflowModel).where(
+            WorkflowModel.id == workflow_id,
+            WorkflowModel.is_active == True,
+        )
+        if self.user_id:
+            stmt = stmt.where(WorkflowModel.user_id == self.user_id)
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
+        return model is not None
 
     async def copy(
         self,
@@ -198,9 +229,17 @@ class WorkflowRepository:
         new_name: str,
         created_by: Optional[str] = None,
     ) -> Optional[str]:
-        """Copy workflow to new ID. Returns new ID or None if source not found."""
-        source = await self.session.get(WorkflowModel, source_id)
-        if source is None or not source.is_active:
+        """Copy workflow to new ID (scoped to user if user_id is set). Returns new ID or None if source not found."""
+        stmt = select(WorkflowModel).where(
+            WorkflowModel.id == source_id,
+            WorkflowModel.is_active == True,
+        )
+        if self.user_id:
+            stmt = stmt.where(WorkflowModel.user_id == self.user_id)
+        result = await self.session.execute(stmt)
+        source = result.scalar_one_or_none()
+
+        if source is None:
             return None
 
         new_model = WorkflowModel(
@@ -217,6 +256,9 @@ class WorkflowRepository:
             is_published=False,
             created_by=created_by,
         )
+        # Set user_id if available
+        if self.user_id:
+            new_model.user_id = self.user_id
         self.session.add(new_model)
         await self.session.flush()
         return new_id
@@ -243,6 +285,9 @@ class WorkflowRepository:
             step_results={},
             triggered_by=triggered_by,
         )
+        # Set user_id if available
+        if self.user_id:
+            model.user_id = self.user_id
         self.session.add(model)
         await self.session.flush()
         return execution_id
@@ -273,7 +318,7 @@ class WorkflowRepository:
 
         # Calculate duration if completed
         if status in ("COMPLETED", "FAILED", "CANCELLED"):
-            model.completed_at = datetime.utcnow()
+            model.completed_at = datetime.now(timezone.utc)
             if model.started_at:
                 delta = model.completed_at - model.started_at
                 model.duration_ms = int(delta.total_seconds() * 1000)

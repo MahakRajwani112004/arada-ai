@@ -18,7 +18,8 @@ from src.api.errors import (
     http_exception_handler,
 )
 from src.api.middleware import RequestLoggingMiddleware
-from src.api.routers import agents, knowledge, mcp, oauth, secrets, workflow, workflows
+from src.api.routers import agents, auth, knowledge, mcp, monitoring, oauth, secrets, workflow, workflows
+from src.monitoring import MetricsMiddleware, get_metrics_router
 from src.config.logging import get_logger, setup_logging
 from src.config.settings import get_settings
 from src.mcp import reconnect_mcp_servers, shutdown_mcp_manager
@@ -74,6 +75,10 @@ app.add_exception_handler(Exception, generic_exception_handler)
 # Request logging middleware
 app.add_middleware(RequestLoggingMiddleware)
 
+# Prometheus metrics middleware (captures HTTP request metrics)
+if settings.monitoring_enabled:
+    app.add_middleware(MetricsMiddleware)
+
 # CORS middleware - using settings instead of hardcoded values
 app.add_middleware(
     CORSMiddleware,
@@ -84,6 +89,7 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(auth.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
 app.include_router(knowledge.router, prefix="/api/v1")
 app.include_router(mcp.router, prefix="/api/v1")
@@ -91,6 +97,11 @@ app.include_router(oauth.router, prefix="/api/v1")
 app.include_router(secrets.router, prefix="/api/v1")
 app.include_router(workflow.router, prefix="/api/v1")
 app.include_router(workflows.router, prefix="/api/v1")
+app.include_router(monitoring.router, prefix="/api/v1")
+
+# Prometheus metrics endpoint
+if settings.monitoring_enabled:
+    app.include_router(get_metrics_router())
 
 
 @app.get("/health")

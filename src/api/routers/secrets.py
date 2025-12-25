@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.auth.dependencies import CurrentUser
 from src.config.logging import get_logger
 from src.secrets import get_secrets_manager
 from src.storage import get_session
@@ -74,18 +75,25 @@ def _parse_secret_key(key: str) -> dict:
 
 @router.get("", response_model=SecretsListResponse)
 async def list_secrets(
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> SecretsListResponse:
-    """List all stored secrets with metadata.
+    """List stored secrets for the current user.
 
     Returns secret keys and metadata, but never secret values.
     Includes information about which secrets are orphaned (not linked to any server).
+    Only shows secrets that belong to the current user.
     """
     secrets_manager = get_secrets_manager()
-    keys = await secrets_manager.list_keys()
 
-    # Get all MCP servers to check for linked secrets
-    result = await session.execute(select(MCPServerModel))
+    # Only list secrets for the current user's path
+    user_prefix = f"users/{current_user.id}/"
+    keys = await secrets_manager.list_keys(path=user_prefix)
+
+    # Get only the current user's MCP servers
+    result = await session.execute(
+        select(MCPServerModel).where(MCPServerModel.user_id == str(current_user.id))
+    )
     servers = {s.id: s for s in result.scalars().all()}
 
     # Build linked refs map
@@ -134,14 +142,20 @@ async def list_secrets(
 
 @router.get("/stats", response_model=SecretsStatsResponse)
 async def get_secrets_stats(
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> SecretsStatsResponse:
-    """Get summary statistics about stored secrets."""
+    """Get summary statistics about stored secrets for the current user."""
     secrets_manager = get_secrets_manager()
-    keys = await secrets_manager.list_keys()
 
-    # Get all MCP servers to check for linked secrets
-    result = await session.execute(select(MCPServerModel))
+    # Only list secrets for the current user's path
+    user_prefix = f"users/{current_user.id}/"
+    keys = await secrets_manager.list_keys(path=user_prefix)
+
+    # Get only the current user's MCP servers
+    result = await session.execute(
+        select(MCPServerModel).where(MCPServerModel.user_id == str(current_user.id))
+    )
     servers = list(result.scalars().all())
 
     # Build linked refs set
@@ -176,15 +190,27 @@ async def get_secrets_stats(
 @router.delete("/{secret_key:path}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_secret(
     secret_key: str,
+    current_user: CurrentUser,
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Delete an orphaned secret.
 
     Only allows deletion of secrets that are not linked to any MCP server.
     This is a safety measure to prevent accidentally breaking server connections.
+    Only allows deletion of secrets that belong to the current user.
     """
-    # Check if secret is linked to any server
-    result = await session.execute(select(MCPServerModel))
+    # Verify the secret belongs to the current user
+    user_prefix = f"users/{current_user.id}/"
+    if not secret_key.startswith(user_prefix):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete secrets belonging to other users",
+        )
+
+    # Check if secret is linked to any of the user's servers
+    result = await session.execute(
+        select(MCPServerModel).where(MCPServerModel.user_id == str(current_user.id))
+    )
     servers = list(result.scalars().all())
 
     for server in servers:

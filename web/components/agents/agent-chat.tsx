@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Send, Bot, User, Loader2, Maximize2, Minimize2 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -113,7 +114,14 @@ export function AgentChat({ agentId }: AgentChatProps) {
                       : "bg-secondary"
                   )}
                 >
-                  <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                  <div className={cn(
+                    "text-sm prose prose-sm max-w-none",
+                    message.role === "user"
+                      ? "prose-invert"
+                      : "dark:prose-invert"
+                  )}>
+                    <ReactMarkdown>{message.content}</ReactMarkdown>
+                  </div>
                 </div>
               </div>
             ))}

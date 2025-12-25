@@ -9,7 +9,7 @@ Credentials passed via HTTP header:
 - X-Google-Refresh-Token: OAuth refresh token
 """
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
@@ -120,22 +120,28 @@ class GoogleCalendarServer(BaseMCPServer):
         service = self._get_service(credentials)
 
         if date:
+            # Parse date and make timezone-aware (UTC)
             try:
-                start_date = datetime.strptime(date, "%Y-%m-%d")
+                start_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
             except ValueError:
                 raise ValueError(f"Invalid date format: '{date}'. Expected YYYY-MM-DD.")
         else:
-            start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            # Use current UTC time, reset to start of day
+            start_date = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
         end_date = start_date + timedelta(days=days)
 
         try:
+            # Use replace to remove tzinfo and add Z suffix for proper RFC3339 format
+            time_min = start_date.replace(tzinfo=None).isoformat() + "Z"
+            time_max = end_date.replace(tzinfo=None).isoformat() + "Z"
+
             events_result = (
                 service.events()
                 .list(
                     calendarId="primary",
-                    timeMin=start_date.isoformat() + "Z",
-                    timeMax=end_date.isoformat() + "Z",
+                    timeMin=time_min,
+                    timeMax=time_max,
                     maxResults=max_results,
                     singleEvents=True,
                     orderBy="startTime",

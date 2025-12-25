@@ -30,13 +30,19 @@ class RouterAgent(BaseAgent):
         self._routing_table = config.routing_table
         self._default_route = config.routing_table.get("default")
 
-    async def execute(self, context: AgentContext) -> AgentResponse:
+    async def _execute_impl(self, context: AgentContext) -> AgentResponse:
         """Classify input and return routing decision."""
         # Build classification prompt
         messages = self._build_classification_messages(context)
 
         # Get classification from LLM
-        response = await self._provider.complete(messages)
+        response = await self._provider.complete(
+            messages,
+            user_id=context.user_id,
+            agent_id=self.id,
+            request_id=context.request_id,
+            workflow_id=context.workflow_id,
+        )
 
         # Parse classification
         classification = self._parse_classification(response.content)
