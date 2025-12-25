@@ -66,7 +66,7 @@ class RAGAgent(BaseAgent):
 
         return messages
 
-    async def execute(self, context: AgentContext) -> AgentResponse:
+    async def _execute_impl(self, context: AgentContext) -> AgentResponse:
         """Execute RAG: retrieve then generate."""
         await self._ensure_kb_initialized()
 

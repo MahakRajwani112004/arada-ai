@@ -17,7 +17,7 @@ import time
 import uuid
 from abc import ABC
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Type
 
 import structlog
@@ -230,7 +230,7 @@ class BaseMCPServer(ABC):
         self.logger = structlog.get_logger(f"mcp.{name}")
 
         # Server lifecycle tracking
-        self._start_time = datetime.utcnow()
+        self._start_time = datetime.now(timezone.utc)
 
         # Discover tools from decorated methods
         self._tools: Dict[str, ToolDefinition] = {}
@@ -304,7 +304,7 @@ class BaseMCPServer(ABC):
         metrics = self._metrics[tool_name]
         metrics.call_count += 1
         metrics.total_duration_ms += duration_ms
-        metrics.last_called = datetime.utcnow()
+        metrics.last_called = datetime.now(timezone.utc)
 
         if success:
             metrics.success_count += 1
@@ -339,7 +339,7 @@ class BaseMCPServer(ABC):
 
         @app.get("/health")
         async def health():
-            uptime_seconds = (datetime.utcnow() - self._start_time).total_seconds()
+            uptime_seconds = (datetime.now(timezone.utc) - self._start_time).total_seconds()
             total_calls = sum(m.call_count for m in self._metrics.values())
             total_failures = sum(m.failure_count for m in self._metrics.values())
 

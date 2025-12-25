@@ -43,7 +43,7 @@ class FullAgent(BaseAgent):
             await self._kb.initialize()
             self._kb_initialized = True
 
-    async def execute(self, context: AgentContext) -> AgentResponse:
+    async def _execute_impl(self, context: AgentContext) -> AgentResponse:
         """Execute FullAgent: RAG + LLM + Tools."""
         await self._ensure_kb_initialized()
 

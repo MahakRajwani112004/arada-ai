@@ -13,6 +13,8 @@ from .base import BaseLLMProvider, LLMMessage, LLMResponse, ToolCall, ToolDefini
 class OpenAIProvider(BaseLLMProvider):
     """OpenAI GPT provider implementation."""
 
+    _provider_name = "openai"
+
     def __init__(self, config: LLMConfig):
         """Initialize OpenAI provider."""
         super().__init__(config)
@@ -71,7 +73,7 @@ class OpenAIProvider(BaseLLMProvider):
             for tool in tools
         ]
 
-    async def complete(
+    async def _complete_impl(
         self,
         messages: List[LLMMessage],
         temperature: Optional[float] = None,

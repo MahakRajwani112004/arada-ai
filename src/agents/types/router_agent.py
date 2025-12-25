@@ -30,7 +30,7 @@ class RouterAgent(BaseAgent):
         self._routing_table = config.routing_table
         self._default_route = config.routing_table.get("default")
 
-    async def execute(self, context: AgentContext) -> AgentResponse:
+    async def _execute_impl(self, context: AgentContext) -> AgentResponse:
         """Classify input and return routing decision."""
         # Build classification prompt
         messages = self._build_classification_messages(context)

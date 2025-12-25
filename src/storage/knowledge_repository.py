@@ -1,6 +1,6 @@
 """Knowledge Base Repository - stores and retrieves knowledge bases and documents."""
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import uuid4
 
@@ -48,9 +48,10 @@ class KnowledgeDocument:
 class KnowledgeRepository:
     """PostgreSQL-backed knowledge base repository."""
 
-    def __init__(self, session: AsyncSession):
-        """Initialize with database session."""
+    def __init__(self, session: AsyncSession, user_id: str | None = None):
+        """Initialize with database session and optional user_id for filtering."""
         self.session = session
+        self.user_id = user_id
 
     # ==================== Knowledge Base CRUD ====================
 
@@ -76,6 +77,9 @@ class KnowledgeRepository:
             status="active",
             created_by=created_by,
         )
+        # Set user_id if available
+        if self.user_id:
+            model.user_id = self.user_id
 
         self.session.add(model)
         await self.session.flush()
@@ -83,8 +87,12 @@ class KnowledgeRepository:
         return self._kb_to_dataclass(model)
 
     async def get_knowledge_base(self, kb_id: str) -> Optional[KnowledgeBase]:
-        """Get knowledge base by ID."""
-        model = await self.session.get(KnowledgeBaseModel, kb_id)
+        """Get knowledge base by ID (scoped to user if user_id is set)."""
+        stmt = select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == kb_id)
+        if self.user_id:
+            stmt = stmt.where(KnowledgeBaseModel.user_id == self.user_id)
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
         if model is None:
             return None
         return self._kb_to_dataclass(model)
@@ -94,13 +102,17 @@ class KnowledgeRepository:
         created_by: Optional[str] = None,
         status: Optional[str] = None,
     ) -> List[KnowledgeBase]:
-        """List knowledge bases with optional filters."""
+        """List knowledge bases with optional filters (scoped to user if user_id is set)."""
         stmt = select(KnowledgeBaseModel)
 
         if created_by:
             stmt = stmt.where(KnowledgeBaseModel.created_by == created_by)
         if status:
             stmt = stmt.where(KnowledgeBaseModel.status == status)
+
+        # Filter by user_id if set
+        if self.user_id:
+            stmt = stmt.where(KnowledgeBaseModel.user_id == self.user_id)
 
         stmt = stmt.order_by(KnowledgeBaseModel.created_at.desc())
 
@@ -116,8 +128,13 @@ class KnowledgeRepository:
         status: Optional[str] = None,
         error_message: Optional[str] = None,
     ) -> Optional[KnowledgeBase]:
-        """Update knowledge base fields."""
-        model = await self.session.get(KnowledgeBaseModel, kb_id)
+        """Update knowledge base fields (scoped to user if user_id is set)."""
+        stmt = select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == kb_id)
+        if self.user_id:
+            stmt = stmt.where(KnowledgeBaseModel.user_id == self.user_id)
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
+
         if model is None:
             return None
 
@@ -130,14 +147,19 @@ class KnowledgeRepository:
         if error_message is not None:
             model.error_message = error_message
 
-        model.updated_at = datetime.utcnow()
+        model.updated_at = datetime.now(timezone.utc)
         await self.session.flush()
 
         return self._kb_to_dataclass(model)
 
     async def delete_knowledge_base(self, kb_id: str) -> bool:
-        """Delete knowledge base and all its documents."""
-        model = await self.session.get(KnowledgeBaseModel, kb_id)
+        """Delete knowledge base and all its documents (scoped to user if user_id is set)."""
+        stmt = select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == kb_id)
+        if self.user_id:
+            stmt = stmt.where(KnowledgeBaseModel.user_id == self.user_id)
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
+
         if model is None:
             return False
 
@@ -179,7 +201,7 @@ class KnowledgeRepository:
         if model:
             model.document_count = doc_count
             model.chunk_count = chunk_count
-            model.updated_at = datetime.utcnow()
+            model.updated_at = datetime.now(timezone.utc)
             await self.session.flush()
 
     # ==================== Document CRUD ====================

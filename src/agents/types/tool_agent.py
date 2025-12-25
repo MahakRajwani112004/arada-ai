@@ -44,7 +44,7 @@ class ToolAgent(BaseAgent):
         messages.append(LLMMessage(role="user", content=context.user_input))
         return messages
 
-    async def execute(self, context: AgentContext) -> AgentResponse:
+    async def _execute_impl(self, context: AgentContext) -> AgentResponse:
         """Execute agent with tool loop."""
         import structlog
         logger = structlog.get_logger(__name__)

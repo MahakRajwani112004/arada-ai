@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bot, Plug, Settings, ChevronRight, Workflow } from "lucide-react";
+import { Bot, Plug, Settings, ChevronRight, Workflow, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ThemeToggle } from "./theme-toggle";
+import { UserMenu } from "./user-menu";
 
 interface NavItem {
   label: string;
@@ -32,6 +34,11 @@ const navItems: NavItem[] = [
       { label: "My Servers", href: "/integrations/servers" },
       { label: "Knowledge Bases", href: "/integrations/knowledge" },
     ],
+  },
+  {
+    label: "Monitoring",
+    href: "/monitoring",
+    icon: <Activity className="h-4 w-4" />,
   },
 ];
 
@@ -109,7 +116,7 @@ export function Sidebar() {
         </nav>
 
         {/* Footer */}
-        <div className="border-t border-border p-3">
+        <div className="border-t border-border p-3 space-y-2">
           <Link
             href="/settings"
             className={cn(
@@ -122,6 +129,12 @@ export function Sidebar() {
             <Settings className="h-4 w-4" />
             <span>Settings</span>
           </Link>
+
+          {/* Theme and User */}
+          <div className="flex items-center justify-between px-2 pt-2">
+            <ThemeToggle />
+            <UserMenu />
+          </div>
         </div>
       </div>
     </aside>

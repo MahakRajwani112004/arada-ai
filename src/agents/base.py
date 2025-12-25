@@ -1,17 +1,25 @@
-"""Base agent class - all agent types inherit from this."""
+"""Base agent class - all agent types inherit from this with instrumentation."""
+import asyncio
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
+from src.config.logging import get_logger
+from src.config.settings import get_settings
 from src.models.agent_config import AgentConfig
 from src.models.responses import AgentContext, AgentResponse
+
+logger = get_logger(__name__)
+settings = get_settings()
 
 
 class BaseAgent(ABC):
     """
-    Abstract base agent class.
+    Abstract base agent class with automatic instrumentation.
 
-    All agent types inherit from this and implement execute().
+    All agent types inherit from this and implement _execute_impl().
+    The execute() method wraps _execute_impl() with monitoring.
     The config determines behavior, not the class.
     """
 
@@ -21,10 +29,149 @@ class BaseAgent(ABC):
         self.id = config.id
         self.name = config.name
 
-    @abstractmethod
     async def execute(self, context: AgentContext) -> AgentResponse:
         """
-        Execute the agent's logic.
+        Execute the agent's logic with instrumentation.
+
+        This is an instrumented wrapper that:
+        1. Records timing
+        2. Logs the execution
+        3. Sends metrics to Prometheus
+        4. Saves analytics to PostgreSQL
+
+        Args:
+            context: Runtime context with user input and session info
+
+        Returns:
+            AgentResponse with content and metadata
+        """
+        start_time = time.perf_counter()
+        success = True
+        error_type = None
+        error_message = None
+
+        try:
+            # Call the actual implementation
+            response = await self._execute_impl(context)
+            return response
+
+        except Exception as e:
+            success = False
+            error_type = type(e).__name__
+            error_message = str(e)
+            raise
+
+        finally:
+            latency_ms = int((time.perf_counter() - start_time) * 1000)
+
+            # Get agent type from config
+            agent_type = self.config.type.value if hasattr(self.config.type, "value") else str(self.config.type)
+
+            # Extract request_id and workflow_id from context if available
+            request_id = getattr(context, "request_id", None)
+            workflow_id = getattr(context, "workflow_id", None)
+
+            # Record Prometheus metrics
+            if settings.monitoring_enabled:
+                self._record_prometheus_metrics(
+                    agent_type=agent_type,
+                    success=success,
+                    latency_ms=latency_ms,
+                )
+
+            # Record to PostgreSQL (async, non-blocking)
+            if settings.analytics_enabled:
+                asyncio.create_task(
+                    self._record_analytics(
+                        agent_type=agent_type,
+                        latency_ms=latency_ms,
+                        success=success,
+                        request_id=request_id,
+                        workflow_id=workflow_id,
+                        error_type=error_type,
+                        error_message=error_message,
+                    )
+                )
+
+            # Log the execution
+            log_method = logger.info if success else logger.warning
+            log_method(
+                "agent_execution_completed",
+                agent_id=self.id,
+                agent_type=agent_type,
+                latency_ms=latency_ms,
+                success=success,
+                error_type=error_type,
+            )
+
+    def _record_prometheus_metrics(
+        self,
+        agent_type: str,
+        success: bool,
+        latency_ms: int,
+    ) -> None:
+        """Record metrics to Prometheus."""
+        try:
+            from src.monitoring.metrics import (
+                AGENT_EXECUTION_DURATION,
+                AGENT_EXECUTIONS_TOTAL,
+            )
+
+            status = "success" if success else "failure"
+
+            # Execution count
+            AGENT_EXECUTIONS_TOTAL.labels(
+                agent_id=self.id,
+                agent_type=agent_type,
+                status=status,
+            ).inc()
+
+            # Execution duration
+            AGENT_EXECUTION_DURATION.labels(
+                agent_id=self.id,
+                agent_type=agent_type,
+            ).observe(latency_ms / 1000)  # Convert to seconds
+
+        except Exception as e:
+            # Metrics should never break the main flow
+            logger.debug("prometheus_metrics_failed", error=str(e))
+
+    async def _record_analytics(
+        self,
+        agent_type: str,
+        latency_ms: int,
+        success: bool,
+        request_id: Optional[str],
+        workflow_id: Optional[str],
+        error_type: Optional[str],
+        error_message: Optional[str],
+    ) -> None:
+        """Record analytics to PostgreSQL."""
+        try:
+            from src.monitoring.analytics import get_analytics_service
+
+            service = get_analytics_service()
+            await service.record_agent_execution(
+                agent_id=self.id,
+                agent_type=agent_type,
+                latency_ms=latency_ms,
+                success=success,
+                request_id=request_id,
+                workflow_id=workflow_id,
+                error_type=error_type,
+                error_message=error_message,
+            )
+        except Exception as e:
+            # Analytics should never break the main flow
+            logger.debug("analytics_record_failed", error=str(e))
+
+    @abstractmethod
+    async def _execute_impl(self, context: AgentContext) -> AgentResponse:
+        """
+        Actual implementation of agent execution.
+
+        Subclasses implement this method instead of execute().
+        The execute() method wraps this with instrumentation.
 
         This is implemented differently by each agent type:
         - SimpleAgent: Template/rule matching

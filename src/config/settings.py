@@ -69,9 +69,43 @@ class Settings(BaseSettings):
     # Security
     secret_key: str = "dev-secret-key-change-in-production"
 
+    # JWT Auth
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 15
+    jwt_refresh_token_expire_days: int = 7
+
+    # Super User (seeded on first startup)
+    superuser_email: Optional[str] = None
+    superuser_password: Optional[str] = None
+
+    # Invite expiry
+    invite_expire_days: int = 7
+
     # Logging
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "json"
+
+    # Monitoring
+    monitoring_enabled: bool = Field(
+        default=True,
+        description="Enable Prometheus metrics collection",
+    )
+    metrics_prefix: str = Field(
+        default="magure",
+        description="Prefix for all Prometheus metrics",
+    )
+    loki_enabled: bool = Field(
+        default=False,
+        description="Enable Loki log shipping",
+    )
+    loki_url: str = Field(
+        default="http://localhost:3100",
+        description="Loki server URL",
+    )
+    analytics_enabled: bool = Field(
+        default=True,
+        description="Enable analytics (LLM usage, agent executions) to PostgreSQL",
+    )
 
     # Vault / Secrets Management
     vault_provider: Literal["local", "hashicorp", "aws", "azure"] = "local"

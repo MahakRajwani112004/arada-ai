@@ -53,7 +53,8 @@ logs/
 *.sqlite3
 
 # Secrets and credentials
-secrets/
+/secrets/
+!src/secrets/
 *.pem
 *.key
 credentials.json

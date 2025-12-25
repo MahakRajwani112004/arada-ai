@@ -1,7 +1,7 @@
 """MCP Server Repository - database operations for MCP servers."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from sqlalchemy import select
@@ -21,13 +21,15 @@ class MCPServerRepository:
     Credentials are stored in vault, not in database.
     """
 
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, user_id: str | None = None):
         """Initialize repository with database session.
 
         Args:
             session: SQLAlchemy async session
+            user_id: Optional user ID for filtering (multi-tenant)
         """
         self._session = session
+        self._user_id = user_id
 
     async def create(
         self,
@@ -70,6 +72,9 @@ class MCPServerRepository:
             oauth_token_ref=oauth_token_ref,
             headers_config=headers or {},
         )
+        # Set user_id if available
+        if self._user_id:
+            db_model.user_id = self._user_id
 
         self._session.add(db_model)
         await self._session.commit()
@@ -78,7 +83,7 @@ class MCPServerRepository:
         return self._to_instance(db_model)
 
     async def get(self, server_id: str) -> Optional[MCPServerInstance]:
-        """Get MCP server by ID.
+        """Get MCP server by ID (scoped to user if user_id is set).
 
         Args:
             server_id: Server ID
@@ -86,9 +91,10 @@ class MCPServerRepository:
         Returns:
             MCPServerInstance or None if not found
         """
-        result = await self._session.execute(
-            select(MCPServerModel).where(MCPServerModel.id == server_id)
-        )
+        stmt = select(MCPServerModel).where(MCPServerModel.id == server_id)
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
         db_model = result.scalar_one_or_none()
 
         if db_model is None:
@@ -97,14 +103,15 @@ class MCPServerRepository:
         return self._to_instance(db_model)
 
     async def list_all(self) -> List[MCPServerInstance]:
-        """List all MCP servers.
+        """List all MCP servers (scoped to user if user_id is set).
 
         Returns:
             List of MCPServerInstance
         """
-        result = await self._session.execute(
-            select(MCPServerModel).order_by(MCPServerModel.created_at.desc())
-        )
+        stmt = select(MCPServerModel).order_by(MCPServerModel.created_at.desc())
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
         db_models = result.scalars().all()
 
         return [self._to_instance(m) for m in db_models]
@@ -115,7 +122,7 @@ class MCPServerRepository:
         status: ServerStatus,
         error_message: Optional[str] = None,
     ) -> Optional[MCPServerInstance]:
-        """Update server status.
+        """Update server status (scoped to user if user_id is set).
 
         Args:
             server_id: Server ID
@@ -125,9 +132,10 @@ class MCPServerRepository:
         Returns:
             Updated MCPServerInstance or None if not found
         """
-        result = await self._session.execute(
-            select(MCPServerModel).where(MCPServerModel.id == server_id)
-        )
+        stmt = select(MCPServerModel).where(MCPServerModel.id == server_id)
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
         db_model = result.scalar_one_or_none()
 
         if db_model is None:
@@ -135,7 +143,7 @@ class MCPServerRepository:
 
         db_model.status = status.value
         db_model.error_message = error_message
-        db_model.last_used_at = datetime.utcnow()
+        db_model.last_used_at = datetime.now(timezone.utc)
 
         await self._session.commit()
         await self._session.refresh(db_model)
@@ -143,7 +151,7 @@ class MCPServerRepository:
         return self._to_instance(db_model)
 
     async def delete(self, server_id: str) -> bool:
-        """Delete MCP server and its credentials.
+        """Delete MCP server and its credentials (scoped to user if user_id is set).
 
         Args:
             server_id: Server ID
@@ -151,9 +159,10 @@ class MCPServerRepository:
         Returns:
             True if deleted, False if not found
         """
-        result = await self._session.execute(
-            select(MCPServerModel).where(MCPServerModel.id == server_id)
-        )
+        stmt = select(MCPServerModel).where(MCPServerModel.id == server_id)
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
         db_model = result.scalar_one_or_none()
 
         if db_model is None:
@@ -185,7 +194,7 @@ class MCPServerRepository:
         credentials: Dict[str, str],
         oauth_token_ref: Optional[str] = None,
     ) -> Optional[MCPServerInstance]:
-        """Update server credentials in vault.
+        """Update server credentials in vault (scoped to user if user_id is set).
 
         Args:
             server_id: Server ID
@@ -195,9 +204,10 @@ class MCPServerRepository:
         Returns:
             Updated MCPServerInstance or None if not found
         """
-        result = await self._session.execute(
-            select(MCPServerModel).where(MCPServerModel.id == server_id)
-        )
+        stmt = select(MCPServerModel).where(MCPServerModel.id == server_id)
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
         db_model = result.scalar_one_or_none()
 
         if db_model is None:
@@ -227,7 +237,7 @@ class MCPServerRepository:
         return self._to_instance(db_model)
 
     async def get_config(self, server_id: str) -> Optional[MCPServerConfig]:
-        """Get full server config including credentials from vault.
+        """Get full server config including credentials from vault (scoped to user if user_id is set).
 
         Args:
             server_id: Server ID
@@ -235,9 +245,10 @@ class MCPServerRepository:
         Returns:
             MCPServerConfig with credentials as headers, or None if not found
         """
-        result = await self._session.execute(
-            select(MCPServerModel).where(MCPServerModel.id == server_id)
-        )
+        stmt = select(MCPServerModel).where(MCPServerModel.id == server_id)
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
         db_model = result.scalar_one_or_none()
 
         if db_model is None:

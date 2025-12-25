@@ -4,6 +4,10 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from src.config.logging import get_logger
+
+logger = get_logger(__name__)
+
 from src.api.schemas.agent import (
     AgentDetailResponse,
     AgentExampleSchema,
@@ -22,6 +26,7 @@ from src.api.schemas.agent import (
     SafetyConfigSchema,
     ToolConfigSchema,
 )
+from src.auth.dependencies import CurrentUser
 from src.models.agent_config import AgentConfig
 from src.models.enums import AgentType
 from src.models.knowledge_config import KnowledgeBaseConfig
@@ -30,7 +35,7 @@ from src.models.orchestrator_config import AgentReference, OrchestratorConfig, O
 from src.models.persona import AgentExample, AgentGoal, AgentInstructions, AgentRole
 from src.models.safety_config import GovernanceConfig, SafetyConfig
 from src.models.tool_config import ToolConfig
-from src.api.dependencies import get_repository
+from src.api.dependencies import get_user_repository
 from src.storage import BaseAgentRepository
 from src.llm.client import LLMClient, LLMMessage
 
@@ -98,8 +103,17 @@ def _parse_agent_type(value: str) -> AgentType:
 
 
 @router.post("/generate", response_model=GenerateAgentResponse)
-async def generate_agent_config(request: GenerateAgentRequest) -> GenerateAgentResponse:
+async def generate_agent_config(
+    request: GenerateAgentRequest,
+    current_user: CurrentUser,
+) -> GenerateAgentResponse:
     """Generate agent configuration using AI."""
+    logger.info(
+        "agent_generate_started",
+        name=request.name,
+        user_id=current_user.id,
+        has_context=bool(request.context),
+    )
     try:
         # Use OpenAI for generation (faster, cheaper for this use case)
         llm_config = LLMConfig(
@@ -131,6 +145,13 @@ async def generate_agent_config(request: GenerateAgentRequest) -> GenerateAgentR
 
         data = json.loads(content)
 
+        logger.info(
+            "agent_generate_completed",
+            name=request.name,
+            suggested_type=data.get("suggested_agent_type", "unknown"),
+            user_id=current_user.id,
+        )
+
         return GenerateAgentResponse(
             description=data.get("description", f"An AI agent for {request.name}"),
             role=AgentRoleSchema(
@@ -158,11 +179,23 @@ async def generate_agent_config(request: GenerateAgentRequest) -> GenerateAgentR
         )
 
     except json.JSONDecodeError as e:
+        logger.error(
+            "agent_generate_failed",
+            name=request.name,
+            error="json_parse_error",
+            detail=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to parse AI response: {str(e)}",
         )
     except Exception as e:
+        logger.error(
+            "agent_generate_failed",
+            name=request.name,
+            error=type(e).__name__,
+            detail=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate agent config: {str(e)}",
@@ -258,10 +291,16 @@ def _to_agent_config(request: CreateAgentRequest) -> AgentConfig:
 @router.post("", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
 async def create_agent(
     request: CreateAgentRequest,
-    repository: BaseAgentRepository = Depends(get_repository),
+    current_user: CurrentUser,
+    repository: BaseAgentRepository = Depends(get_user_repository),
 ) -> AgentResponse:
     """Create a new agent."""
     if await repository.exists(request.id):
+        logger.warning(
+            "agent_create_conflict",
+            agent_id=request.id,
+            user_id=current_user.id,
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Agent with ID '{request.id}' already exists",
@@ -269,6 +308,14 @@ async def create_agent(
 
     config = _to_agent_config(request)
     await repository.save(config)
+
+    logger.info(
+        "agent_created",
+        agent_id=config.id,
+        name=config.name,
+        agent_type=config.agent_type.value,
+        user_id=current_user.id,
+    )
 
     return AgentResponse(
         id=config.id,
@@ -280,7 +327,8 @@ async def create_agent(
 
 @router.get("", response_model=AgentListResponse)
 async def list_agents(
-    repository: BaseAgentRepository = Depends(get_repository),
+    current_user: CurrentUser,
+    repository: BaseAgentRepository = Depends(get_user_repository),
 ) -> AgentListResponse:
     """List all agents."""
     agents = await repository.list()
@@ -301,7 +349,8 @@ async def list_agents(
 @router.get("/{agent_id}", response_model=AgentDetailResponse)
 async def get_agent(
     agent_id: str,
-    repository: BaseAgentRepository = Depends(get_repository),
+    current_user: CurrentUser,
+    repository: BaseAgentRepository = Depends(get_user_repository),
 ) -> AgentDetailResponse:
     """Get agent by ID with full details."""
     config = await repository.get(agent_id)
@@ -403,12 +452,18 @@ def _config_to_detail_response(config: AgentConfig) -> AgentDetailResponse:
 async def update_agent(
     agent_id: str,
     request: CreateAgentRequest,
-    repository: BaseAgentRepository = Depends(get_repository),
+    current_user: CurrentUser,
+    repository: BaseAgentRepository = Depends(get_user_repository),
 ) -> AgentResponse:
     """Update an existing agent."""
     # Check agent exists
     existing = await repository.get(agent_id)
     if not existing:
+        logger.warning(
+            "agent_update_not_found",
+            agent_id=agent_id,
+            user_id=current_user.id,
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent '{agent_id}' not found",
@@ -421,6 +476,14 @@ async def update_agent(
     config = _to_agent_config(request)
     await repository.save(config)
 
+    logger.info(
+        "agent_updated",
+        agent_id=config.id,
+        name=config.name,
+        agent_type=config.agent_type.value,
+        user_id=current_user.id,
+    )
+
     return AgentResponse(
         id=config.id,
         name=config.name,
@@ -432,11 +495,23 @@ async def update_agent(
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent(
     agent_id: str,
-    repository: BaseAgentRepository = Depends(get_repository),
+    current_user: CurrentUser,
+    repository: BaseAgentRepository = Depends(get_user_repository),
 ) -> None:
     """Delete agent by ID."""
     if not await repository.delete(agent_id):
+        logger.warning(
+            "agent_delete_not_found",
+            agent_id=agent_id,
+            user_id=current_user.id,
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent '{agent_id}' not found",
         )
+
+    logger.info(
+        "agent_deleted",
+        agent_id=agent_id,
+        user_id=current_user.id,
+    )

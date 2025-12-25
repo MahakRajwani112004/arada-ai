@@ -9,11 +9,17 @@ from .database import close_database, get_async_session, get_session, init_datab
 from .models import AgentModel, Base, WorkflowExecutionModel, WorkflowModel
 from .workflow_repository import WorkflowRepository
 
+# Import monitoring models so they're registered with SQLAlchemy metadata
+# This ensures tables are created when init_database() calls Base.metadata.create_all()
+from src.monitoring.analytics.models import AgentExecutionModel, LLMUsageModel
+
 __all__ = [
     "Base",
     "AgentModel",
     "WorkflowModel",
     "WorkflowExecutionModel",
+    "LLMUsageModel",
+    "AgentExecutionModel",
     "BaseAgentRepository",
     "InMemoryAgentRepository",
     "FileAgentRepository",

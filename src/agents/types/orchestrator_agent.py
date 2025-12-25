@@ -126,7 +126,7 @@ class OrchestratorAgent(BaseAgent):
 
         return definitions
 
-    async def execute(self, context: AgentContext) -> AgentResponse:
+    async def _execute_impl(self, context: AgentContext) -> AgentResponse:
         """
         Execute OrchestratorAgent in-process.
 

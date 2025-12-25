@@ -2,9 +2,10 @@
 
 import { Suspense, useEffect, useState, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CheckCircle2, XCircle, Loader2, Calendar, Mail, HardDrive, RefreshCw } from "lucide-react";
+import { CheckCircle2, XCircle, Loader2, Calendar, Mail, HardDrive, RefreshCw, LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCreateServer, useUpdateServerCredentials } from "@/lib/hooks/use-mcp";
+import { useAuth } from "@/lib/auth";
 
 const serviceConfig: Record<string, { name: string; icon: React.ReactNode; template: string }> = {
   calendar: {
@@ -24,7 +25,7 @@ const serviceConfig: Record<string, { name: string; icon: React.ReactNode; templ
   },
 };
 
-type CallbackState = "loading" | "connecting" | "reconnecting" | "success" | "error";
+type CallbackState = "loading" | "not_authenticated" | "connecting" | "reconnecting" | "success" | "error";
 
 function OAuthCallbackContent() {
   const router = useRouter();
@@ -32,23 +33,55 @@ function OAuthCallbackContent() {
   const createServer = useCreateServer();
   const updateCredentials = useUpdateServerCredentials();
   const hasRun = useRef(false);
+  const { isAuthenticated, accessToken, hasHydrated } = useAuth();
+
+  // Debug: Log on mount to verify this component is being used
+  useEffect(() => {
+    console.log("[OAuth Callback Page] Component mounted - this is the UNPROTECTED version");
+    console.log("[OAuth Callback Page] URL:", window.location.href);
+    console.log("[OAuth Callback Page] Search params:", searchParams.toString());
+  }, [searchParams]);
 
   const [state, setState] = useState<CallbackState>("loading");
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [isReconnect, setIsReconnect] = useState(false);
 
-  const tokenRef = searchParams.get("token_ref");
-  const service = searchParams.get("service") || "calendar";
-  const error = searchParams.get("error");
-  const serverId = searchParams.get("server_id");
-  const reconnect = searchParams.get("reconnect") === "true";
+  // Try to get params from URL first, then fall back to sessionStorage
+  const urlTokenRef = searchParams.get("token_ref");
+  const urlService = searchParams.get("service");
+  const urlError = searchParams.get("error");
+  const urlServerId = searchParams.get("server_id");
+  const urlReconnect = searchParams.get("reconnect");
+
+  // Restore from sessionStorage if URL params are missing (after login redirect)
+  const savedParams = typeof window !== "undefined"
+    ? sessionStorage.getItem("oauth_callback_params")
+    : null;
+  const parsedSavedParams = savedParams ? JSON.parse(savedParams) : {};
+
+  const tokenRef = urlTokenRef || parsedSavedParams.token_ref;
+  const service = urlService || parsedSavedParams.service || "calendar";
+  const error = urlError || parsedSavedParams.error;
+  const serverId = urlServerId || parsedSavedParams.server_id;
+  const reconnect = (urlReconnect || parsedSavedParams.reconnect) === "true";
 
   const config = serviceConfig[service] || serviceConfig.calendar;
 
   useEffect(() => {
     if (hasRun.current) return;
-    hasRun.current = true;
 
+    // Wait for auth store to hydrate from localStorage
+    if (!hasHydrated) {
+      return;
+    }
+
+    // Check authentication after hydration
+    if (!isAuthenticated && !accessToken) {
+      setState("not_authenticated");
+      return;
+    }
+
+    hasRun.current = true;
     setIsReconnect(reconnect);
 
     async function handleCallback() {
@@ -65,6 +98,9 @@ function OAuthCallbackContent() {
         setErrorMessage("No authorization token received");
         return;
       }
+
+      // Clear stored params since we're processing now
+      sessionStorage.removeItem("oauth_callback_params");
 
       // Handle reconnection flow
       if (reconnect && serverId) {
@@ -116,7 +152,21 @@ function OAuthCallbackContent() {
     }
 
     handleCallback();
-  }, [tokenRef, error, config, createServer, updateCredentials, router, reconnect, serverId]);
+  }, [tokenRef, error, config, createServer, updateCredentials, router, reconnect, serverId, isAuthenticated, accessToken, hasHydrated]);
+
+  const handleLogin = () => {
+    // Save OAuth params to sessionStorage before redirecting to login
+    const paramsToSave = {
+      token_ref: tokenRef,
+      service: service,
+      error: error,
+      server_id: serverId,
+      reconnect: reconnect ? "true" : undefined,
+    };
+    sessionStorage.setItem("oauth_callback_params", JSON.stringify(paramsToSave));
+
+    router.push(`/login?redirect=${encodeURIComponent("/oauth/callback")}`);
+  };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
@@ -130,6 +180,21 @@ function OAuthCallbackContent() {
             <p className="mt-2 text-muted-foreground">
               Please wait while we complete the authorization.
             </p>
+          </>
+        )}
+
+        {state === "not_authenticated" && (
+          <>
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-orange-500/10 text-orange-400">
+              <LogIn className="h-8 w-8" />
+            </div>
+            <h1 className="mt-6 text-xl font-semibold">Login Required</h1>
+            <p className="mt-2 text-muted-foreground">
+              Please log in to complete the {config.name} connection.
+            </p>
+            <Button className="mt-6" onClick={handleLogin}>
+              Log In to Continue
+            </Button>
           </>
         )}
 

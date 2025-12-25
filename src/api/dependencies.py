@@ -4,6 +4,7 @@ from typing import AsyncGenerator
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.auth.dependencies import CurrentUser
 from src.mcp import MCPManager, get_mcp_manager as _get_mcp_manager
 from src.mcp.repository import MCPServerRepository
 from src.storage import PostgresAgentRepository, get_session
@@ -12,23 +13,39 @@ from src.storage.workflow_repository import WorkflowRepository
 
 async def get_repository(
     session: AsyncSession = Depends(get_session),
+    current_user: CurrentUser = None,
 ) -> AsyncGenerator[PostgresAgentRepository, None]:
-    """Get agent repository with database session."""
-    yield PostgresAgentRepository(session)
+    """Get agent repository with database session, scoped to current user."""
+    user_id = current_user.id if current_user else None
+    yield PostgresAgentRepository(session, user_id=user_id)
+
+
+async def get_user_repository(
+    session: AsyncSession = Depends(get_session),
+    current_user: CurrentUser = None,
+) -> AsyncGenerator[PostgresAgentRepository, None]:
+    """Get agent repository scoped to current user (requires auth)."""
+    if current_user is None:
+        raise ValueError("Authentication required")
+    yield PostgresAgentRepository(session, user_id=current_user.id)
 
 
 async def get_workflow_repository(
     session: AsyncSession = Depends(get_session),
+    current_user: CurrentUser = None,
 ) -> AsyncGenerator[WorkflowRepository, None]:
-    """Get workflow repository with database session."""
-    yield WorkflowRepository(session)
+    """Get workflow repository with database session, scoped to current user."""
+    user_id = current_user.id if current_user else None
+    yield WorkflowRepository(session, user_id=user_id)
 
 
 async def get_mcp_repository(
     session: AsyncSession = Depends(get_session),
+    current_user: CurrentUser = None,
 ) -> AsyncGenerator[MCPServerRepository, None]:
-    """Get MCP server repository with database session."""
-    yield MCPServerRepository(session)
+    """Get MCP server repository with database session, scoped to current user."""
+    user_id = current_user.id if current_user else None
+    yield MCPServerRepository(session, user_id=user_id)
 
 
 def get_mcp_manager() -> MCPManager:

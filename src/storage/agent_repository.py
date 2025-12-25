@@ -2,7 +2,7 @@
 import json
 import os
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from sqlalchemy import select
@@ -129,13 +129,14 @@ class FileAgentRepository(BaseAgentRepository):
 class PostgresAgentRepository(BaseAgentRepository):
     """PostgreSQL-backed agent repository."""
 
-    def __init__(self, session: AsyncSession):
-        """Initialize with database session."""
+    def __init__(self, session: AsyncSession, user_id: str | None = None):
+        """Initialize with database session and optional user_id for filtering."""
         self.session = session
+        self.user_id = user_id
 
     def _to_model(self, config: AgentConfig) -> AgentModel:
         """Convert AgentConfig to ORM model."""
-        return AgentModel(
+        model = AgentModel(
             id=config.id,
             name=config.name,
             description=config.description,
@@ -145,6 +146,10 @@ class PostgresAgentRepository(BaseAgentRepository):
             created_at=config.created_at,
             updated_at=config.updated_at,
         )
+        # Set user_id if available
+        if self.user_id:
+            model.user_id = self.user_id
+        return model
 
     def _to_config(self, model: AgentModel) -> AgentConfig:
         """Convert ORM model to AgentConfig."""
@@ -152,8 +157,12 @@ class PostgresAgentRepository(BaseAgentRepository):
 
     async def save(self, config: AgentConfig) -> str:
         """Save agent configuration to database."""
-        # Check if exists for update vs insert
-        existing = await self.session.get(AgentModel, config.id)
+        # Check if exists for update vs insert (scoped to user if user_id is set)
+        stmt = select(AgentModel).where(AgentModel.id == config.id)
+        if self.user_id:
+            stmt = stmt.where(AgentModel.user_id == self.user_id)
+        result = await self.session.execute(stmt)
+        existing = result.scalar_one_or_none()
 
         if existing:
             # Update existing
@@ -162,7 +171,7 @@ class PostgresAgentRepository(BaseAgentRepository):
             existing.agent_type = config.agent_type.value
             existing.is_active = config.is_active
             existing.config_json = config.model_dump(mode="json")
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = datetime.now(timezone.utc)
         else:
             # Insert new
             model = self._to_model(config)
@@ -172,31 +181,49 @@ class PostgresAgentRepository(BaseAgentRepository):
         return config.id
 
     async def get(self, agent_id: str) -> Optional[AgentConfig]:
-        """Get agent configuration by ID."""
-        model = await self.session.get(AgentModel, agent_id)
+        """Get agent configuration by ID (scoped to user if user_id is set)."""
+        stmt = select(AgentModel).where(AgentModel.id == agent_id)
+        if self.user_id:
+            stmt = stmt.where(AgentModel.user_id == self.user_id)
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
         if model is None:
             return None
         return self._to_config(model)
 
     async def list(self) -> List[AgentConfig]:
-        """List all active agent configurations."""
+        """List all active agent configurations (scoped to user if user_id is set)."""
         stmt = select(AgentModel).where(AgentModel.is_active == True)
+        if self.user_id:
+            stmt = stmt.where(AgentModel.user_id == self.user_id)
         result = await self.session.execute(stmt)
         models = result.scalars().all()
         return [self._to_config(m) for m in models]
 
     async def delete(self, agent_id: str) -> bool:
-        """Delete agent configuration (soft delete)."""
-        model = await self.session.get(AgentModel, agent_id)
+        """Delete agent configuration (soft delete, scoped to user if user_id is set)."""
+        stmt = select(AgentModel).where(AgentModel.id == agent_id)
+        if self.user_id:
+            stmt = stmt.where(AgentModel.user_id == self.user_id)
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
+
         if model is None:
             return False
 
         model.is_active = False
-        model.updated_at = datetime.utcnow()
+        model.updated_at = datetime.now(timezone.utc)
         await self.session.flush()
         return True
 
     async def exists(self, agent_id: str) -> bool:
-        """Check if agent exists and is active."""
-        model = await self.session.get(AgentModel, agent_id)
-        return model is not None and model.is_active
+        """Check if agent exists and is active (scoped to user if user_id is set)."""
+        stmt = select(AgentModel).where(
+            AgentModel.id == agent_id,
+            AgentModel.is_active == True,
+        )
+        if self.user_id:
+            stmt = stmt.where(AgentModel.user_id == self.user_id)
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
+        return model is not None

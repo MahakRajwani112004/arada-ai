@@ -43,7 +43,7 @@ class LLMAgent(BaseAgent):
 
         return messages
 
-    async def execute(self, context: AgentContext) -> AgentResponse:
+    async def _execute_impl(self, context: AgentContext) -> AgentResponse:
         """Execute LLM completion."""
         messages = self._build_messages(context)
 

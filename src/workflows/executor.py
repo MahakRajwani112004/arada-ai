@@ -1,7 +1,7 @@
 """Workflow executor - runs multi-step workflows."""
 import asyncio
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
@@ -56,7 +56,7 @@ class WorkflowExecutor:
         Returns:
             Tuple of (execution_id, status, step_results, final_output, error)
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
 
         # Load workflow
         workflow_data = await self.workflow_repo.get(workflow_id)
@@ -120,14 +120,14 @@ class WorkflowExecutor:
         max_total_steps = len(workflow.steps) * 5  # Allow some re-execution for loops
 
         while current_step and len(executed_step_ids) < max_total_steps:
-            step_start = datetime.utcnow()
+            step_start = datetime.now(timezone.utc)
             executed_step_ids.append(current_step.id)
 
             try:
                 result = await self._execute_step(
                     current_step, workflow, user_input, session_id
                 )
-                step_end = datetime.utcnow()
+                step_end = datetime.now(timezone.utc)
                 duration_ms = int((step_end - step_start).total_seconds() * 1000)
 
                 step_result = StepExecutionResult(
@@ -189,7 +189,7 @@ class WorkflowExecutor:
                     current_step = workflow.get_step_by_id(current_step.on_error)
 
         # Calculate total duration
-        end_time = datetime.utcnow()
+        end_time = datetime.now(timezone.utc)
         total_duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
         # Update execution record
