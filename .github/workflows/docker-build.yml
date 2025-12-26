@@ -364,13 +364,13 @@ jobs:
             echo 'Starting deployment...' && \
             sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.tag.outputs.tag }}/' .env || echo 'IMAGE_TAG=${{ steps.tag.outputs.tag }}' >> .env && \
             echo 'Pulling images...' && \
-            docker-compose pull && \
+            docker compose pull && \
             echo 'Restarting services...' && \
-            docker-compose up -d --remove-orphans && \
+            docker compose up -d --remove-orphans && \
             echo 'Cleaning up...' && \
             docker image prune -f && \
             echo 'Deployment complete!' && \
-            docker-compose ps"
+            docker compose ps"
 
       - name: Health check
         env:
