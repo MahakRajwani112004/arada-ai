@@ -201,14 +201,14 @@ services:
       APP_ENV: production
       APP_DEBUG: "false"
       APP_NAME: magure-ai-platform
-      SECRET_KEY: ${SECRET_KEY}
-      FRONTEND_URL: https://magoneai.magure.ai
+      SECRET_KEY: "${SECRET_KEY:?Error: SECRET_KEY is required}"
+      FRONTEND_URL: https://${DOMAIN:-magoneai.magure.ai}
       # Database
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-magure}:${POSTGRES_PASSWORD:-magure_dev_password}@postgres:5432/${POSTGRES_DB:-magure_db}
       # Redis
       REDIS_URL: redis://redis:6379/0
       # Secrets encryption
-      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY}
+      SECRETS_ENCRYPTION_KEY: "${SECRETS_ENCRYPTION_KEY:?Error: SECRETS_ENCRYPTION_KEY is required}"
       # Qdrant
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
@@ -220,38 +220,56 @@ services:
       VAULT_PROVIDER: hashicorp
       VAULT_URL: http://vault:8200
       VAULT_TOKEN: ${VAULT_TOKEN:-dev-root-token}
-      # CORS - Updated for domain
+      # CORS
       CORS_ORIGINS: ${CORS_ORIGINS:-["https://magoneai.magure.ai"]}
       CORS_ALLOW_CREDENTIALS: "true"
       # LLM Keys
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # Security
-      SECRET_KEY: ${SECRET_KEY:?Error: SECRET_KEY is required}
-      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:?Error: SECRETS_ENCRYPTION_KEY is required}
-      # CORS (production settings)
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://${DOMAIN:-localhost}}
-      CORS_ALLOW_CREDENTIALS: "true"
       # Rate Limiting
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
       RATE_LIMIT_WORKFLOW: ${RATE_LIMIT_WORKFLOW:-10/minute}
       RATE_LIMIT_AGENTS: ${RATE_LIMIT_AGENTS:-20/minute}
       RATE_LIMIT_DEFAULT: ${RATE_LIMIT_DEFAULT:-100/minute}
       # MCP Server URLs
-      MCP_GOOGLE_CALENDAR_URL: http://mcp-google-calendar:8000/mcp
-      MCP_GOOGLE_GMAIL_URL: http://mcp-google-gmail:8000/mcp
+      MCP_GOOGLE_CALENDAR_URL: http://mcp-google-calendar:8001/mcp
+      MCP_GOOGLE_GMAIL_URL: http://mcp-google-gmail:8002/mcp
       MCP_OUTLOOK_CALENDAR_URL: http://mcp-outlook-calendar:8000/mcp
       MCP_OUTLOOK_EMAIL_URL: http://mcp-outlook-email:8000/mcp
       # Google OAuth (optional)
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      OAUTH_REDIRECT_URI: https://${DOMAIN:-localhost}/api/v1/oauth/google/callback
+      OAUTH_REDIRECT_URI: https://${DOMAIN:-magoneai.magure.ai}/api/v1/oauth/google/callback
       # Microsoft OAuth (optional)
       MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
       MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
       MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
-      MICROSOFT_OAUTH_REDIRECT_URI: https://${DOMAIN:-localhost}/api/v1/oauth/microsoft/callback
-      FRONTEND_URL: https://${DOMAIN:-localhost}
+      MICROSOFT_OAUTH_REDIRECT_URI: https://${DOMAIN:-magoneai.magure.ai}/api/v1/oauth/microsoft/callback
+      # MinIO / Object Storage
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-magure}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-magure_minio_secret}
+      MINIO_BUCKET: knowledge-documents
+      MINIO_USE_SSL: "false"
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: json
+      # Monitoring
+      MONITORING_ENABLED: "true"
+      ANALYTICS_ENABLED: "true"
+      LOKI_ENABLED: "true"
+      LOKI_URL: http://loki:3100
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      temporal:
+        condition: service_started
     networks:
       - magure-network
     labels:
@@ -467,14 +485,14 @@ services:
   # ============================================
   mcp-outlook-calendar:
     image: ${DOCKER_REGISTRY:-magureme}/magoneai-mcp-outlook-calendar:${IMAGE_TAG:-v2}
-    container_name: magone-mcp-outlook-calendar
+    container_name: magure-mcp-outlook-calendar
     restart: unless-stopped
     environment:
       MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
       MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
       MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
     networks:
-      - magone-network
+      - magure-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -487,14 +505,14 @@ services:
   # ============================================
   mcp-outlook-email:
     image: ${DOCKER_REGISTRY:-magureme}/magoneai-mcp-outlook-email:${IMAGE_TAG:-v2}
-    container_name: magone-mcp-outlook-email
+    container_name: magure-mcp-outlook-email
     restart: unless-stopped
     environment:
       MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
       MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
       MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
     networks:
-      - magone-network
+      - magure-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
