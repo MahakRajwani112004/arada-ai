@@ -51,19 +51,30 @@ export default function CreateWorkflowPage() {
       // Convert skeleton steps to workflow steps with suggested agents
       const workflowSteps: WorkflowStep[] = skeleton.steps.map((step, index) => {
         const suggestion = suggestions.find(s => s.id === step.id)?.suggestion;
+        // Always provide a suggested_agent - use AI suggestion or create from step info
+        const suggestedAgent = suggestion ? {
+          name: suggestion.name,
+          description: `${step.name} - ${step.role}`,
+          goal: suggestion.goal,
+          model: "gpt-4o",
+          required_mcps: suggestion.required_mcps || [],
+          suggested_tools: suggestion.suggested_tools || [],
+        } : {
+          // Fallback: create suggested agent from step name and role
+          name: step.name.replace(/[^a-zA-Z0-9\s]/g, '').trim(),
+          description: step.role || `Agent for ${step.name}`,
+          goal: step.role || `Execute ${step.name} step`,
+          model: "gpt-4o",
+          required_mcps: [],
+          suggested_tools: [],
+        };
+
         return {
           id: step.id,
           type: "agent" as const,
           name: step.name,
           agent_id: undefined, // No agent assigned yet - will be created in canvas
-          suggested_agent: suggestion ? {
-            name: suggestion.name,
-            description: `${step.name} - ${step.role}`,
-            goal: suggestion.goal,
-            model: "gpt-4o",
-            required_mcps: suggestion.required_mcps || [],
-            suggested_tools: suggestion.suggested_tools || [],
-          } : undefined,
+          suggested_agent: suggestedAgent,
           input: index === 0 ? "${user_input}" : "${previous}",
           timeout: 120,
           retries: 0,

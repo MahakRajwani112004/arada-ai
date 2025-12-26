@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Check, Loader2, Bot } from "lucide-react";
+import { Check, AlertTriangle, Loader2, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { SuggestedAgent } from "@/types/workflow";
 
@@ -31,18 +31,18 @@ export function CanvasStatusBar({
       {/* Left side - status */}
       <div className="flex items-center gap-4 text-sm">
         {allReady ? (
-          <div className="flex items-center gap-2 text-green-500">
+          <div className="flex items-center gap-2 text-green-600 dark:text-green-500">
             <Check className="h-4 w-4" />
             <span>All agents ready</span>
           </div>
         ) : (
-          <div className="flex items-center gap-2 text-orange-500">
+          <div className="flex items-center gap-2 text-orange-600 dark:text-orange-500">
             <AlertTriangle className="h-4 w-4" />
             <span>{draftCount} agent{draftCount !== 1 ? "s" : ""} need to be created</span>
           </div>
         )}
 
-        <div className="text-muted-foreground">
+        <div className="text-muted-foreground text-xs">
           {nodeCount} node{nodeCount !== 1 ? "s" : ""}
         </div>
       </div>
@@ -54,11 +54,11 @@ export function CanvasStatusBar({
             {draftAgents.slice(0, 3).map((draft) => (
               <div
                 key={draft.nodeId}
-                className="flex items-center gap-1 px-2 py-1 rounded bg-secondary"
+                className="flex items-center gap-1 px-2 py-1 rounded bg-muted"
                 title={draft.suggestion.goal}
               >
                 <Bot className="h-3 w-3" />
-                <span className="max-w-[120px] truncate">{draft.suggestion.name}</span>
+                <span className="max-w-[100px] truncate">{draft.suggestion.name}</span>
               </div>
             ))}
             {draftAgents.length > 3 && (
@@ -76,9 +76,7 @@ export function CanvasStatusBar({
                 Creating...
               </>
             ) : (
-              <>
-                Create All Agents
-              </>
+              "Create All Agents"
             )}
           </Button>
         </div>

@@ -134,21 +134,20 @@ export function Sidebar() {
             </Link>
           )}
 
-          <Link
-            href="/settings"
-            className={cn(
-              "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-              pathname === "/settings"
-                ? "bg-accent text-accent-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-            )}
-          >
-            <Settings className="h-4 w-4" />
-            <span>Settings</span>
-          </Link>
-
-          {/* User */}
-          <div className="flex items-center justify-end px-2 pt-2">
+          {/* Settings and User in single row */}
+          <div className="flex items-center justify-between">
+            <Link
+              href="/settings"
+              className={cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                pathname === "/settings"
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              )}
+            >
+              <Settings className="h-4 w-4" />
+              <span>Settings</span>
+            </Link>
             <UserMenu />
           </div>
         </div>

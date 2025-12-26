@@ -13,6 +13,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { useCreateAgent } from "@/lib/hooks/use-agents";
+import { getAgent } from "@/lib/api/agents";
 import type { Agent, AgentCreate } from "@/types/agent";
 import {
   AgentFormFields,
@@ -189,6 +190,28 @@ export function AgentCreationSheet({
         onOpenChange(false);
       }, 1200);
     } catch (error) {
+      // Check if error is due to agent already existing (409 Conflict)
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes("already exists")) {
+        // Agent already exists - fetch it and treat as success
+        try {
+          const existingAgent = await getAgent(agentId);
+          setShowSuccess(true);
+          setTimeout(() => {
+            onAgentCreated({
+              id: existingAgent.id,
+              name: existingAgent.name,
+              description: existingAgent.description,
+              agent_type: existingAgent.agent_type,
+              created: true,
+            });
+            onOpenChange(false);
+          }, 1200);
+          return;
+        } catch (fetchError) {
+          console.error("Failed to fetch existing agent:", fetchError);
+        }
+      }
       console.error("Failed to create agent:", error);
     }
   };

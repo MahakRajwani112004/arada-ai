@@ -649,7 +649,7 @@ async def get_dashboard_summary(
         mcp_active_count = await session.execute(
             select(func.count(MCPServerModel.id)).where(
                 MCPServerModel.user_id == current_user.id,
-                MCPServerModel.status == "connected",
+                MCPServerModel.status == "active",
             )
         )
         kb_count = await session.execute(

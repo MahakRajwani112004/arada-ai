@@ -111,14 +111,12 @@ export function AgentChat({ agentId }: AgentChatProps) {
                     "max-w-[80%] rounded-lg px-4 py-2",
                     message.role === "user"
                       ? "bg-primary text-primary-foreground"
-                      : "bg-secondary"
+                      : "bg-secondary text-secondary-foreground"
                   )}
                 >
                   <div className={cn(
-                    "text-sm prose prose-sm max-w-none",
-                    message.role === "user"
-                      ? "prose-invert"
-                      : "dark:prose-invert"
+                    "text-sm prose prose-sm max-w-none [&>*]:!text-inherit",
+                    message.role === "assistant" && "dark:prose-invert"
                   )}>
                     <ReactMarkdown>{message.content}</ReactMarkdown>
                   </div>

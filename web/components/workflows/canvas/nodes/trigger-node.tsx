@@ -26,61 +26,58 @@ function TriggerNodeComponent({ data, selected }: TriggerNodeProps) {
   return (
     <div
       className={`
-        relative rounded-lg border-2 bg-card px-4 py-3 shadow-sm transition-all min-w-[260px]
-        ${selected ? "border-primary ring-2 ring-primary/20" : "border-border"}
-        ${isWebhook ? "border-yellow-500/50" : "border-green-500/50"}
+        workflow-node min-w-[240px] transition-shadow
+        ${isWebhook ? "node-accent-yellow" : "node-accent-green"}
+        ${selected ? "workflow-node-selected" : ""}
       `}
     >
-      {/* Icon and Title */}
-      <div className="flex items-center gap-3">
-        <div
-          className={`
-            flex h-10 w-10 shrink-0 items-center justify-center rounded-lg
-            ${isWebhook ? "bg-yellow-500/10" : "bg-green-500/10"}
-          `}
-        >
-          {isWebhook ? (
-            <Zap className="h-5 w-5 text-yellow-500" />
-          ) : (
-            <Play className="h-5 w-5 text-green-500" />
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="font-medium text-sm">
-            {isWebhook ? "Webhook Trigger" : "Manual Trigger"}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {isWebhook ? "Activated by external HTTP call" : "Run manually"}
-          </div>
-        </div>
-      </div>
-
-      {/* Webhook URL display */}
-      {isWebhook && data.webhookUrl && (
-        <div className="mt-3 flex items-center gap-2">
-          <code className="flex-1 truncate rounded bg-muted px-2 py-1 text-xs">
-            {data.webhookUrl}
-          </code>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 shrink-0"
-            onClick={handleCopyUrl}
-          >
-            {copied ? (
-              <Check className="h-3.5 w-3.5 text-green-500" />
+      <div className="p-3">
+        {/* Header */}
+        <div className="flex items-center gap-3">
+          <div className={`node-icon h-9 w-9 ${isWebhook ? "node-icon-yellow" : "node-icon-green"}`}>
+            {isWebhook ? (
+              <Zap className="h-4 w-4" />
             ) : (
-              <Copy className="h-3.5 w-3.5" />
+              <Play className="h-4 w-4" />
             )}
-          </Button>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="font-medium text-sm">
+              {isWebhook ? "Webhook Trigger" : "Manual Trigger"}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {isWebhook ? "HTTP endpoint" : "Run manually"}
+            </div>
+          </div>
         </div>
-      )}
+
+        {/* Webhook URL */}
+        {isWebhook && data.webhookUrl && (
+          <div className="mt-3 flex items-center gap-2">
+            <code className="flex-1 truncate rounded bg-muted px-2 py-1 text-[11px] font-mono text-muted-foreground">
+              {data.webhookUrl}
+            </code>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0"
+              onClick={handleCopyUrl}
+            >
+              {copied ? (
+                <Check className="h-3 w-3 text-green-500" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
+            </Button>
+          </div>
+        )}
+      </div>
 
       {/* Output handle */}
       <Handle
         type="source"
         position={Position.Bottom}
-        className="!h-4 !w-4 !border-2 !border-background !bg-primary hover:!bg-primary/80 hover:!scale-125 transition-all !-bottom-2"
+        className="workflow-handle !-bottom-1.5"
       />
     </div>
   );

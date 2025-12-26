@@ -40,7 +40,29 @@ import { useAgents, useCreateAgent } from "@/lib/hooks/use-agents";
 import type { CanvasNode, CanvasEdge, AgentNodeData, ConditionalNodeData, ParallelNodeData } from "@/lib/workflow-canvas/types";
 import type { Agent, AgentCreate } from "@/types/agent";
 import type { SuggestedAgent } from "@/types/workflow";
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, Trash2, Sparkles, Wand2, Save, XCircle } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { generateAgentConfig } from "@/lib/api/agents";
 
 // Custom node types
 const nodeTypes: NodeTypes = {
@@ -93,6 +115,13 @@ function CanvasEditor() {
   const [isSaving, setIsSaving] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [showLeaveDialog, setShowLeaveDialog] = useState(false);
+
+  // AI Step Generation state
+  const [showAIStepDialog, setShowAIStepDialog] = useState(false);
+  const [aiStepName, setAIStepName] = useState("");
+  const [aiStepPrompt, setAIStepPrompt] = useState("");
+  const [isGeneratingStep, setIsGeneratingStep] = useState(false);
 
   // Convert workflow definition to canvas format
   const { nodes: initialNodes, edges: initialEdges } = useMemo(() => {
@@ -112,13 +141,52 @@ function CanvasEditor() {
     initialEdges as CanvasEdge[]
   );
 
-  // Update nodes when workflow or agents change
+  // Track if we've initialized the canvas
+  const hasInitialized = useRef(false);
+  // Track if we're currently saving (to prevent false "unsaved" states)
+  const isSavingRef = useRef(false);
+
+  // Initialize nodes only once when workflow first loads
+  // Don't reset on subsequent agentsData refetches to preserve user changes
   useEffect(() => {
-    if (initialNodes.length > 0) {
+    if (initialNodes.length > 0 && !hasInitialized.current) {
       setNodes(initialNodes as CanvasNode[]);
       setEdges(initialEdges as CanvasEdge[]);
+      hasInitialized.current = true;
     }
   }, [initialNodes, initialEdges, setNodes, setEdges]);
+
+  // Reset initialization flag when workflow ID changes
+  useEffect(() => {
+    hasInitialized.current = false;
+  }, [workflowId]);
+
+  // Update agent info on existing nodes when agentsData changes (without resetting canvas)
+  useEffect(() => {
+    if (!hasInitialized.current || !agentsData?.agents) return;
+
+    setNodes((currentNodes) =>
+      currentNodes.map((node) => {
+        if (node.type === "agent") {
+          const data = node.data as AgentNodeData;
+          if (data.agentId) {
+            const agent = agentsData.agents.find((a) => a.id === data.agentId);
+            if (agent && (!data.agentName || data.agentName !== agent.name)) {
+              return {
+                ...node,
+                data: {
+                  ...data,
+                  agentName: agent.name,
+                  agentGoal: agent.description || data.agentGoal,
+                },
+              };
+            }
+          }
+        }
+        return node;
+      })
+    );
+  }, [agentsData?.agents, setNodes]);
 
   // Find selected node
   const selectedNode = useMemo(() => {
@@ -181,9 +249,13 @@ function CanvasEditor() {
   const handleNodesChange: OnNodesChange<CanvasNode> = useCallback(
     (changes) => {
       onNodesChange(changes);
-      // Track any change as unsaved (including position changes now!)
-      const hasRealChanges = changes.some((c) => c.type !== "select");
-      if (hasRealChanges) {
+      // Don't track changes during save (prevents false "unsaved" after save completes)
+      if (isSavingRef.current) return;
+      // Only track user-initiated changes (position, remove, add), not internal ReactFlow updates
+      const userChanges = changes.filter(
+        (c) => c.type === "position" || c.type === "remove" || c.type === "add"
+      );
+      if (userChanges.length > 0) {
         setHasUnsavedChanges(true);
       }
     },
@@ -315,13 +387,142 @@ function CanvasEditor() {
     }
   }, [selectedNodeId, nodes, setNodes, setEdges]);
 
-  // Create agent from suggestion
+  // Open AI dialog to add a new step
+  const handleAddStep = useCallback(() => {
+    setAIStepName("");
+    setAIStepPrompt("");
+    setShowAIStepDialog(true);
+  }, []);
+
+  // Generate agent from AI and add to canvas
+  const handleGenerateAIStep = useCallback(async () => {
+    if (!aiStepName.trim()) return;
+
+    setIsGeneratingStep(true);
+
+    try {
+      // Generate agent config from AI
+      const generatedConfig = await generateAgentConfig({
+        name: aiStepName.trim(),
+        context: aiStepPrompt.trim() || undefined,
+      });
+
+      // Create the agent
+      const agentId = aiStepName
+        .toLowerCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9-]/g, "");
+
+      const agentData: AgentCreate = {
+        id: agentId,
+        name: aiStepName.trim(),
+        description: generatedConfig.description || `${aiStepName} agent`,
+        agent_type: "LLMAgent",
+        role: generatedConfig.role,
+        goal: generatedConfig.goal,
+        instructions: generatedConfig.instructions ? {
+          steps: generatedConfig.instructions.steps || [],
+          rules: generatedConfig.instructions.rules || [],
+          prohibited_actions: (generatedConfig.instructions as { prohibited?: string[] }).prohibited || [],
+          output_format: generatedConfig.instructions.output_format || "",
+        } : {
+          steps: [],
+          rules: [],
+          prohibited_actions: [],
+          output_format: "",
+        },
+        examples: generatedConfig.examples || [],
+        llm_config: {
+          provider: "openai",
+          model: "gpt-4o",
+          temperature: 0.7,
+        },
+        tools: [],
+        safety: {
+          level: "standard",
+          blocked_topics: [],
+          blocked_patterns: [],
+        },
+      };
+
+      const createdAgent = await createAgent.mutateAsync(agentData);
+
+      // Calculate position - place near center of current viewport
+      const position = reactFlowInstance.screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      });
+
+      // Offset slightly based on existing nodes to avoid overlap
+      const existingAgentNodes = nodes.filter((n) => n.type === "agent");
+      const offset = existingAgentNodes.length * 20;
+
+      const stepId = `step-${Date.now()}`;
+
+      const newNode: CanvasNode = {
+        id: stepId,
+        type: "agent",
+        position: {
+          x: position.x + offset,
+          y: position.y + offset,
+        },
+        data: {
+          type: "agent",
+          stepId,
+          name: createdAgent.name,
+          agentId: createdAgent.id,
+          agentName: createdAgent.name,
+          agentGoal: createdAgent.description,
+          status: "ready",
+        } as AgentNodeData,
+      };
+
+      setNodes((nds) => [...nds, newNode]);
+      setHasUnsavedChanges(true);
+      setSelectedNodeId(stepId);
+      setShowAIStepDialog(false);
+      setAIStepName("");
+      setAIStepPrompt("");
+    } catch (error) {
+      console.error("Failed to generate AI step:", error);
+    } finally {
+      setIsGeneratingStep(false);
+    }
+  }, [aiStepName, aiStepPrompt, createAgent, reactFlowInstance, nodes, setNodes]);
+
+  // Create agent from suggestion (or use existing if already created)
   const handleCreateAgent = useCallback(
     async (nodeId: string, suggestion: SuggestedAgent) => {
       const agentId = suggestion.name
         .toLowerCase()
         .replace(/\s+/g, "-")
         .replace(/[^a-z0-9-]/g, "");
+
+      // Check if agent already exists
+      const existingAgent = agentsData?.agents?.find(a => a.id === agentId);
+      if (existingAgent) {
+        // Agent already exists - use it directly
+        setNodes((nds) =>
+          nds.map((n) => {
+            if (n.id === nodeId && n.type === "agent") {
+              return {
+                ...n,
+                data: {
+                  ...n.data,
+                  agentId: existingAgent.id,
+                  agentName: existingAgent.name,
+                  agentGoal: suggestion.goal,
+                  status: "ready" as const,
+                  suggestedAgent: undefined,
+                },
+              };
+            }
+            return n;
+          })
+        );
+        setHasUnsavedChanges(true);
+        return existingAgent;
+      }
 
       const agentData: AgentCreate = {
         id: agentId,
@@ -384,12 +585,40 @@ function CanvasEditor() {
 
         setHasUnsavedChanges(true);
         return createdAgent;
-      } catch (error) {
+      } catch (error: unknown) {
+        // Handle 409 Conflict - agent already exists (created between our check and create)
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (errorMessage.includes("already exists") || errorMessage.includes("409")) {
+          // Refetch agents and try to use the existing one
+          const existingAgentNow = agentsData?.agents?.find(a => a.id === agentId);
+          if (existingAgentNow) {
+            setNodes((nds) =>
+              nds.map((n) => {
+                if (n.id === nodeId && n.type === "agent") {
+                  return {
+                    ...n,
+                    data: {
+                      ...n.data,
+                      agentId: existingAgentNow.id,
+                      agentName: existingAgentNow.name,
+                      agentGoal: suggestion.goal,
+                      status: "ready" as const,
+                      suggestedAgent: undefined,
+                    },
+                  };
+                }
+                return n;
+              })
+            );
+            setHasUnsavedChanges(true);
+            return existingAgentNow;
+          }
+        }
         console.error("Failed to create agent:", error);
         throw error;
       }
     },
-    [createAgent, setNodes]
+    [createAgent, setNodes, agentsData]
   );
 
   // Batch create all draft agents
@@ -434,6 +663,7 @@ function CanvasEditor() {
     if (!workflow) return;
 
     setIsSaving(true);
+    isSavingRef.current = true;
     try {
       // Convert canvas back to workflow definition
       // Filter out trigger and end nodes, keep agent/conditional/parallel
@@ -475,6 +705,15 @@ function CanvasEditor() {
         };
       });
 
+      // Build canvas layout to save node positions
+      const canvasLayout = {
+        positions: nodes.reduce((acc, node) => {
+          acc[node.id] = { x: node.position.x, y: node.position.y };
+          return acc;
+        }, {} as Record<string, { x: number; y: number }>),
+        savedAt: new Date().toISOString(),
+      };
+
       await updateWorkflow.mutateAsync({
         workflowId,
         request: {
@@ -482,6 +721,10 @@ function CanvasEditor() {
             ...workflow.definition,
             steps,
             entry_step: steps[0]?.id,
+            context: {
+              ...workflow.definition?.context,
+              canvas_layout: canvasLayout,
+            },
           },
         },
       });
@@ -491,19 +734,103 @@ function CanvasEditor() {
       console.error("Failed to save workflow:", error);
     } finally {
       setIsSaving(false);
+      // Reset saving flag after a brief delay to allow ReactFlow to settle
+      setTimeout(() => {
+        isSavingRef.current = false;
+      }, 500);
     }
   }, [workflow, nodes, workflowId, updateWorkflow]);
 
   // Navigate back
   const handleBack = useCallback(() => {
     if (hasUnsavedChanges) {
-      if (confirm("You have unsaved changes. Are you sure you want to leave?")) {
-        router.push(`/workflows/${workflowId}`);
-      }
+      setShowLeaveDialog(true);
     } else {
       router.push(`/workflows/${workflowId}`);
     }
   }, [router, workflowId, hasUnsavedChanges]);
+
+  // Confirm leave without saving (discard changes)
+  const handleDiscardAndLeave = useCallback(() => {
+    setShowLeaveDialog(false);
+    router.push(`/workflows/${workflowId}`);
+  }, [router, workflowId]);
+
+  // Save and then leave
+  const handleSaveAndLeave = useCallback(async () => {
+    if (!workflow) return;
+
+    setIsSaving(true);
+    try {
+      const stepNodes = nodes
+        .filter((n): n is CanvasNode =>
+          n.type === "agent" || n.type === "conditional" || n.type === "parallel"
+        )
+        .sort((a, b) => a.position.y - b.position.y);
+
+      const steps = stepNodes.map((node) => {
+        if (node.type === "agent") {
+          const data = node.data as AgentNodeData;
+          const originalStep = workflow.definition?.steps?.find(
+            (s) => s.id === data.stepId
+          );
+          return {
+            id: data.stepId,
+            type: "agent" as const,
+            name: data.name,
+            agent_id: data.agentId,
+            suggested_agent: data.suggestedAgent,
+            input: data.role || originalStep?.input || "${user_input}",
+            timeout: originalStep?.timeout || 120,
+            retries: originalStep?.retries || 0,
+            on_error: originalStep?.on_error || "fail",
+          };
+        }
+        const nodeData = node.data as ConditionalNodeData | ParallelNodeData;
+        const originalStep = workflow.definition?.steps?.find(
+          (s) => s.id === nodeData.stepId
+        );
+        return originalStep || {
+          id: nodeData.stepId,
+          type: node.type as "conditional" | "parallel",
+          timeout: 120,
+          retries: 0,
+          on_error: "fail" as const,
+        };
+      });
+
+      // Build canvas layout to save node positions
+      const canvasLayout = {
+        positions: nodes.reduce((acc, node) => {
+          acc[node.id] = { x: node.position.x, y: node.position.y };
+          return acc;
+        }, {} as Record<string, { x: number; y: number }>),
+        savedAt: new Date().toISOString(),
+      };
+
+      await updateWorkflow.mutateAsync({
+        workflowId,
+        request: {
+          definition: {
+            ...workflow.definition,
+            steps,
+            entry_step: steps[0]?.id,
+            context: {
+              ...workflow.definition?.context,
+              canvas_layout: canvasLayout,
+            },
+          },
+        },
+      });
+
+      setShowLeaveDialog(false);
+      router.push(`/workflows/${workflowId}`);
+    } catch (error) {
+      console.error("Failed to save workflow:", error);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [workflow, nodes, workflowId, updateWorkflow, router]);
 
   // Mark as having unsaved changes (for edge label edits)
   const markUnsaved = useCallback(() => {
@@ -560,6 +887,7 @@ function CanvasEditor() {
           isOpen={isPaletteOpen}
           onToggle={() => setIsPaletteOpen(!isPaletteOpen)}
           agents={agentsData?.agents || []}
+          onAddStep={handleAddStep}
           onAgentCreated={() => {
             // Agent created - React Query will auto-refetch agents list
           }}
@@ -703,6 +1031,126 @@ function CanvasEditor() {
           isCreating={createAgent.isPending}
         />
       </div>
+
+      {/* Unsaved changes confirmation dialog */}
+      <AlertDialog open={showLeaveDialog} onOpenChange={setShowLeaveDialog}>
+        <AlertDialogContent className="sm:max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-orange-500/10">
+                <Save className="h-4 w-4 text-orange-500" />
+              </div>
+              Unsaved Changes
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">
+              You have unsaved changes to this workflow. What would you like to do?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+            <AlertDialogCancel className="mt-0">
+              Keep Editing
+            </AlertDialogCancel>
+            <Button
+              variant="outline"
+              onClick={handleDiscardAndLeave}
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+            >
+              <XCircle className="h-4 w-4 mr-2" />
+              Discard
+            </Button>
+            <Button
+              onClick={handleSaveAndLeave}
+              disabled={isSaving}
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4 mr-2" />
+                  Save & Exit
+                </>
+              )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* AI Step Generation Dialog */}
+      <Dialog open={showAIStepDialog} onOpenChange={setShowAIStepDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500/20 to-blue-500/20">
+                <Wand2 className="h-4 w-4 text-purple-400" />
+              </div>
+              Add Step with AI
+            </DialogTitle>
+            <DialogDescription>
+              Describe the step you want to add. AI will generate an agent for this step.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="stepName">Step Name *</Label>
+              <Input
+                id="stepName"
+                value={aiStepName}
+                onChange={(e) => setAIStepName(e.target.value)}
+                placeholder="e.g., Data Analyzer, Content Writer..."
+                autoFocus
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="stepPrompt">What should this step do?</Label>
+              <Textarea
+                id="stepPrompt"
+                value={aiStepPrompt}
+                onChange={(e) => setAIStepPrompt(e.target.value)}
+                placeholder="e.g., Analyze incoming data and extract key insights, then format them into a summary report..."
+                rows={4}
+                className="resize-none"
+              />
+              <p className="text-xs text-muted-foreground">
+                Tip: Be specific about the task, inputs, and expected outputs.
+              </p>
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setShowAIStepDialog(false);
+                setAIStepName("");
+                setAIStepPrompt("");
+              }}
+              disabled={isGeneratingStep}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleGenerateAIStep}
+              disabled={!aiStepName.trim() || isGeneratingStep}
+            >
+              {isGeneratingStep ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4 mr-2" />
+                  Generate Step
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </CanvasContext.Provider>
   );
 }

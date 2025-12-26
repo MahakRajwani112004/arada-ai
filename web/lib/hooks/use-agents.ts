@@ -43,6 +43,13 @@ export function useCreateAgent() {
       toast.success("Agent created successfully");
     },
     onError: (error: Error) => {
+      // Don't show error toast for "already exists" - this is handled gracefully in components
+      if (error.message.includes("already exists")) {
+        // Invalidate the list so the existing agent shows up
+        queryClient.invalidateQueries({ queryKey: agentKeys.list() });
+        toast.info("Agent already exists - using existing agent");
+        return;
+      }
       toast.error(error.message);
     },
   });

@@ -1,6 +1,6 @@
 "use client";
 
-import { LogOut, User, Settings, Shield } from "lucide-react";
+import { LogOut, Settings, Shield } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -68,10 +68,6 @@ export function UserMenu() {
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem disabled>
-          <User className="mr-2 h-4 w-4" />
-          Profile
-        </DropdownMenuItem>
         <DropdownMenuItem onClick={() => router.push("/settings")}>
           <Settings className="mr-2 h-4 w-4" />
           Settings

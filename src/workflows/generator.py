@@ -1226,11 +1226,26 @@ class WorkflowGenerator:
         """Parse workflow data into schema."""
         steps = []
         for step_data in data.get("steps", []):
+            # Parse suggested_agent if present
+            suggested_agent = None
+            if "suggested_agent" in step_data and step_data["suggested_agent"]:
+                agent_data = step_data["suggested_agent"]
+                suggested_agent = SuggestedAgent(
+                    name=agent_data.get("name", ""),
+                    description=agent_data.get("description"),
+                    goal=agent_data.get("goal", ""),
+                    model=agent_data.get("model"),
+                    required_mcps=agent_data.get("required_mcps", []),
+                    suggested_tools=agent_data.get("suggested_tools", []),
+                )
+
             steps.append(
                 WorkflowStepSchema(
                     id=step_data.get("id", ""),
                     type=step_data.get("type", "agent"),
+                    name=step_data.get("name"),
                     agent_id=step_data.get("agent_id"),
+                    suggested_agent=suggested_agent,
                     input=step_data.get("input", "${user_input}"),
                     timeout=step_data.get("timeout", 120),
                     retries=step_data.get("retries", 0),

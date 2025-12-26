@@ -18,6 +18,12 @@ interface ConversionContext {
   baseWebhookUrl?: string;
 }
 
+// Canvas layout stored in workflow.definition.context
+export interface CanvasLayout {
+  positions: Record<string, { x: number; y: number }>;
+  savedAt?: string;
+}
+
 /**
  * Convert a WorkflowDefinition to ReactFlow nodes and edges
  */
@@ -90,8 +96,30 @@ export function workflowToCanvas(
     edges.push(createEdge("trigger", "end"));
   }
 
-  // 4. Apply auto-layout
-  const layoutedNodes = applyAutoLayout(nodes, edges);
+  // 4. Apply saved positions or auto-layout
+  const savedLayout = definition.context?.canvas_layout as CanvasLayout | undefined;
+
+  let layoutedNodes: CanvasNode[];
+  if (savedLayout?.positions && Object.keys(savedLayout.positions).length > 0) {
+    // Use saved positions
+    layoutedNodes = nodes.map((node) => {
+      const savedPosition = savedLayout.positions[node.id];
+      if (savedPosition) {
+        return { ...node, position: savedPosition };
+      }
+      return node;
+    });
+    // Apply auto-layout only for nodes without saved positions
+    const nodesWithoutPosition = layoutedNodes.filter(
+      (n) => !savedLayout.positions[n.id]
+    );
+    if (nodesWithoutPosition.length > 0) {
+      layoutedNodes = applyAutoLayout(layoutedNodes, edges);
+    }
+  } else {
+    // No saved layout - use auto-layout
+    layoutedNodes = applyAutoLayout(nodes, edges);
+  }
 
   return { nodes: layoutedNodes, edges };
 }

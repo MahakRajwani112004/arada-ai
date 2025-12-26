@@ -64,25 +64,35 @@ export default function WorkflowDetailPage() {
   const deleteWorkflow = useDeleteWorkflow();
   const executeWorkflow = useExecuteWorkflow();
 
-  // Compute missing agents
-  const missingAgents = useMemo(() => {
-    if (!workflow?.definition?.steps || !agentsData?.agents) return [];
-
-    const existingAgentIds = new Set(agentsData.agents.map((a) => a.id));
-    const missing: string[] = [];
-
-    for (const step of workflow.definition.steps) {
-      if (step.type === "agent" && step.agent_id) {
-        if (!existingAgentIds.has(step.agent_id)) {
-          missing.push(step.agent_id);
-        }
-      }
+  // Compute agent configuration stats
+  const agentStats = useMemo(() => {
+    if (!workflow?.definition?.steps) {
+      return { totalSteps: 0, configuredSteps: 0, missingAgents: [] as string[] };
     }
 
-    return missing;
+    const existingAgentIds = new Set(agentsData?.agents?.map((a) => a.id) || []);
+    const agentSteps = workflow.definition.steps.filter(s => s.type === "agent");
+    const totalSteps = agentSteps.length;
+
+    let configuredSteps = 0;
+    const missingAgents: string[] = [];
+
+    for (const step of agentSteps) {
+      if (step.agent_id) {
+        if (existingAgentIds.has(step.agent_id)) {
+          configuredSteps++;
+        } else {
+          missingAgents.push(step.agent_id);
+        }
+      }
+      // Steps with suggested_agent but no agent_id are not configured yet
+    }
+
+    return { totalSteps, configuredSteps, missingAgents };
   }, [workflow, agentsData]);
 
-  const isBlocked = missingAgents.length > 0;
+  const { totalSteps, configuredSteps, missingAgents } = agentStats;
+  const isBlocked = missingAgents.length > 0 || configuredSteps < totalSteps;
 
   const handleRun = (userInput: string) => {
     executeWorkflow.mutate(
@@ -150,6 +160,8 @@ export default function WorkflowDetailPage() {
             workflow={workflow}
             isBlocked={isBlocked}
             executionCount={executionsData?.executions?.length ?? 0}
+            totalSteps={totalSteps}
+            configuredSteps={configuredSteps}
             onRun={() => handleRun("")}
             onEdit={handleEdit}
             onDelete={handleDelete}

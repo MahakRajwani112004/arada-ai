@@ -9,6 +9,9 @@ import {
   Copy,
   Clock,
   AlertTriangle,
+  CheckCircle2,
+  Circle,
+  Bot,
 } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -20,8 +23,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Progress } from "@/components/ui/progress";
 import type { WorkflowSummary } from "@/types/workflow";
 import { formatDistanceToNow } from "date-fns";
+
+export type WorkflowStatus = "draft" | "incomplete" | "ready";
 
 interface WorkflowCardProps {
   workflow: WorkflowSummary;
@@ -29,6 +35,10 @@ interface WorkflowCardProps {
   onCopy?: (id: string) => void;
   onRun?: (id: string) => void;
   isBlocked?: boolean;
+  // New props for progress tracking
+  totalSteps?: number;
+  configuredSteps?: number;
+  status?: WorkflowStatus;
 }
 
 const categoryColors: Record<string, string> = {
@@ -52,16 +62,43 @@ function formatCategory(category: string): string {
     .join(" ");
 }
 
+const statusConfig = {
+  draft: {
+    label: "Draft",
+    color: "bg-gray-500/10 text-gray-400 border-gray-500/20",
+    icon: Circle,
+  },
+  incomplete: {
+    label: "Incomplete",
+    color: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+    icon: AlertTriangle,
+  },
+  ready: {
+    label: "Ready",
+    color: "bg-green-500/10 text-green-400 border-green-500/20",
+    icon: CheckCircle2,
+  },
+};
+
 export function WorkflowCard({
   workflow,
   onDelete,
   onCopy,
   onRun,
   isBlocked = false,
+  totalSteps = 0,
+  configuredSteps = 0,
+  status,
 }: WorkflowCardProps) {
   const updatedAgo = formatDistanceToNow(new Date(workflow.updated_at), {
     addSuffix: true,
   });
+
+  // Determine status from props or compute from isBlocked
+  const computedStatus: WorkflowStatus = status || (isBlocked ? "incomplete" : totalSteps > 0 ? "ready" : "draft");
+  const statusInfo = statusConfig[computedStatus];
+  const StatusIcon = statusInfo.icon;
+  const progressPercent = totalSteps > 0 ? Math.round((configuredSteps / totalSteps) * 100) : 0;
 
   return (
     <Link href={`/workflows/${workflow.id}`}>
@@ -100,6 +137,13 @@ export function WorkflowCard({
                     Template
                   </Badge>
                 )}
+                <Badge
+                  variant="outline"
+                  className={`gap-1 ${statusInfo.color}`}
+                >
+                  <StatusIcon className="h-3 w-3" />
+                  {statusInfo.label}
+                </Badge>
               </div>
             </div>
           </div>
@@ -148,11 +192,33 @@ export function WorkflowCard({
             </DropdownMenuContent>
           </DropdownMenu>
         </CardHeader>
-        <CardContent>
-          <p className="line-clamp-2 text-sm text-muted-foreground">
+        <CardContent className="flex flex-col">
+          {/* Description - fixed height with ellipsis */}
+          <p className="line-clamp-2 text-sm text-muted-foreground h-10">
             {workflow.description || "No description provided"}
           </p>
-          <div className="mt-4 flex items-center justify-between">
+
+          {/* Progress indicator - always shown */}
+          <div className="mt-4 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1 text-muted-foreground">
+                <Bot className="h-3 w-3" />
+                <span>
+                  {configuredSteps}/{totalSteps} agents configured
+                </span>
+              </div>
+              <span className={computedStatus === "ready" ? "text-green-400" : "text-muted-foreground"}>
+                {progressPercent}%
+              </span>
+            </div>
+            <Progress
+              value={progressPercent}
+              className="h-1.5"
+            />
+          </div>
+
+          {/* Footer - fixed at bottom */}
+          <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
               <Clock className="h-3 w-3" />
               <span>Updated {updatedAgo}</span>
@@ -161,12 +227,6 @@ export function WorkflowCard({
               v{workflow.version}
             </div>
           </div>
-          {isBlocked && (
-            <div className="mt-3 flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-400">
-              <AlertTriangle className="h-3 w-3" />
-              <span>Missing agents</span>
-            </div>
-          )}
         </CardContent>
       </Card>
     </Link>
