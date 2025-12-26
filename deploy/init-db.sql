@@ -292,3 +292,4 @@ CREATE INDEX IF NOT EXISTS idx_agent_executions_workflow_id ON agent_executions(
 CREATE INDEX IF NOT EXISTS idx_agent_executions_agent_id ON agent_executions(agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_executions_agent_type ON agent_executions(agent_type);
 CREATE INDEX IF NOT EXISTS idx_agent_executions_success ON agent_executions(success);
+
