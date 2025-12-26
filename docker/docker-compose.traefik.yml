@@ -149,16 +149,17 @@ services:
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_TOKEN:-dev-root-token}
       VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
-      VAULT_ADDR: "http://0.0.0.0:8200"
+      VAULT_ADDR: "http://127.0.0.1:8200"
     cap_add:
       - IPC_LOCK
     networks:
       - magure-network
     healthcheck:
-      test: ["CMD", "vault", "status"]
-      interval: 5s
+      test: ["CMD", "sh", "-c", "vault status || exit 1"]
+      interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 5s
     restart: unless-stopped
 
   # MinIO - Object storage for documents (S3-compatible)
@@ -236,7 +237,11 @@ services:
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-magure}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-magure_minio_secret}
+      MINIO_BUCKET: knowledge-documents
       MINIO_USE_SSL: "false"
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: json
     depends_on:
       postgres:
         condition: service_healthy

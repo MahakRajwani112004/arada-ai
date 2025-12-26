@@ -74,3 +74,60 @@ export async function createApiKey(name: string): Promise<ApiKeyCreated> {
 export async function deleteApiKey(keyId: string): Promise<void> {
   await apiClient.delete(`/auth/api-keys/${keyId}`);
 }
+
+// LLM Credentials
+export interface LLMCredential {
+  id: string;
+  provider: string;
+  display_name: string;
+  api_key_preview: string;
+  api_base: string | null;
+  is_active: boolean;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LLMCredentialListResponse {
+  credentials: LLMCredential[];
+  total: number;
+}
+
+export interface LLMCredentialCreate {
+  provider: string;
+  display_name: string;
+  api_key: string;
+  api_base?: string | null;
+}
+
+export interface LLMCredentialUpdate {
+  display_name?: string;
+  api_key?: string;
+  api_base?: string | null;
+  is_active?: boolean;
+}
+
+export async function listLLMCredentials(): Promise<LLMCredentialListResponse> {
+  const response = await apiClient.get<LLMCredentialListResponse>("/auth/llm-credentials");
+  return response.data;
+}
+
+export async function createLLMCredential(data: LLMCredentialCreate): Promise<LLMCredential> {
+  const response = await apiClient.post<LLMCredential>("/auth/llm-credentials", data);
+  return response.data;
+}
+
+export async function updateLLMCredential(
+  credentialId: string,
+  data: LLMCredentialUpdate
+): Promise<LLMCredential> {
+  const response = await apiClient.put<LLMCredential>(
+    `/auth/llm-credentials/${credentialId}`,
+    data
+  );
+  return response.data;
+}
+
+export async function deleteLLMCredential(credentialId: string): Promise<void> {
+  await apiClient.delete(`/auth/llm-credentials/${credentialId}`);
+}

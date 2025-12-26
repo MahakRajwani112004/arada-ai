@@ -9,12 +9,19 @@ import {
   updateEmail,
   updatePassword,
   updateProfile,
+  listLLMCredentials,
+  createLLMCredential,
+  updateLLMCredential,
+  deleteLLMCredential,
+  type LLMCredentialCreate,
+  type LLMCredentialUpdate,
 } from "@/lib/api/settings";
 import { useAuth } from "@/lib/auth";
 
 export const settingsKeys = {
   all: ["settings"] as const,
   apiKeys: () => [...settingsKeys.all, "api-keys"] as const,
+  llmCredentials: () => [...settingsKeys.all, "llm-credentials"] as const,
 };
 
 // API Keys hooks
@@ -100,6 +107,60 @@ export function useUpdateProfile() {
       // Refresh user data after profile update
       await fetchUser();
       toast.success("Profile updated successfully");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+}
+
+// LLM Credentials hooks
+export function useLLMCredentials() {
+  return useQuery({
+    queryKey: settingsKeys.llmCredentials(),
+    queryFn: listLLMCredentials,
+  });
+}
+
+export function useCreateLLMCredential() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: LLMCredentialCreate) => createLLMCredential(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: settingsKeys.llmCredentials() });
+      toast.success("LLM credential added successfully");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+}
+
+export function useUpdateLLMCredential() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: LLMCredentialUpdate }) =>
+      updateLLMCredential(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: settingsKeys.llmCredentials() });
+      toast.success("LLM credential updated successfully");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+}
+
+export function useDeleteLLMCredential() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (credentialId: string) => deleteLLMCredential(credentialId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: settingsKeys.llmCredentials() });
+      toast.success("LLM credential deleted");
     },
     onError: (error: Error) => {
       toast.error(error.message);

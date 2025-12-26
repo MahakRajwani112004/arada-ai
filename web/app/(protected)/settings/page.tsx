@@ -11,11 +11,10 @@ import {
   Key,
   Eye,
   EyeOff,
-  Copy,
   Plus,
   Trash2,
-  Check,
   Loader2,
+  User,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { PageContainer, PageHeader } from "@/components/layout/page-container";
@@ -45,18 +44,25 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import {
-  useApiKeys,
-  useCreateApiKey,
-  useDeleteApiKey,
   useUpdateEmail,
   useUpdatePassword,
+  useUpdateProfile,
+  useLLMCredentials,
+  useCreateLLMCredential,
+  useUpdateLLMCredential,
+  useDeleteLLMCredential,
 } from "@/lib/hooks/use-settings";
+import type { LLMCredential } from "@/lib/api/settings";
 import { toast } from "sonner";
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const { user } = useAuth();
   const [mounted, setMounted] = useState(false);
+
+  // Profile state
+  const [displayName, setDisplayName] = useState(user?.display_name || "");
+  const updateProfileMutation = useUpdateProfile();
 
   // Email state
   const [newEmail, setNewEmail] = useState("");
@@ -71,18 +77,29 @@ export default function SettingsPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const updatePasswordMutation = useUpdatePassword();
 
-  // API Keys state
-  const { data: apiKeysData, isLoading: isLoadingApiKeys } = useApiKeys();
-  const createApiKeyMutation = useCreateApiKey();
-  const deleteApiKeyMutation = useDeleteApiKey();
-  const [newKeyName, setNewKeyName] = useState("");
-  const [visibleKeys, setVisibleKeys] = useState<Set<string>>(new Set());
-  const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
-  const [newlyCreatedKey, setNewlyCreatedKey] = useState<{ id: string; key: string } | null>(null);
+  // LLM Credentials state
+  const { data: llmCredentialsData, isLoading: isLoadingLLMCredentials } = useLLMCredentials();
+  const createLLMCredentialMutation = useCreateLLMCredential();
+  const updateLLMCredentialMutation = useUpdateLLMCredential();
+  const deleteLLMCredentialMutation = useDeleteLLMCredential();
+  const [selectedProvider, setSelectedProvider] = useState<string>("openai");
+  const [llmDisplayName, setLLMDisplayName] = useState("");
+  const [llmApiKey, setLLMApiKey] = useState("");
+  const [llmApiBase, setLLMApiBase] = useState("");
+  const [showLLMApiKey, setShowLLMApiKey] = useState(false);
+  const [editingCredential, setEditingCredential] = useState<LLMCredential | null>(null);
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (user?.display_name !== undefined) setDisplayName(user.display_name || "");
+  }, [user?.display_name]);
+
+  const handleProfileUpdate = async () => {
+    await updateProfileMutation.mutateAsync(displayName || null);
+  };
 
   const handleEmailChange = async () => {
     if (!newEmail) {
@@ -115,46 +132,76 @@ export default function SettingsPage() {
     setConfirmPassword("");
   };
 
-  const generateApiKey = async () => {
-    if (!newKeyName.trim()) {
-      toast.error("Please enter a name for the API key");
+  // LLM Credential handlers
+  const llmProviders = [
+    { value: "openai", label: "OpenAI", placeholder: "sk-..." },
+    { value: "anthropic", label: "Anthropic", placeholder: "sk-ant-..." },
+    { value: "azure", label: "Azure OpenAI", placeholder: "Your Azure API key" },
+    { value: "google", label: "Google AI", placeholder: "Your Google API key" },
+    { value: "mistral", label: "Mistral AI", placeholder: "Your Mistral API key" },
+    { value: "groq", label: "Groq", placeholder: "gsk_..." },
+  ];
+
+  const handleCreateLLMCredential = async () => {
+    if (!llmApiKey.trim()) {
+      toast.error("Please enter an API key");
       return;
     }
-    const result = await createApiKeyMutation.mutateAsync(newKeyName);
-    setNewKeyName("");
-    // Store the newly created key to show it once
-    setNewlyCreatedKey({ id: result.id, key: result.key });
-    setVisibleKeys(new Set(Array.from(visibleKeys).concat(result.id)));
-    toast.success("API key created successfully. Make sure to copy it now!");
+    const displayName = llmDisplayName.trim() ||
+      llmProviders.find(p => p.value === selectedProvider)?.label || selectedProvider;
+
+    await createLLMCredentialMutation.mutateAsync({
+      provider: selectedProvider,
+      display_name: displayName,
+      api_key: llmApiKey,
+      api_base: llmApiBase || null,
+    });
+
+    // Reset form
+    setLLMDisplayName("");
+    setLLMApiKey("");
+    setLLMApiBase("");
+    setShowLLMApiKey(false);
   };
 
-  const handleDeleteApiKey = async (id: string) => {
-    await deleteApiKeyMutation.mutateAsync(id);
-    // Clear newly created key if it was deleted
-    if (newlyCreatedKey?.id === id) {
-      setNewlyCreatedKey(null);
-    }
+  const handleUpdateLLMCredential = async () => {
+    if (!editingCredential) return;
+
+    await updateLLMCredentialMutation.mutateAsync({
+      id: editingCredential.id,
+      data: {
+        display_name: llmDisplayName || undefined,
+        api_key: llmApiKey || undefined,
+        api_base: llmApiBase || undefined,
+      },
+    });
+
+    // Reset form
+    setEditingCredential(null);
+    setLLMDisplayName("");
+    setLLMApiKey("");
+    setLLMApiBase("");
+    setShowLLMApiKey(false);
   };
 
-  const toggleKeyVisibility = (id: string) => {
-    const newVisibleKeys = new Set(visibleKeys);
-    if (newVisibleKeys.has(id)) {
-      newVisibleKeys.delete(id);
-    } else {
-      newVisibleKeys.add(id);
-    }
-    setVisibleKeys(newVisibleKeys);
+  const handleDeleteLLMCredential = async (id: string) => {
+    await deleteLLMCredentialMutation.mutateAsync(id);
   };
 
-  const copyToClipboard = async (key: string, id: string) => {
-    await navigator.clipboard.writeText(key);
-    setCopiedKeyId(id);
-    toast.success("API key copied to clipboard");
-    setTimeout(() => setCopiedKeyId(null), 2000);
+  const startEditingCredential = (credential: LLMCredential) => {
+    setEditingCredential(credential);
+    setSelectedProvider(credential.provider);
+    setLLMDisplayName(credential.display_name);
+    setLLMApiBase(credential.api_base || "");
+    setLLMApiKey(""); // Don't pre-fill the API key for security
   };
 
-  const maskKey = (keyPrefix: string) => {
-    return keyPrefix + "•".repeat(32);
+  const cancelEditing = () => {
+    setEditingCredential(null);
+    setLLMDisplayName("");
+    setLLMApiKey("");
+    setLLMApiBase("");
+    setShowLLMApiKey(false);
   };
 
   const formatDate = (dateString: string) => {
@@ -180,13 +227,266 @@ export default function SettingsPage() {
           description="Manage your account settings and preferences"
         />
 
-        <Tabs defaultValue="appearance" className="space-y-6">
-          <TabsList className="grid w-full max-w-md grid-cols-4">
+        <Tabs defaultValue="llm-providers" className="space-y-6">
+          <TabsList className="grid w-full max-w-2xl grid-cols-5">
+            <TabsTrigger value="profile">Profile</TabsTrigger>
+            <TabsTrigger value="llm-providers">LLM Providers</TabsTrigger>
             <TabsTrigger value="appearance">Appearance</TabsTrigger>
             <TabsTrigger value="email">Email</TabsTrigger>
             <TabsTrigger value="password">Password</TabsTrigger>
-            <TabsTrigger value="api-keys">API Keys</TabsTrigger>
           </TabsList>
+
+          {/* Profile Settings */}
+          <TabsContent value="profile">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <User className="h-5 w-5" />
+                  Profile
+                </CardTitle>
+                <CardDescription>Update your display name</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="display-name-profile">Display Name</Label>
+                  <Input id="display-name-profile" placeholder="Your name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+                </div>
+                <Button onClick={handleProfileUpdate} disabled={updateProfileMutation.isPending}>{updateProfileMutation.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Updating...</> : "Save"}</Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* LLM Providers Settings */}
+          <TabsContent value="llm-providers">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Key className="h-5 w-5" />
+                  LLM Provider API Keys
+                </CardTitle>
+                <CardDescription>
+                  Add your own API keys for LLM providers like OpenAI, Anthropic, etc.
+                  These keys will be used for AI interactions in your account.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Add/Edit LLM Credential Form */}
+                <div className="space-y-4 rounded-lg border border-border p-4">
+                  <h4 className="font-medium">
+                    {editingCredential ? "Update Credential" : "Add New Credential"}
+                  </h4>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="provider">Provider</Label>
+                      <select
+                        id="provider"
+                        value={selectedProvider}
+                        onChange={(e) => setSelectedProvider(e.target.value)}
+                        disabled={!!editingCredential}
+                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {llmProviders.map((provider) => (
+                          <option key={provider.value} value={provider.value}>
+                            {provider.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="display-name">Display Name (Optional)</Label>
+                      <Input
+                        id="display-name"
+                        placeholder={`e.g., My ${llmProviders.find(p => p.value === selectedProvider)?.label} Key`}
+                        value={llmDisplayName}
+                        onChange={(e) => setLLMDisplayName(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="api-key">API Key</Label>
+                    <div className="relative">
+                      <Input
+                        id="api-key"
+                        type={showLLMApiKey ? "text" : "password"}
+                        placeholder={llmProviders.find(p => p.value === selectedProvider)?.placeholder}
+                        value={llmApiKey}
+                        onChange={(e) => setLLMApiKey(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowLLMApiKey(!showLLMApiKey)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        {showLLMApiKey ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                    {editingCredential && (
+                      <p className="text-xs text-muted-foreground">
+                        Leave empty to keep the existing API key
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="api-base">Custom API Base URL (Optional)</Label>
+                    <Input
+                      id="api-base"
+                      placeholder="https://api.example.com/v1"
+                      value={llmApiBase}
+                      onChange={(e) => setLLMApiBase(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Only needed for self-hosted or proxy endpoints
+                    </p>
+                  </div>
+
+                  <div className="flex gap-2">
+                    {editingCredential ? (
+                      <>
+                        <Button
+                          onClick={handleUpdateLLMCredential}
+                          disabled={updateLLMCredentialMutation.isPending}
+                        >
+                          {updateLLMCredentialMutation.isPending ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Updating...
+                            </>
+                          ) : (
+                            "Update Credential"
+                          )}
+                        </Button>
+                        <Button variant="outline" onClick={cancelEditing}>
+                          Cancel
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        onClick={handleCreateLLMCredential}
+                        disabled={createLLMCredentialMutation.isPending || !llmApiKey.trim()}
+                        className="gap-2"
+                      >
+                        {createLLMCredentialMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Plus className="h-4 w-4" />
+                        )}
+                        Add Credential
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {/* LLM Credentials List */}
+                <div className="space-y-3">
+                  <h4 className="font-medium">Your LLM Credentials</h4>
+
+                  {isLoadingLLMCredentials ? (
+                    <>
+                      <Skeleton className="h-20 w-full" />
+                      <Skeleton className="h-20 w-full" />
+                    </>
+                  ) : llmCredentialsData?.credentials.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-8 text-center">
+                      <Key className="h-8 w-8 text-muted-foreground" />
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        No LLM credentials yet. Add your API keys to get started.
+                      </p>
+                    </div>
+                  ) : (
+                    llmCredentialsData?.credentials.map((credential) => (
+                      <div
+                        key={credential.id}
+                        className={cn(
+                          "flex items-center justify-between rounded-lg border border-border bg-card p-4",
+                          !credential.is_active && "opacity-60"
+                        )}
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium">{credential.display_name}</p>
+                            <span className="rounded bg-muted px-2 py-0.5 text-xs font-medium">
+                              {llmProviders.find(p => p.value === credential.provider)?.label || credential.provider}
+                            </span>
+                            {!credential.is_active && (
+                              <span className="rounded bg-yellow-500/20 px-2 py-0.5 text-xs text-yellow-600 dark:text-yellow-400">
+                                Inactive
+                              </span>
+                            )}
+                          </div>
+                          <code className="rounded bg-muted px-2 py-1 font-mono text-xs">
+                            {credential.api_key_preview}
+                          </code>
+                          <p className="text-xs text-muted-foreground">
+                            Added: {formatDate(credential.created_at)}
+                            {credential.last_used_at &&
+                              ` • Last used: ${formatDate(credential.last_used_at)}`}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => startEditingCredential(credential)}
+                            className="text-muted-foreground hover:text-foreground"
+                          >
+                            <Key className="h-4 w-4" />
+                          </Button>
+
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-muted-foreground hover:text-destructive"
+                                disabled={deleteLLMCredentialMutation.isPending}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Delete LLM Credential</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Are you sure you want to delete the {credential.display_name} credential?
+                                  This action cannot be undone and any agents using this credential will
+                                  need to be reconfigured.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => handleDeleteLLMCredential(credential.id)}
+                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                >
+                                  Delete
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-border bg-muted/50 p-4">
+                  <p className="text-sm text-muted-foreground">
+                    <strong>Security note:</strong> Your API keys are encrypted and stored securely.
+                    We never share or log your API keys. You can delete or update them at any time.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           {/* Theme Settings */}
           <TabsContent value="appearance">
@@ -401,166 +701,6 @@ export default function SettingsPage() {
                     "Change Password"
                   )}
                 </Button>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* API Keys Settings */}
-          <TabsContent value="api-keys">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Key className="h-5 w-5" />
-                  API Keys
-                </CardTitle>
-                <CardDescription>
-                  Manage your API keys for programmatic access to MagOneAI
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Create new API key */}
-                <div className="flex gap-3">
-                  <Input
-                    placeholder="API key name (e.g., Production)"
-                    value={newKeyName}
-                    onChange={(e) => setNewKeyName(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && generateApiKey()}
-                    disabled={createApiKeyMutation.isPending}
-                  />
-                  <Button
-                    onClick={generateApiKey}
-                    className="gap-2"
-                    disabled={createApiKeyMutation.isPending || !newKeyName.trim()}
-                  >
-                    {createApiKeyMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Plus className="h-4 w-4" />
-                    )}
-                    Create Key
-                  </Button>
-                </div>
-
-                {/* API Keys List */}
-                <div className="space-y-3">
-                  {isLoadingApiKeys ? (
-                    <>
-                      <Skeleton className="h-24 w-full" />
-                      <Skeleton className="h-24 w-full" />
-                    </>
-                  ) : apiKeysData?.api_keys.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-8 text-center">
-                      <Key className="h-8 w-8 text-muted-foreground" />
-                      <p className="mt-2 text-sm text-muted-foreground">
-                        No API keys yet. Create one to get started.
-                      </p>
-                    </div>
-                  ) : (
-                    apiKeysData?.api_keys.map((apiKey) => {
-                      // Check if this is the newly created key
-                      const isNewlyCreated = newlyCreatedKey?.id === apiKey.id;
-
-                      return (
-                        <div
-                          key={apiKey.id}
-                          className={cn(
-                            "flex items-center justify-between rounded-lg border border-border bg-card p-4",
-                            isNewlyCreated && "border-primary/50 bg-primary/5"
-                          )}
-                        >
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <p className="font-medium">{apiKey.name}</p>
-                              {isNewlyCreated && (
-                                <span className="rounded bg-primary/20 px-1.5 py-0.5 text-xs text-primary">
-                                  New - Copy now!
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <code className="rounded bg-muted px-2 py-1 font-mono text-xs">
-                                {isNewlyCreated && visibleKeys.has(apiKey.id)
-                                  ? newlyCreatedKey.key
-                                  : maskKey(apiKey.key_prefix)}
-                              </code>
-                              {isNewlyCreated && (
-                                <>
-                                  <button
-                                    onClick={() => toggleKeyVisibility(apiKey.id)}
-                                    className="text-muted-foreground hover:text-foreground"
-                                  >
-                                    {visibleKeys.has(apiKey.id) ? (
-                                      <EyeOff className="h-4 w-4" />
-                                    ) : (
-                                      <Eye className="h-4 w-4" />
-                                    )}
-                                  </button>
-                                  <button
-                                    onClick={() =>
-                                      copyToClipboard(newlyCreatedKey.key, apiKey.id)
-                                    }
-                                    className="text-muted-foreground hover:text-foreground"
-                                  >
-                                    {copiedKeyId === apiKey.id ? (
-                                      <Check className="h-4 w-4 text-green-500" />
-                                    ) : (
-                                      <Copy className="h-4 w-4" />
-                                    )}
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                              Created: {formatDate(apiKey.created_at)}
-                              {apiKey.last_used_at &&
-                                ` • Last used: ${formatDate(apiKey.last_used_at)}`}
-                            </p>
-                          </div>
-
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="text-muted-foreground hover:text-destructive"
-                                disabled={deleteApiKeyMutation.isPending}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Delete API Key</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Are you sure you want to delete &quot;{apiKey.name}
-                                  &quot;? This action cannot be undone and any
-                                  applications using this key will stop working.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() => handleDeleteApiKey(apiKey.id)}
-                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                >
-                                  Delete
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-
-                <div className="rounded-lg border border-border bg-muted/50 p-4">
-                  <p className="text-sm text-muted-foreground">
-                    <strong>Security tip:</strong> API keys are only shown once when
-                    created. Store them securely. Do not share them in publicly
-                    accessible areas such as GitHub or client-side code.
-                  </p>
-                </div>
               </CardContent>
             </Card>
           </TabsContent>

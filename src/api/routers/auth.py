@@ -16,6 +16,10 @@ from src.auth.schemas import (
     InviteResponse,
     InviteValidate,
     InviteValidateResponse,
+    LLMCredentialCreate,
+    LLMCredentialListResponse,
+    LLMCredentialResponse,
+    LLMCredentialUpdate,
     PasswordUpdate,
     RefreshTokenRequest,
     TokenResponse,
@@ -381,4 +385,145 @@ async def delete_api_key(
         "api_key_deleted",
         user_id=current_user.id,
         key_id=key_id,
+    )
+
+
+# ============ LLM Credential Endpoints ============
+
+
+@router.get("/llm-credentials", response_model=LLMCredentialListResponse)
+async def list_llm_credentials(
+    current_user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """List all LLM provider credentials for the current user."""
+    auth_service = AuthService(session)
+
+    credentials = await auth_service.list_llm_credentials(current_user.id)
+
+    return LLMCredentialListResponse(
+        credentials=[
+            LLMCredentialResponse(
+                id=cred.id,
+                provider=cred.provider,
+                display_name=cred.display_name,
+                api_key_preview=cred.api_key_preview,
+                api_base=cred.api_base,
+                is_active=cred.is_active,
+                last_used_at=cred.last_used_at,
+                created_at=cred.created_at,
+                updated_at=cred.updated_at,
+            )
+            for cred in credentials
+        ],
+        total=len(credentials),
+    )
+
+
+@router.post("/llm-credentials", response_model=LLMCredentialResponse, status_code=status.HTTP_201_CREATED)
+async def create_llm_credential(
+    request: LLMCredentialCreate,
+    current_user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Create a new LLM provider credential.
+
+    The API key is encrypted and stored securely.
+    """
+    auth_service = AuthService(session)
+
+    credential = await auth_service.create_llm_credential(
+        user_id=current_user.id,
+        provider=request.provider,
+        display_name=request.display_name,
+        api_key=request.api_key,
+        api_base=request.api_base,
+    )
+
+    logger.info(
+        "llm_credential_created",
+        user_id=current_user.id,
+        credential_id=credential.id,
+        provider=credential.provider,
+    )
+
+    return LLMCredentialResponse(
+        id=credential.id,
+        provider=credential.provider,
+        display_name=credential.display_name,
+        api_key_preview=credential.api_key_preview,
+        api_base=credential.api_base,
+        is_active=credential.is_active,
+        last_used_at=credential.last_used_at,
+        created_at=credential.created_at,
+        updated_at=credential.updated_at,
+    )
+
+
+@router.put("/llm-credentials/{credential_id}", response_model=LLMCredentialResponse)
+async def update_llm_credential(
+    credential_id: str,
+    request: LLMCredentialUpdate,
+    current_user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Update an LLM provider credential."""
+    auth_service = AuthService(session)
+
+    credential = await auth_service.update_llm_credential(
+        credential_id=credential_id,
+        user_id=current_user.id,
+        display_name=request.display_name,
+        api_key=request.api_key,
+        api_base=request.api_base,
+        is_active=request.is_active,
+    )
+
+    if not credential:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="LLM credential not found",
+        )
+
+    logger.info(
+        "llm_credential_updated",
+        user_id=current_user.id,
+        credential_id=credential.id,
+        provider=credential.provider,
+    )
+
+    return LLMCredentialResponse(
+        id=credential.id,
+        provider=credential.provider,
+        display_name=credential.display_name,
+        api_key_preview=credential.api_key_preview,
+        api_base=credential.api_base,
+        is_active=credential.is_active,
+        last_used_at=credential.last_used_at,
+        created_at=credential.created_at,
+        updated_at=credential.updated_at,
+    )
+
+
+@router.delete("/llm-credentials/{credential_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_llm_credential(
+    credential_id: str,
+    current_user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Delete an LLM provider credential."""
+    auth_service = AuthService(session)
+
+    deleted = await auth_service.delete_llm_credential(credential_id, current_user.id)
+
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="LLM credential not found",
+        )
+
+    logger.info(
+        "llm_credential_deleted",
+        user_id=current_user.id,
+        credential_id=credential_id,
     )
