@@ -1,355 +1,484 @@
-# MagOneAI Production Docker Compose
-# Uses Traefik for reverse proxy with path-based routing
-#
-# Usage:
-#   docker-compose -f deploy/docker-compose.yml up -d
-#
-# Environment variables required:
-#   - DOMAIN (e.g., app.magoneai.com)
-#   - DB_PASSWORD
-#   - SECRET_KEY
-#   - OPENAI_API_KEY or ANTHROPIC_API_KEY
-#
-# Optional:
-#   - ACME_EMAIL (for Let's Encrypt)
-#   - IMAGE_TAG (defaults to 'v2')
+# Docker Compose with Traefik for production deployment
+# Domain: magoneai.magure.ai
+# Usage: docker-compose -f docker/docker-compose.traefik.yml up -d
 
 services:
   # ============================================
-  # Traefik - Reverse Proxy & Load Balancer
+  # Traefik - Reverse Proxy & SSL
   # ============================================
   traefik:
-    image: traefik:v3.2
-    container_name: magone-traefik
-    restart: unless-stopped
+    image: traefik:v2.11
+    container_name: magure-traefik
+    environment:
+      - DOCKER_API_VERSION=1.44
     command:
-      # API and Dashboard
-      - "--api.dashboard=true"
-      - "--api.insecure=false"
-      # Docker provider
+      # Enable Docker provider
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
-      - "--providers.docker.network=magone-network"
+      - "--providers.docker.network=magure-network"
       # Entrypoints
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
-      # HTTP to HTTPS redirect
+      # Redirect HTTP to HTTPS
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
-      # Let's Encrypt SSL certificates
-      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
-      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      # Let's Encrypt SSL
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
       - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-admin@magure.ai}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
       # Logging
       - "--log.level=INFO"
-      - "--accesslog=true"
+      # Dashboard (disable in production or secure it)
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock:ro"
-      - "traefik_letsencrypt:/letsencrypt"
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt_data:/letsencrypt
     networks:
-      - magone-network
+      - magure-network
+    restart: unless-stopped
     labels:
-      # Dashboard (optional - access via traefik.${DOMAIN})
+      # Traefik Dashboard (optional - access via traefik.magoneai.magure.ai)
       - "traefik.enable=true"
-      - "traefik.http.routers.traefik.rule=Host(`traefik.${DOMAIN:-localhost}`)"
-      - "traefik.http.routers.traefik.service=api@internal"
-      - "traefik.http.routers.traefik.entrypoints=websecure"
-      - "traefik.http.routers.traefik.tls=true"
-      # Basic auth for dashboard (generate with: htpasswd -nb admin password)
-      # REQUIRED: Set TRAEFIK_DASHBOARD_AUTH in production
-      - "traefik.http.routers.traefik.middlewares=traefik-auth"
-      - "traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH:?Error: TRAEFIK_DASHBOARD_AUTH is required for dashboard security}"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.magoneai.magure.ai`)"
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
+      - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.middlewares=dashboard-auth"
+      # Basic auth for dashboard (user: admin, password: change-me) - generate with: htpasswd -nb admin your-password
+      - "traefik.http.middlewares.dashboard-auth.basicauth.users=admin:$$apr1$$xyz$$changethis"
 
   # ============================================
-  # PostgreSQL - Primary Database
+  # Infrastructure Services
   # ============================================
+
+  # PostgreSQL - Primary database
   postgres:
     image: postgres:16-alpine
-    container_name: magone-postgres
-    restart: unless-stopped
+    container_name: magure-postgres
     environment:
-      POSTGRES_USER: magone
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: magone_db
+      POSTGRES_USER: ${POSTGRES_USER:-magure}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-magure_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-magure_db}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     networks:
-      - magone-network
+      - magure-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U magone -d magone_db"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U magure -d magure_db"]
+      interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
-  # ============================================
-  # Redis - Caching & Sessions
-  # ============================================
+  # Redis - Caching and sessions
   redis:
     image: redis:7-alpine
-    container_name: magone-redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_secret}
+    container_name: magure-redis
     volumes:
       - redis_data:/data
     networks:
-      - magone-network
+      - magure-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_secret}", "ping"]
-      interval: 10s
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
-  # ============================================
-  # Qdrant - Vector Database for RAG
-  # ============================================
+  # Qdrant - Vector database for RAG
   qdrant:
     image: qdrant/qdrant:latest
-    container_name: magone-qdrant
-    restart: unless-stopped
+    container_name: magure-qdrant
     volumes:
       - qdrant_data:/qdrant/storage
-    networks:
-      - magone-network
     environment:
       QDRANT__SERVICE__GRPC_PORT: 6334
+    networks:
+      - magure-network
+    restart: unless-stopped
 
-  # ============================================
-  # Temporal Server - Workflow Orchestration
-  # ============================================
+  # Temporal Server
   temporal:
     image: temporalio/auto-setup:latest
-    container_name: magone-temporal
-    restart: unless-stopped
+    container_name: magure-temporal
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       - DB=postgres12
       - DB_PORT=5432
-      - POSTGRES_USER=magone
-      - POSTGRES_PWD=${DB_PASSWORD}
+      - POSTGRES_USER=${POSTGRES_USER:-magure}
+      - POSTGRES_PWD=${POSTGRES_PASSWORD:-magure_dev_password}
       - POSTGRES_SEEDS=postgres
       - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development.yaml
     volumes:
-      - ./temporal-config:/etc/temporal/config/dynamicconfig:ro
+      - ./temporal-config:/etc/temporal/config/dynamicconfig
     networks:
-      - magone-network
-    healthcheck:
-      test: ["CMD", "tctl", "--address", "localhost:7233", "cluster", "health"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 60s
+      - magure-network
+    restart: unless-stopped
 
-  # ============================================
-  # Temporal UI - Workflow Monitoring
-  # ============================================
+  # Temporal Web UI
   temporal-ui:
     image: temporalio/ui:latest
-    container_name: magone-temporal-ui
-    restart: unless-stopped
+    container_name: magure-temporal-ui
     depends_on:
       - temporal
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
-      - TEMPORAL_CORS_ORIGINS=https://${DOMAIN:-localhost}
+      - TEMPORAL_CORS_ORIGINS=https://magoneai.magure.ai
     networks:
-      - magone-network
+      - magure-network
     labels:
       - "traefik.enable=true"
-      # Route: /temporal/* -> Temporal UI
-      - "traefik.http.routers.temporal.rule=Host(`${DOMAIN:-localhost}`) && PathPrefix(`/temporal`)"
-      - "traefik.http.routers.temporal.entrypoints=websecure"
-      - "traefik.http.routers.temporal.tls=true"
-      - "traefik.http.routers.temporal.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.temporal.service=temporal"
-      - "traefik.http.services.temporal.loadbalancer.server.port=8080"
-      # Strip /temporal prefix
-      - "traefik.http.routers.temporal.middlewares=temporal-strip"
-      - "traefik.http.middlewares.temporal-strip.stripprefix.prefixes=/temporal"
+      - "traefik.http.routers.temporal-ui.rule=Host(`temporal.magoneai.magure.ai`)"
+      - "traefik.http.routers.temporal-ui.entrypoints=websecure"
+      - "traefik.http.routers.temporal-ui.tls.certresolver=letsencrypt"
+      - "traefik.http.services.temporal-ui.loadbalancer.server.port=8080"
+    restart: unless-stopped
+
+  # HashiCorp Vault - Secrets Management
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: magure-vault
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_TOKEN:-dev-root-token}
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+      VAULT_ADDR: "http://127.0.0.1:8200"
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - magure-network
+    healthcheck:
+      test: ["CMD", "sh", "-c", "vault status || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # MinIO - Object storage for documents (S3-compatible)
+  minio:
+    image: minio/minio:latest
+    container_name: magure-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-magure}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-magure_minio_secret}
+    volumes:
+      - minio_data:/data
+    networks:
+      - magure-network
+    labels:
+      # MinIO Console (optional)
+      - "traefik.enable=true"
+      - "traefik.http.routers.minio-console.rule=Host(`minio.magoneai.magure.ai`)"
+      - "traefik.http.routers.minio-console.entrypoints=websecure"
+      - "traefik.http.routers.minio-console.tls.certresolver=letsencrypt"
+      - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   # ============================================
-  # MagOneAI API - FastAPI Backend
+  # Application Services
   # ============================================
+
+  # API Server
   api:
-    image: ${DOCKER_REGISTRY:-magureme}/magoneai-api:${IMAGE_TAG:-v2}
-    container_name: magone-api
+    image: magureme/magoneai-api:latest
+    container_name: magure-api
+    environment:
+      # Application
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_NAME: magure-ai-platform
+      SECRET_KEY: ${SECRET_KEY}
+      FRONTEND_URL: https://magoneai.magure.ai
+      # Database
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-magure}:${POSTGRES_PASSWORD:-magure_dev_password}@postgres:5432/${POSTGRES_DB:-magure_db}
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      # Secrets encryption
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY}
+      # Qdrant
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      # Temporal
+      TEMPORAL_HOST: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: agent-tasks
+      # Vault
+      VAULT_PROVIDER: hashicorp
+      VAULT_URL: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN:-dev-root-token}
+      # CORS - Updated for domain
+      CORS_ORIGINS: ${CORS_ORIGINS:-["https://magoneai.magure.ai"]}
+      CORS_ALLOW_CREDENTIALS: "true"
+      # LLM Keys
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Google OAuth - Updated for domain
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      OAUTH_REDIRECT_URI: https://magoneai.magure.ai/api/v1/oauth/google/callback
+      # MCP Server URLs
+      MCP_GOOGLE_CALENDAR_URL: http://mcp-google-calendar:8001/mcp
+      MCP_GOOGLE_GMAIL_URL: http://mcp-google-gmail:8002/mcp
+      # MinIO / Object Storage
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-magure}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-magure_minio_secret}
+      MINIO_BUCKET: knowledge-documents
+      MINIO_USE_SSL: "false"
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: json
+      # Monitoring
+      MONITORING_ENABLED: "true"
+      ANALYTICS_ENABLED: "true"
+      LOKI_ENABLED: "true"
+      LOKI_URL: http://loki:3100
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      temporal:
+        condition: service_started
+    networks:
+      - magure-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`magoneai.magure.ai`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.api.entrypoints=websecure"
+      - "traefik.http.routers.api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.api.loadbalancer.server.port=8000"
+      - "traefik.http.routers.api.priority=10"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
     restart: unless-stopped
+
+  # Temporal Worker
+  worker:
+    image: magureme/magoneai-worker:latest
+    container_name: magure-worker
+    environment:
+      # Application
+      APP_ENV: production
+      APP_DEBUG: "false"
+      SECRET_KEY: ${SECRET_KEY}
+      # Database
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-magure}:${POSTGRES_PASSWORD:-magure_dev_password}@postgres:5432/${POSTGRES_DB:-magure_db}
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      # Secrets encryption
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY}
+      # Qdrant
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      # Temporal
+      TEMPORAL_HOST: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: agent-tasks
+      # Vault
+      VAULT_PROVIDER: hashicorp
+      VAULT_URL: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN:-dev-root-token}
+      # LLM Keys
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # MCP Server URLs
+      MCP_GOOGLE_CALENDAR_URL: http://mcp-google-calendar:8001/mcp
+      MCP_GOOGLE_GMAIL_URL: http://mcp-google-gmail:8002/mcp
+      # Monitoring
+      MONITORING_ENABLED: "true"
+      ANALYTICS_ENABLED: "true"
+      LOKI_ENABLED: "true"
+      LOKI_URL: http://loki:3100
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       temporal:
-        condition: service_healthy
-      qdrant:
         condition: service_started
-    environment:
-      # Application
-      APP_ENV: production
-      APP_DEBUG: "false"
-      # Database
-      DATABASE_URL: postgresql+asyncpg://magone:${DB_PASSWORD}@postgres:5432/magone_db
-      # Database Pool (production settings)
-      DB_POOL_SIZE: ${DB_POOL_SIZE:-20}
-      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-40}
-      DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-3600}
-      # Temporal
-      TEMPORAL_HOST: temporal:7233
-      TEMPORAL_NAMESPACE: default
-      TEMPORAL_TASK_QUEUE: agent-tasks
-      WORKFLOW_TIMEOUT_SECONDS: ${WORKFLOW_TIMEOUT_SECONDS:-600}
-      # Redis
-      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379/0
-      # Qdrant
-      QDRANT_HOST: qdrant
-      QDRANT_PORT: 6333
-      # LLM Providers
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # Security
-      SECRET_KEY: ${SECRET_KEY:?Error: SECRET_KEY is required}
-      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:?Error: SECRETS_ENCRYPTION_KEY is required}
-      # CORS (production settings)
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://${DOMAIN:-localhost}}
-      CORS_ALLOW_CREDENTIALS: "true"
-      # Rate Limiting
-      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
-      RATE_LIMIT_WORKFLOW: ${RATE_LIMIT_WORKFLOW:-10/minute}
-      RATE_LIMIT_AGENTS: ${RATE_LIMIT_AGENTS:-20/minute}
-      RATE_LIMIT_DEFAULT: ${RATE_LIMIT_DEFAULT:-100/minute}
-      # OAuth (optional)
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      OAUTH_REDIRECT_URI: https://${DOMAIN:-localhost}/api/v1/oauth/google/callback
+      api:
+        condition: service_healthy
     networks:
-      - magone-network
-    labels:
-      - "traefik.enable=true"
-      # Route: /api/* -> API
-      - "traefik.http.routers.api.rule=Host(`${DOMAIN:-localhost}`) && PathPrefix(`/api`)"
-      - "traefik.http.routers.api.entrypoints=websecure"
-      - "traefik.http.routers.api.tls=true"
-      - "traefik.http.routers.api.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.api.service=api"
-      - "traefik.http.services.api.loadbalancer.server.port=8000"
-      # Health endpoint (no /api prefix strip needed as API already uses /api)
-      - "traefik.http.routers.api-health.rule=Host(`${DOMAIN:-localhost}`) && Path(`/health`)"
-      - "traefik.http.routers.api-health.entrypoints=websecure"
-      - "traefik.http.routers.api-health.tls=true"
-      - "traefik.http.routers.api-health.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.api-health.service=api"
-
-  # ============================================
-  # MagOneAI Worker - Temporal Workflow Worker
-  # ============================================
-  worker:
-    image: ${DOCKER_REGISTRY:-magureme}/magoneai-worker:${IMAGE_TAG:-v2}
-    container_name: magone-worker
+      - magure-network
     restart: unless-stopped
-    depends_on:
-      - api
-    environment:
-      # Database
-      DATABASE_URL: postgresql+asyncpg://magone:${DB_PASSWORD}@postgres:5432/magone_db
-      # Temporal
-      TEMPORAL_HOST: temporal:7233
-      TEMPORAL_NAMESPACE: default
-      TEMPORAL_TASK_QUEUE: agent-tasks
-      # Redis
-      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379/0
-      # Qdrant
-      QDRANT_HOST: qdrant
-      QDRANT_PORT: 6333
-      # LLM Providers
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # Security
-      SECRET_KEY: ${SECRET_KEY}
-      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-}
-    networks:
-      - magone-network
-    deploy:
-      replicas: 2
 
-  # ============================================
-  # MagOneAI Web - Next.js Frontend
-  # ============================================
+  # Web UI (Next.js)
   web:
-    image: ${DOCKER_REGISTRY:-magureme}/magoneai-web:${IMAGE_TAG:-v2}
-    container_name: magone-web
-    restart: unless-stopped
-    depends_on:
-      - api
+    image: magureme/magoneai-web:v3
+    container_name: magure-web
     environment:
-      NEXT_PUBLIC_API_URL: https://${DOMAIN:-localhost}
+      NEXT_PUBLIC_API_URL: https://magoneai.magure.ai/api/v1
+      NODE_ENV: production
+    depends_on:
+      api:
+        condition: service_healthy
     networks:
-      - magone-network
+      - magure-network
     labels:
       - "traefik.enable=true"
-      # Route: /* -> Web (lowest priority, catches all other routes)
-      - "traefik.http.routers.web.rule=Host(`${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.web.rule=Host(`magoneai.magure.ai`)"
       - "traefik.http.routers.web.entrypoints=websecure"
-      - "traefik.http.routers.web.tls=true"
       - "traefik.http.routers.web.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.web.service=web"
-      - "traefik.http.routers.web.priority=1"
       - "traefik.http.services.web.loadbalancer.server.port=3000"
+      - "traefik.http.routers.web.priority=1"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
 
   # ============================================
-  # MCP Server - Google Calendar
+  # MCP Servers
   # ============================================
+
+  # Google Calendar MCP Server
   mcp-google-calendar:
-    image: ${DOCKER_REGISTRY:-magureme}/magoneai-mcp-calendar:${IMAGE_TAG:-v2}
-    container_name: magone-mcp-calendar
-    restart: unless-stopped
+    image: magureme/magoneai-mcp-google-calendar:v3
+    container_name: magure-mcp-google-calendar
     environment:
+      PORT: 8001
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      VAULT_URL: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN:-dev-root-token}
+    depends_on:
+      vault:
+        condition: service_healthy
     networks:
-      - magone-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+      - magure-network
+    restart: unless-stopped
 
-  # ============================================
-  # MCP Server - Google Gmail
-  # ============================================
+  # Google Gmail MCP Server
   mcp-google-gmail:
-    image: ${DOCKER_REGISTRY:-magureme}/magoneai-mcp-gmail:${IMAGE_TAG:-v2}
-    container_name: magone-mcp-gmail
-    restart: unless-stopped
+    image: magureme/magoneai-mcp-google-gmail:v3
+    container_name: magure-mcp-google-gmail
     environment:
+      PORT: 8002
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      VAULT_URL: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN:-dev-root-token}
+    depends_on:
+      vault:
+        condition: service_healthy
     networks:
-      - magone-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+      - magure-network
+    restart: unless-stopped
 
-# ============================================
-# Networks
-# ============================================
+  # ============================================
+  # Monitoring Services
+  # ============================================
+
+  # Prometheus - Metrics Collection
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: magure-prometheus
+    restart: unless-stopped
+    volumes:
+      - ../docker/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    networks:
+      - magure-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.rule=Host(`prometheus.magoneai.magure.ai`)"
+      - "traefik.http.routers.prometheus.entrypoints=websecure"
+      - "traefik.http.routers.prometheus.tls.certresolver=letsencrypt"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+
+  # Grafana - Dashboards & Visualization
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: magure-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-magure_admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=https://grafana.magoneai.magure.ai
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../docker/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      - magure-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.magoneai.magure.ai`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+
+  # Loki - Log Aggregation
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: magure-loki
+    restart: unless-stopped
+    volumes:
+      - ../docker/monitoring/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - magure-network
+
+  # Promtail - Collects Docker Container Logs
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: magure-promtail
+    restart: unless-stopped
+    volumes:
+      - ../docker/monitoring/promtail/promtail-docker.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - magure-network
+
 networks:
-  magone-network:
+  magure-network:
     driver: bridge
 
-# ============================================
-# Volumes
-# ============================================
 volumes:
   postgres_data:
   redis_data:
   qdrant_data:
-  traefik_letsencrypt:
+  minio_data:
+  letsencrypt_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+

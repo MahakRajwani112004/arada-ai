@@ -72,12 +72,12 @@ export function UserMenu() {
           <User className="mr-2 h-4 w-4" />
           Profile
         </DropdownMenuItem>
-        <DropdownMenuItem disabled>
+        <DropdownMenuItem onClick={() => router.push("/settings")}>
           <Settings className="mr-2 h-4 w-4" />
           Settings
         </DropdownMenuItem>
         {user.is_superuser && (
-          <DropdownMenuItem disabled>
+          <DropdownMenuItem onClick={() => router.push("/admin")}>
             <Shield className="mr-2 h-4 w-4" />
             Admin
           </DropdownMenuItem>

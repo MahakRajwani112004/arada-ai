@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bot, Plug, Settings, ChevronRight, Workflow, Activity } from "lucide-react";
+import { Bot, Plug, Settings, ChevronRight, Workflow, Activity, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ThemeToggle } from "./theme-toggle";
 import { UserMenu } from "./user-menu";
+import { useAuth } from "@/lib/auth";
 
 interface NavItem {
   label: string;
@@ -44,6 +44,7 @@ const navItems: NavItem[] = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { user } = useAuth();
 
   return (
     <aside className="fixed left-0 top-0 z-40 h-screen w-56 border-r border-border bg-background">
@@ -117,6 +118,22 @@ export function Sidebar() {
 
         {/* Footer */}
         <div className="border-t border-border p-3 space-y-2">
+          {/* Admin link - only for superusers */}
+          {user?.is_superuser && (
+            <Link
+              href="/admin"
+              className={cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                pathname === "/admin"
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              )}
+            >
+              <Shield className="h-4 w-4" />
+              <span>Admin</span>
+            </Link>
+          )}
+
           <Link
             href="/settings"
             className={cn(
@@ -130,9 +147,8 @@ export function Sidebar() {
             <span>Settings</span>
           </Link>
 
-          {/* Theme and User */}
-          <div className="flex items-center justify-between px-2 pt-2">
-            <ThemeToggle />
+          {/* User */}
+          <div className="flex items-center justify-end px-2 pt-2">
             <UserMenu />
           </div>
         </div>

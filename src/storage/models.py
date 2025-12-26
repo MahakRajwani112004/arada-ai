@@ -428,6 +428,106 @@ class KnowledgeBaseModel(Base):
         return f"<KnowledgeBaseModel(id={self.id!r}, name={self.name!r}, docs={self.document_count})>"
 
 
+class APIKeyModel(Base):
+    """SQLAlchemy model for user API keys.
+
+    API keys are used for programmatic access to the API.
+    The key itself is hashed for security - we only store the hash.
+    """
+
+    __tablename__ = "api_keys"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Owner - each user owns their own API keys
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Key info
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    key_prefix: Mapped[str] = mapped_column(String(20), nullable=False)  # First 8 chars for display
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+
+    # Status
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Tracking
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<APIKeyModel(id={self.id!r}, name={self.name!r}, prefix={self.key_prefix!r})>"
+
+
+class LLMCredentialModel(Base):
+    """SQLAlchemy model for user LLM provider credentials.
+
+    Stores references to API keys for LLM providers (OpenAI, Anthropic, etc.)
+    that users provide for their own usage. Actual API keys are stored in vault.
+    """
+
+    __tablename__ = "llm_credentials"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Owner - each user owns their own LLM credentials
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Provider info
+    provider: Mapped[str] = mapped_column(
+        String(50), nullable=False, index=True
+    )  # openai, anthropic, azure, etc.
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    # Vault reference for API key (NOT the actual key!)
+    secret_ref: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    # Preview of the API key (first 8 chars for display)
+    api_key_preview: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Optional: custom API base URL for enterprise/proxy setups
+    api_base: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    # Status
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Tracking
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<LLMCredentialModel(id={self.id!r}, provider={self.provider!r}, user_id={self.user_id!r})>"
+
+
 class KnowledgeDocumentModel(Base):
     """SQLAlchemy model for documents within a knowledge base.
 

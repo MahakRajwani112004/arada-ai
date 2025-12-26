@@ -9,6 +9,7 @@ from src.api.dependencies import (
     get_repository,
     get_workflow_repository,
 )
+from src.auth.dependencies import CurrentUser
 from src.api.schemas.workflows import (
     ApplyGeneratedWorkflowRequest,
     ApplyGeneratedWorkflowResponse,
@@ -597,6 +598,7 @@ async def list_available_tools(
 @router.post("/generate/skeleton", response_model=GenerateSkeletonResponse)
 async def generate_workflow_skeleton(
     request: GenerateSkeletonRequest,
+    current_user: CurrentUser,
     mcp_repo: MCPServerRepository = Depends(get_mcp_repository),
 ) -> GenerateSkeletonResponse:
     """Generate a workflow skeleton from natural language (Phase 1 of two-phase creation).
@@ -613,6 +615,7 @@ async def generate_workflow_skeleton(
 
     return await generator.generate_skeleton(
         request=request,
+        user_id=current_user.id,
         existing_mcps=existing_mcps,
     )
 
@@ -620,6 +623,7 @@ async def generate_workflow_skeleton(
 @router.post("/generate", response_model=GenerateWorkflowResponse)
 async def generate_workflow(
     request: GenerateWorkflowRequest,
+    current_user: CurrentUser,
     agent_repo: BaseAgentRepository = Depends(get_repository),
     mcp_repo: MCPServerRepository = Depends(get_mcp_repository),
 ) -> GenerateWorkflowResponse:
@@ -635,6 +639,7 @@ async def generate_workflow(
 
     return await generator.generate(
         prompt=request.prompt,
+        user_id=current_user.id,
         context=request.context,
         preferred_complexity=request.preferred_complexity,
         include_agents=request.include_agents,

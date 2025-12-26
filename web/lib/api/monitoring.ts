@@ -11,6 +11,15 @@ import type {
   TimeSeriesResponse,
   TimeSeriesFilters,
   AnalyticsFilters,
+  WorkflowStats,
+  DashboardSummary,
+  TopWorkflowsResponse,
+  TopAgentsResponse,
+  TopModelsResponse,
+  ErrorStats,
+  KnowledgeBaseStats,
+  CostBreakdown,
+  CostTrendResponse,
 } from "@/types/monitoring";
 
 // ============================================
@@ -103,6 +112,211 @@ export async function getAgentAnalytics(
 
   const response = await apiClient.get<AgentStats>(
     `/monitoring/analytics/agents?${params.toString()}`
+  );
+  return response.data;
+}
+
+// ============================================
+// Workflow Analytics API
+// ============================================
+
+/**
+ * Get workflow execution analytics
+ */
+export async function getWorkflowAnalytics(
+  filters?: AnalyticsFilters
+): Promise<WorkflowStats> {
+  const params = new URLSearchParams();
+
+  if (filters?.start) params.append("start", filters.start);
+  if (filters?.end) params.append("end", filters.end);
+
+  const response = await apiClient.get<WorkflowStats>(
+    `/monitoring/analytics/workflows?${params.toString()}`
+  );
+  return response.data;
+}
+
+/**
+ * Get workflow time series data for charts
+ */
+export async function getWorkflowTimeSeries(
+  filters?: TimeSeriesFilters & { metric?: "executions" | "duration" | "success_rate" }
+): Promise<TimeSeriesResponse> {
+  const params = new URLSearchParams();
+
+  if (filters?.metric) params.append("metric", filters.metric);
+  if (filters?.interval) params.append("interval", filters.interval);
+  if (filters?.start) params.append("start", filters.start);
+  if (filters?.end) params.append("end", filters.end);
+
+  const response = await apiClient.get<TimeSeriesResponse>(
+    `/monitoring/analytics/workflows/timeseries?${params.toString()}`
+  );
+  return response.data;
+}
+
+// ============================================
+// Dashboard Summary API
+// ============================================
+
+/**
+ * Get comprehensive dashboard summary
+ */
+export async function getDashboardSummary(): Promise<DashboardSummary> {
+  const response = await apiClient.get<DashboardSummary>(
+    "/monitoring/analytics/dashboard"
+  );
+  return response.data;
+}
+
+// ============================================
+// Top Entities API
+// ============================================
+
+/**
+ * Get top workflows by execution count
+ */
+export async function getTopWorkflows(
+  filters?: AnalyticsFilters & { limit?: number }
+): Promise<TopWorkflowsResponse> {
+  const params = new URLSearchParams();
+
+  if (filters?.start) params.append("start", filters.start);
+  if (filters?.end) params.append("end", filters.end);
+  if (filters?.limit) params.append("limit", filters.limit.toString());
+
+  const response = await apiClient.get<TopWorkflowsResponse>(
+    `/monitoring/analytics/top/workflows?${params.toString()}`
+  );
+  return response.data;
+}
+
+/**
+ * Get top agents by execution count
+ */
+export async function getTopAgents(
+  filters?: AnalyticsFilters & { limit?: number }
+): Promise<TopAgentsResponse> {
+  const params = new URLSearchParams();
+
+  if (filters?.start) params.append("start", filters.start);
+  if (filters?.end) params.append("end", filters.end);
+  if (filters?.limit) params.append("limit", filters.limit.toString());
+
+  const response = await apiClient.get<TopAgentsResponse>(
+    `/monitoring/analytics/top/agents?${params.toString()}`
+  );
+  return response.data;
+}
+
+/**
+ * Get top LLM models by usage
+ */
+export async function getTopModels(
+  filters?: AnalyticsFilters & { limit?: number }
+): Promise<TopModelsResponse> {
+  const params = new URLSearchParams();
+
+  if (filters?.start) params.append("start", filters.start);
+  if (filters?.end) params.append("end", filters.end);
+  if (filters?.limit) params.append("limit", filters.limit.toString());
+
+  const response = await apiClient.get<TopModelsResponse>(
+    `/monitoring/analytics/top/models?${params.toString()}`
+  );
+  return response.data;
+}
+
+// ============================================
+// Error Analytics API
+// ============================================
+
+/**
+ * Get error analytics
+ */
+export async function getErrorAnalytics(
+  filters?: AnalyticsFilters
+): Promise<ErrorStats> {
+  const params = new URLSearchParams();
+
+  if (filters?.start) params.append("start", filters.start);
+  if (filters?.end) params.append("end", filters.end);
+
+  const response = await apiClient.get<ErrorStats>(
+    `/monitoring/analytics/errors?${params.toString()}`
+  );
+  return response.data;
+}
+
+// ============================================
+// Knowledge Base Analytics API
+// ============================================
+
+/**
+ * Get knowledge base analytics
+ */
+export async function getKnowledgeAnalytics(): Promise<KnowledgeBaseStats> {
+  const response = await apiClient.get<KnowledgeBaseStats>(
+    "/monitoring/analytics/knowledge"
+  );
+  return response.data;
+}
+
+// ============================================
+// Cost Analytics API
+// ============================================
+
+/**
+ * Get cost breakdown by provider, model, and agent
+ */
+export async function getCostBreakdown(
+  filters?: AnalyticsFilters
+): Promise<CostBreakdown> {
+  const params = new URLSearchParams();
+
+  if (filters?.start) params.append("start", filters.start);
+  if (filters?.end) params.append("end", filters.end);
+
+  const response = await apiClient.get<CostBreakdown>(
+    `/monitoring/analytics/cost/breakdown?${params.toString()}`
+  );
+  return response.data;
+}
+
+/**
+ * Get cost trend over time
+ */
+export async function getCostTrend(
+  filters?: { interval?: "1h" | "1d" | "1w"; start?: string; end?: string }
+): Promise<CostTrendResponse> {
+  const params = new URLSearchParams();
+
+  if (filters?.interval) params.append("interval", filters.interval);
+  if (filters?.start) params.append("start", filters.start);
+  if (filters?.end) params.append("end", filters.end);
+
+  const response = await apiClient.get<CostTrendResponse>(
+    `/monitoring/analytics/cost/trend?${params.toString()}`
+  );
+  return response.data;
+}
+
+/**
+ * Get agent time series data for charts
+ */
+export async function getAgentTimeSeries(
+  filters?: TimeSeriesFilters & { metric?: "executions" | "latency" | "success_rate" }
+): Promise<TimeSeriesResponse> {
+  const params = new URLSearchParams();
+
+  if (filters?.metric) params.append("metric", filters.metric);
+  if (filters?.interval) params.append("interval", filters.interval);
+  if (filters?.start) params.append("start", filters.start);
+  if (filters?.end) params.append("end", filters.end);
+
+  const response = await apiClient.get<TimeSeriesResponse>(
+    `/monitoring/analytics/agents/timeseries?${params.toString()}`
   );
   return response.data;
 }
