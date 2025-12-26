@@ -1,8 +1,6 @@
 "use client";
 
-import { Search, Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { useRouter } from "next/navigation";
+import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface HeaderProps {
@@ -10,7 +8,6 @@ interface HeaderProps {
 }
 
 export function Header({ onSearchClick }: HeaderProps) {
-  const router = useRouter();
   const [isMac, setIsMac] = useState(true);
 
   useEffect(() => {
@@ -18,7 +15,7 @@ export function Header({ onSearchClick }: HeaderProps) {
   }, []);
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-border bg-background/95 px-6 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header className="sticky top-0 z-30 flex h-14 items-center border-b border-border bg-background/95 px-6 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       {/* Search */}
       <button
         onClick={onSearchClick}
@@ -30,18 +27,6 @@ export function Header({ onSearchClick }: HeaderProps) {
           {isMac ? "⌘" : "Ctrl"}K
         </kbd>
       </button>
-
-      {/* Actions */}
-      <div className="flex items-center gap-3">
-        <Button
-          onClick={() => router.push("/agents/new")}
-          size="sm"
-          className="gap-1.5"
-        >
-          <Plus className="h-4 w-4" />
-          Create Agent
-        </Button>
-      </div>
     </header>
   );
 }

@@ -657,6 +657,7 @@ async def generate_workflow(
 
     return await generator.generate(
         prompt=request.prompt,
+        user_id=current_user.id,
         context=request.context,
         preferred_complexity=request.preferred_complexity,
         include_agents=request.include_agents,

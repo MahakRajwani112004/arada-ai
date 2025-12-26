@@ -9,9 +9,29 @@ on:
       - main
     tags:
       - 'v*'
+    paths:
+      - 'src/**'
+      - 'Dockerfile'
+      - 'Dockerfile.worker'
+      - 'web/**'
+      - 'requirements*.txt'
+      - 'pyproject.toml'
+      - 'mcp_servers/**'
+      - 'deploy/**'
+      - '.github/workflows/docker-build.yml'
   pull_request:
     branches:
       - main
+    paths:
+      - 'src/**'
+      - 'Dockerfile'
+      - 'Dockerfile.worker'
+      - 'web/**'
+      - 'requirements*.txt'
+      - 'pyproject.toml'
+      - 'mcp_servers/**'
+      - 'deploy/**'
+      - '.github/workflows/docker-build.yml'
   workflow_dispatch:
     inputs:
       tag:
@@ -26,10 +46,44 @@ env:
 
 jobs:
   # ============================================
+  # Detect which components changed
+  # ============================================
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      worker: ${{ steps.filter.outputs.worker }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for file changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api:
+              - 'src/**'
+              - 'Dockerfile'
+              - 'requirements*.txt'
+              - 'pyproject.toml'
+            worker:
+              - 'src/**'
+              - 'Dockerfile.worker'
+              - 'requirements*.txt'
+              - 'pyproject.toml'
+            web:
+              - 'web/**'
+
+  # ============================================
   # Build API Image
   # ============================================
   build-api:
     name: Build API Image
+    needs: changes
+    if: needs.changes.outputs.api == 'true' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -85,6 +139,8 @@ jobs:
   # ============================================
   build-worker:
     name: Build Worker Image
+    needs: changes
+    if: needs.changes.outputs.worker == 'true' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -140,6 +196,8 @@ jobs:
   # ============================================
   build-web:
     name: Build Web Image
+    needs: changes
+    if: needs.changes.outputs.web == 'true' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -188,7 +246,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            NEXT_PUBLIC_API_URL=
+            NEXT_PUBLIC_API_URL=https://magoneai.magure.ai/api/v1
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -309,6 +367,8 @@ jobs:
     name: Create Release
     needs: [build-api, build-worker, build-web, build-mcp-outlook-calendar, build-mcp-outlook-email]
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: [changes, build-api, build-worker, build-web]
+    if: always() && !failure() && !cancelled() && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -348,3 +408,140 @@ jobs:
             # Start services
             docker-compose up -d
             ```
+
+  # ============================================
+  # Deploy to GCP Server
+  # ============================================
+  deploy:
+    name: Deploy to GCP
+    needs: [changes, build-api, build-worker, build-web]
+    if: always() && !failure() && !cancelled() && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need previous commit to detect changes
+
+      - name: Determine image tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${{ github.ref_name }}"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="latest"
+          fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Check if deploy files changed
+        id: deploy_changed
+        run: |
+          COMPOSE_CHANGED=false
+          INITDB_CHANGED=false
+
+          if git diff --name-only HEAD~1 HEAD | grep -q "^deploy/docker-compose.yml$"; then
+            COMPOSE_CHANGED=true
+            echo "docker-compose.yml has changes"
+          fi
+
+          if git diff --name-only HEAD~1 HEAD | grep -q "^deploy/init-db.sql$"; then
+            INITDB_CHANGED=true
+            echo "init-db.sql has changes"
+          fi
+
+          echo "compose_changed=${COMPOSE_CHANGED}" >> $GITHUB_OUTPUT
+          echo "initdb_changed=${INITDB_CHANGED}" >> $GITHUB_OUTPUT
+
+      - name: Setup SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.GCP_SERVER_IP }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Copy docker-compose.yml to server
+        if: steps.deploy_changed.outputs.compose_changed == 'true'
+        run: |
+          echo "Copying docker-compose.yml to server..."
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            deploy/docker-compose.yml \
+            ${{ secrets.GCP_SSH_USER }}@${{ secrets.GCP_SERVER_IP }}:${{ secrets.GCP_DEPLOY_PATH }}/docker-compose.yml
+          echo "docker-compose.yml copied successfully"
+
+      - name: Copy init-db.sql to server
+        if: steps.deploy_changed.outputs.initdb_changed == 'true'
+        run: |
+          echo "Copying init-db.sql to server..."
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            deploy/init-db.sql \
+            ${{ secrets.GCP_SSH_USER }}@${{ secrets.GCP_SERVER_IP }}:${{ secrets.GCP_DEPLOY_PATH }}/init-db.sql
+          echo "init-db.sql copied successfully"
+
+      - name: Copy monitoring configs to server
+        run: |
+          echo "Copying monitoring configs to server..."
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.GCP_SSH_USER }}@${{ secrets.GCP_SERVER_IP }} \
+            "mkdir -p ${{ secrets.GCP_DEPLOY_PATH }}/monitoring/{prometheus,grafana/provisioning/datasources,grafana/provisioning/dashboards/json,loki,promtail}"
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -r \
+            docker/monitoring/* \
+            ${{ secrets.GCP_SSH_USER }}@${{ secrets.GCP_SERVER_IP }}:${{ secrets.GCP_DEPLOY_PATH }}/monitoring/
+          echo "Monitoring configs copied successfully"
+
+      - name: Deploy to GCP server
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.GCP_SSH_USER }}@${{ secrets.GCP_SERVER_IP }} \
+            "cd ${{ secrets.GCP_DEPLOY_PATH }} && \
+            echo 'Starting deployment...' && \
+            echo 'Setting IMAGE_TAG=${{ steps.tag.outputs.tag }}...' && \
+            if grep -q '^IMAGE_TAG=' .env; then \
+              sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.tag.outputs.tag }}/' .env; \
+            else \
+              echo 'IMAGE_TAG=${{ steps.tag.outputs.tag }}' >> .env; \
+            fi && \
+            cat .env | grep IMAGE_TAG && \
+            echo 'Pulling images...' && \
+            docker compose --env-file .env pull && \
+            echo 'Restarting services...' && \
+            docker compose --env-file .env up -d --remove-orphans && \
+            echo 'Cleaning up...' && \
+            docker image prune -f && \
+            echo 'Deployment complete!' && \
+            docker compose --env-file .env ps"
+
+      - name: Health check
+        env:
+          DOMAIN: ${{ secrets.GCP_DOMAIN }}
+        run: |
+          echo "Running health check..."
+          sleep 30
+
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://${DOMAIN}/api/v1/health || echo "000")
+
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "API is healthy (HTTP $HTTP_STATUS)"
+          else
+            echo "API health check returned HTTP $HTTP_STATUS"
+            exit 1
+          fi
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "=================================="
+          echo "Deployment Summary"
+          echo "=================================="
+          echo "Image Tag: ${{ steps.tag.outputs.tag }}"
+          echo "Compose Changed: ${{ steps.deploy_changed.outputs.compose_changed }}"
+          echo "Init-DB Changed: ${{ steps.deploy_changed.outputs.initdb_changed }}"
+          echo "Status: ${{ job.status }}"
+          echo "=================================="
+
+# Clean deploy Fri Dec 26 13:46:54 IST 2025

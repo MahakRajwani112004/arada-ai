@@ -18,7 +18,7 @@ from src.api.errors import (
     http_exception_handler,
 )
 from src.api.middleware import RequestLoggingMiddleware
-from src.api.routers import agents, auth, knowledge, mcp, monitoring, oauth, secrets, workflow, workflows
+from src.api.routers import admin, agents, auth, knowledge, mcp, monitoring, oauth, secrets, workflow, workflows
 from src.monitoring import MetricsMiddleware, get_metrics_router
 from src.config.logging import get_logger, setup_logging
 from src.config.settings import get_settings
@@ -90,6 +90,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(admin.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
 app.include_router(knowledge.router, prefix="/api/v1")
 app.include_router(mcp.router, prefix="/api/v1")
@@ -106,8 +107,51 @@ if settings.monitoring_enabled:
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check endpoint (internal Docker healthcheck)."""
     return {"status": "healthy", "version": "0.1.0"}
+
+
+@app.get("/api/v1/health")
+async def api_health_check():
+    """
+    API health check endpoint (external).
+
+    Checks database and redis connectivity.
+    """
+    from datetime import datetime, timezone
+    from sqlalchemy import text
+    from src.storage import get_async_session
+    from redis.asyncio import Redis
+
+    db_status = "disconnected"
+    redis_status = "disconnected"
+
+    # Check database
+    try:
+        async with get_async_session() as session:
+            await session.execute(text("SELECT 1"))
+            db_status = "connected"
+    except Exception:
+        pass
+
+    # Check Redis
+    try:
+        redis = Redis.from_url(settings.redis_url)
+        await redis.ping()
+        await redis.close()
+        redis_status = "connected"
+    except Exception:
+        pass
+
+    overall = "healthy" if db_status == "connected" and redis_status == "connected" else "degraded"
+
+    return {
+        "status": overall,
+        "version": "0.1.0",
+        "database": db_status,
+        "redis": redis_status,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
 
 
 @app.get("/")

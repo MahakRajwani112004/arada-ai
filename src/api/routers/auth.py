@@ -6,10 +6,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.dependencies import CurrentUser, CurrentSuperuser
 from src.auth.schemas import (
+    APIKeyCreate,
+    APIKeyCreatedResponse,
+    APIKeyListResponse,
+    APIKeyResponse,
+    DisplayNameUpdate,
+    EmailUpdate,
     InviteCreate,
     InviteResponse,
     InviteValidate,
     InviteValidateResponse,
+    LLMCredentialCreate,
+    LLMCredentialListResponse,
+    LLMCredentialResponse,
+    LLMCredentialUpdate,
+    PasswordUpdate,
     RefreshTokenRequest,
     TokenResponse,
     UserCreate,
@@ -202,4 +213,317 @@ async def validate_invite(
         valid=True,
         email=invite.email,
         expires_at=invite.expires_at,
+    )
+
+
+# ============ Settings Endpoints ============
+
+
+@router.put("/me/email", response_model=UserMe)
+async def update_email(
+    request: EmailUpdate,
+    current_user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Update the current user's email address."""
+    auth_service = AuthService(session)
+
+    try:
+        user = await auth_service.update_email(
+            user_id=current_user.id,
+            new_email=request.new_email,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    logger.info(
+        "user_email_updated",
+        user_id=user.id,
+        old_email=current_user.email,
+        new_email=user.email,
+    )
+
+    return UserMe(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        is_superuser=user.is_superuser,
+        org_id=user.org_id,
+    )
+
+
+@router.put("/me/password")
+async def update_password(
+    request: PasswordUpdate,
+    current_user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Update the current user's password."""
+    auth_service = AuthService(session)
+
+    try:
+        await auth_service.update_password(
+            user_id=current_user.id,
+            current_password=request.current_password,
+            new_password=request.new_password,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    logger.info("user_password_updated", user_id=current_user.id)
+
+    return {"message": "Password updated successfully"}
+
+
+@router.put("/me/profile", response_model=UserMe)
+async def update_profile(
+    request: DisplayNameUpdate,
+    current_user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Update the current user's display name."""
+    auth_service = AuthService(session)
+
+    try:
+        user = await auth_service.update_display_name(
+            user_id=current_user.id,
+            display_name=request.display_name,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    logger.info("user_profile_updated", user_id=user.id)
+
+    return UserMe(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        is_superuser=user.is_superuser,
+        org_id=user.org_id,
+    )
+
+
+# ============ API Key Endpoints ============
+
+
+@router.get("/api-keys", response_model=APIKeyListResponse)
+async def list_api_keys(
+    current_user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """List all API keys for the current user."""
+    auth_service = AuthService(session)
+
+    api_keys = await auth_service.list_api_keys(current_user.id)
+
+    return APIKeyListResponse(
+        api_keys=[APIKeyResponse.model_validate(key) for key in api_keys],
+        total=len(api_keys),
+    )
+
+
+@router.post("/api-keys", response_model=APIKeyCreatedResponse, status_code=status.HTTP_201_CREATED)
+async def create_api_key(
+    request: APIKeyCreate,
+    current_user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Create a new API key.
+
+    The full key is only returned once at creation time. Store it securely.
+    """
+    auth_service = AuthService(session)
+
+    api_key, raw_key = await auth_service.create_api_key(
+        user_id=current_user.id,
+        name=request.name,
+    )
+
+    logger.info(
+        "api_key_created",
+        user_id=current_user.id,
+        key_id=api_key.id,
+        key_name=api_key.name,
+    )
+
+    return APIKeyCreatedResponse(
+        id=api_key.id,
+        name=api_key.name,
+        key=raw_key,
+        key_prefix=api_key.key_prefix,
+        created_at=api_key.created_at,
+    )
+
+
+@router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_api_key(
+    key_id: str,
+    current_user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Delete an API key."""
+    auth_service = AuthService(session)
+
+    deleted = await auth_service.delete_api_key(key_id, current_user.id)
+
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not found",
+        )
+
+    logger.info(
+        "api_key_deleted",
+        user_id=current_user.id,
+        key_id=key_id,
+    )
+
+
+# ============ LLM Credential Endpoints ============
+
+
+@router.get("/llm-credentials", response_model=LLMCredentialListResponse)
+async def list_llm_credentials(
+    current_user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """List all LLM provider credentials for the current user."""
+    auth_service = AuthService(session)
+
+    credentials = await auth_service.list_llm_credentials(current_user.id)
+
+    return LLMCredentialListResponse(
+        credentials=[
+            LLMCredentialResponse(
+                id=cred.id,
+                provider=cred.provider,
+                display_name=cred.display_name,
+                api_key_preview=cred.api_key_preview,
+                api_base=cred.api_base,
+                is_active=cred.is_active,
+                last_used_at=cred.last_used_at,
+                created_at=cred.created_at,
+                updated_at=cred.updated_at,
+            )
+            for cred in credentials
+        ],
+        total=len(credentials),
+    )
+
+
+@router.post("/llm-credentials", response_model=LLMCredentialResponse, status_code=status.HTTP_201_CREATED)
+async def create_llm_credential(
+    request: LLMCredentialCreate,
+    current_user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Create a new LLM provider credential.
+
+    The API key is encrypted and stored securely.
+    """
+    auth_service = AuthService(session)
+
+    credential = await auth_service.create_llm_credential(
+        user_id=current_user.id,
+        provider=request.provider,
+        display_name=request.display_name,
+        api_key=request.api_key,
+        api_base=request.api_base,
+    )
+
+    logger.info(
+        "llm_credential_created",
+        user_id=current_user.id,
+        credential_id=credential.id,
+        provider=credential.provider,
+    )
+
+    return LLMCredentialResponse(
+        id=credential.id,
+        provider=credential.provider,
+        display_name=credential.display_name,
+        api_key_preview=credential.api_key_preview,
+        api_base=credential.api_base,
+        is_active=credential.is_active,
+        last_used_at=credential.last_used_at,
+        created_at=credential.created_at,
+        updated_at=credential.updated_at,
+    )
+
+
+@router.put("/llm-credentials/{credential_id}", response_model=LLMCredentialResponse)
+async def update_llm_credential(
+    credential_id: str,
+    request: LLMCredentialUpdate,
+    current_user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Update an LLM provider credential."""
+    auth_service = AuthService(session)
+
+    credential = await auth_service.update_llm_credential(
+        credential_id=credential_id,
+        user_id=current_user.id,
+        display_name=request.display_name,
+        api_key=request.api_key,
+        api_base=request.api_base,
+        is_active=request.is_active,
+    )
+
+    if not credential:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="LLM credential not found",
+        )
+
+    logger.info(
+        "llm_credential_updated",
+        user_id=current_user.id,
+        credential_id=credential.id,
+        provider=credential.provider,
+    )
+
+    return LLMCredentialResponse(
+        id=credential.id,
+        provider=credential.provider,
+        display_name=credential.display_name,
+        api_key_preview=credential.api_key_preview,
+        api_base=credential.api_base,
+        is_active=credential.is_active,
+        last_used_at=credential.last_used_at,
+        created_at=credential.created_at,
+        updated_at=credential.updated_at,
+    )
+
+
+@router.delete("/llm-credentials/{credential_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_llm_credential(
+    credential_id: str,
+    current_user: CurrentUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Delete an LLM provider credential."""
+    auth_service = AuthService(session)
+
+    deleted = await auth_service.delete_llm_credential(credential_id, current_user.id)
+
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="LLM credential not found",
+        )
+
+    logger.info(
+        "llm_credential_deleted",
+        user_id=current_user.id,
+        credential_id=credential_id,
     )

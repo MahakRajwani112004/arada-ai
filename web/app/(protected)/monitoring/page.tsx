@@ -13,12 +13,18 @@ import {
   useLogServices,
   useLLMAnalytics,
   useAgentAnalytics,
+  useWorkflowAnalytics,
+  useDashboardSummary,
+  useTopWorkflows,
+  useTopAgents,
+  useErrorAnalytics,
+  useCostBreakdown,
 } from "@/lib/hooks/use-monitoring";
 import { RefreshCw, ExternalLink } from "lucide-react";
 import type { LogFilters as LogFiltersType } from "@/types/monitoring";
 
 export default function MonitoringPage() {
-  const [activeTab, setActiveTab] = useState("logs");
+  const [activeTab, setActiveTab] = useState("analytics");
   const [logFilters, setLogFilters] = useState<LogFiltersType>({ limit: 100 });
 
   // Fetch data
@@ -26,6 +32,15 @@ export default function MonitoringPage() {
   const { data: servicesData } = useLogServices();
   const { data: llmStats, isLoading: llmLoading } = useLLMAnalytics();
   const { data: agentStats, isLoading: agentLoading } = useAgentAnalytics();
+  const { data: workflowStats, isLoading: workflowLoading } = useWorkflowAnalytics();
+  const { data: dashboardSummary, isLoading: dashboardLoading } = useDashboardSummary();
+  const { data: topWorkflows, isLoading: topWorkflowsLoading } = useTopWorkflows({ limit: 5 });
+  const { data: topAgents, isLoading: topAgentsLoading } = useTopAgents({ limit: 5 });
+  const { data: errorStats, isLoading: errorLoading } = useErrorAnalytics();
+  const { data: costBreakdown, isLoading: costLoading } = useCostBreakdown();
+
+  const isAnalyticsLoading = llmLoading || agentLoading || workflowLoading ||
+    dashboardLoading || topWorkflowsLoading || topAgentsLoading || errorLoading || costLoading;
 
   const handleRefresh = () => {
     refetchLogs();
@@ -37,7 +52,7 @@ export default function MonitoringPage() {
       <PageContainer>
         <PageHeader
           title="Monitoring"
-          description="View logs and analytics for your AI agents"
+          description="View logs and analytics for your AI agents and workflows"
           actions={
             <div className="flex items-center gap-2">
               <Button
@@ -70,9 +85,23 @@ export default function MonitoringPage() {
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList>
-            <TabsTrigger value="logs">Logs</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
+            <TabsTrigger value="logs">Logs</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="analytics">
+            <AnalyticsOverview
+              llmStats={llmStats}
+              agentStats={agentStats}
+              workflowStats={workflowStats}
+              dashboardSummary={dashboardSummary}
+              topWorkflows={topWorkflows}
+              topAgents={topAgents}
+              errorStats={errorStats}
+              costBreakdown={costBreakdown}
+              isLoading={isAnalyticsLoading}
+            />
+          </TabsContent>
 
           <TabsContent value="logs" className="space-y-4">
             <LogFilters
@@ -89,14 +118,6 @@ export default function MonitoringPage() {
                 Showing {logsData.logs.length} of {logsData.total} logs
               </p>
             )}
-          </TabsContent>
-
-          <TabsContent value="analytics">
-            <AnalyticsOverview
-              llmStats={llmStats}
-              agentStats={agentStats}
-              isLoading={llmLoading || agentLoading}
-            />
           </TabsContent>
         </Tabs>
       </PageContainer>

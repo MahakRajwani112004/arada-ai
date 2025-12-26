@@ -81,6 +81,23 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 CREATE INDEX IF NOT EXISTS ix_refresh_tokens_user_id ON refresh_tokens(user_id);
 
 -- ============================================
+-- API Keys table (for programmatic access)
+-- ============================================
+CREATE TABLE IF NOT EXISTS api_keys (
+    id VARCHAR(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(200) NOT NULL,
+    key_prefix VARCHAR(20) NOT NULL,
+    key_hash VARCHAR(64) NOT NULL UNIQUE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_api_keys_user_id ON api_keys(user_id);
+CREATE INDEX IF NOT EXISTS ix_api_keys_key_hash ON api_keys(key_hash);
+
+-- ============================================
 -- Agents table (with user_id for multi-tenancy)
 -- ============================================
 CREATE TABLE IF NOT EXISTS agents (
@@ -275,3 +292,4 @@ CREATE INDEX IF NOT EXISTS idx_agent_executions_workflow_id ON agent_executions(
 CREATE INDEX IF NOT EXISTS idx_agent_executions_agent_id ON agent_executions(agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_executions_agent_type ON agent_executions(agent_type);
 CREATE INDEX IF NOT EXISTS idx_agent_executions_success ON agent_executions(success);
+
