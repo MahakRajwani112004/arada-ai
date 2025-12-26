@@ -288,7 +288,7 @@ class AuthService:
         Returns the API key model and the raw key (only available at creation time).
         """
         # Generate a secure random key
-        raw_key = f"mk_{secrets.token_urlsafe(32)}"
+        raw_key = f"magone_{secrets.token_urlsafe(32)}"
         key_prefix = raw_key[:12]  # Store prefix for display
         key_hash = hash_token(raw_key)
 

@@ -159,8 +159,18 @@ function createAgentNode(
   index: number,
   context: ConversionContext = {}
 ): CanvasNode {
-  // Find the agent if it exists
-  const agent = context.agents?.find((a) => a.id === step.agent_id);
+  // Find the agent if it exists by ID
+  let agent = context.agents?.find((a) => a.id === step.agent_id);
+
+  // If no agent by ID but we have a suggested_agent, check if an agent with matching name exists
+  // This handles the case where agent was created but workflow wasn't saved with agent_id
+  if (!agent && step.suggested_agent?.name) {
+    const expectedAgentId = step.suggested_agent.name
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-]/g, "");
+    agent = context.agents?.find((a) => a.id === expectedAgentId);
+  }
 
   // Determine node status
   const status = determineNodeStatus(step, agent);
@@ -173,11 +183,13 @@ function createAgentNode(
     stepId: step.id,
     name: stepName,
     role: step.input || undefined,
-    agentId: step.agent_id,
+    // Use found agent's ID (even if it was found by name match)
+    agentId: agent?.id || step.agent_id,
     agentName: agent?.name,
     agentGoal: agent?.description || step.suggested_agent?.goal,
     status,
-    suggestedAgent: step.suggested_agent,
+    // Clear suggestedAgent if we found an existing agent
+    suggestedAgent: agent ? undefined : step.suggested_agent,
     requiredMcps: step.suggested_agent?.required_mcps,
     requiredTools: step.suggested_agent?.suggested_tools,
   };
@@ -304,18 +316,18 @@ function determineNodeStatus(
   step: WorkflowStep,
   agent?: Agent
 ): NodeStatus {
-  // No agent assigned
+  // If we found an agent (by ID or by name match), it's ready
+  if (agent) {
+    return "ready";
+  }
+
+  // No agent assigned and no agent found
   if (!step.agent_id) {
     return "draft";
   }
 
-  // Agent doesn't exist
-  if (!agent) {
-    return "error";
-  }
-
-  // Agent exists - ready to go
-  return "ready";
+  // Agent ID is set but agent doesn't exist (deleted?)
+  return "error";
 }
 
 /**

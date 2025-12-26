@@ -15,6 +15,9 @@ import {
   Trash2,
   Loader2,
   User,
+  Copy,
+  Check,
+  Shield,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { PageContainer, PageHeader } from "@/components/layout/page-container";
@@ -51,8 +54,11 @@ import {
   useCreateLLMCredential,
   useUpdateLLMCredential,
   useDeleteLLMCredential,
+  useApiKeys,
+  useCreateApiKey,
+  useDeleteApiKey,
 } from "@/lib/hooks/use-settings";
-import type { LLMCredential } from "@/lib/api/settings";
+import type { LLMCredential, ApiKeyCreated } from "@/lib/api/settings";
 import { toast } from "sonner";
 
 export default function SettingsPage() {
@@ -88,6 +94,14 @@ export default function SettingsPage() {
   const [llmApiBase, setLLMApiBase] = useState("");
   const [showLLMApiKey, setShowLLMApiKey] = useState(false);
   const [editingCredential, setEditingCredential] = useState<LLMCredential | null>(null);
+
+  // API Keys state
+  const { data: apiKeysData, isLoading: isLoadingApiKeys } = useApiKeys();
+  const createApiKeyMutation = useCreateApiKey();
+  const deleteApiKeyMutation = useDeleteApiKey();
+  const [apiKeyName, setApiKeyName] = useState("");
+  const [newlyCreatedKey, setNewlyCreatedKey] = useState<ApiKeyCreated | null>(null);
+  const [showNewKey, setShowNewKey] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -208,6 +222,33 @@ export default function SettingsPage() {
     return new Date(dateString).toLocaleDateString();
   };
 
+  // API Key handlers
+  const handleCreateApiKey = async () => {
+    if (!apiKeyName.trim()) {
+      toast.error("Please enter a name for your API key");
+      return;
+    }
+    const result = await createApiKeyMutation.mutateAsync(apiKeyName);
+    setNewlyCreatedKey(result);
+    setShowNewKey(true);
+    setApiKeyName("");
+    toast.success("API key created successfully");
+  };
+
+  const handleDeleteApiKey = async (keyId: string) => {
+    await deleteApiKeyMutation.mutateAsync(keyId);
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast.success("API key copied to clipboard");
+  };
+
+  const dismissNewKey = () => {
+    setNewlyCreatedKey(null);
+    setShowNewKey(false);
+  };
+
   const themeOptions = [
     { value: "light", label: "Light", icon: Sun },
     { value: "dark", label: "Dark", icon: Moon },
@@ -228,9 +269,10 @@ export default function SettingsPage() {
         />
 
         <Tabs defaultValue="llm-providers" className="space-y-6">
-          <TabsList className="grid w-full max-w-2xl grid-cols-5">
+          <TabsList className="grid w-full max-w-3xl grid-cols-6">
             <TabsTrigger value="profile">Profile</TabsTrigger>
             <TabsTrigger value="llm-providers">LLM Providers</TabsTrigger>
+            <TabsTrigger value="api-keys">API Keys</TabsTrigger>
             <TabsTrigger value="appearance">Appearance</TabsTrigger>
             <TabsTrigger value="email">Email</TabsTrigger>
             <TabsTrigger value="password">Password</TabsTrigger>
@@ -482,6 +524,171 @@ export default function SettingsPage() {
                   <p className="text-sm text-muted-foreground">
                     <strong>Security note:</strong> Your API keys are encrypted and stored securely.
                     We never share or log your API keys. You can delete or update them at any time.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* API Keys Settings */}
+          <TabsContent value="api-keys">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="h-5 w-5" />
+                  Platform API Keys
+                </CardTitle>
+                <CardDescription>
+                  Create API keys to access MagOneAI programmatically. These keys allow you to integrate with your applications.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Newly Created Key Alert */}
+                {newlyCreatedKey && showNewKey && (
+                  <div className="rounded-lg border border-green-500/50 bg-green-500/10 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Check className="h-5 w-5 text-green-500" />
+                        <span className="font-medium text-green-700 dark:text-green-400">
+                          API Key Created Successfully
+                        </span>
+                      </div>
+                      <Button variant="ghost" size="sm" onClick={dismissNewKey}>
+                        Dismiss
+                      </Button>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Make sure to copy your API key now. You won&apos;t be able to see it again!
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 rounded bg-muted px-3 py-2 font-mono text-sm break-all">
+                        {newlyCreatedKey.key}
+                      </code>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={() => copyToClipboard(newlyCreatedKey.key)}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Create API Key Form */}
+                <div className="space-y-4 rounded-lg border border-border p-4">
+                  <h4 className="font-medium">Create New API Key</h4>
+                  <div className="flex gap-3">
+                    <div className="flex-1 space-y-2">
+                      <Label htmlFor="api-key-name">Key Name</Label>
+                      <Input
+                        id="api-key-name"
+                        placeholder="e.g., Production API Key, Development Key"
+                        value={apiKeyName}
+                        onChange={(e) => setApiKeyName(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <Button
+                        onClick={handleCreateApiKey}
+                        disabled={createApiKeyMutation.isPending || !apiKeyName.trim()}
+                        className="gap-2"
+                      >
+                        {createApiKeyMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Plus className="h-4 w-4" />
+                        )}
+                        Create Key
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* API Keys List */}
+                <div className="space-y-3">
+                  <h4 className="font-medium">Your API Keys</h4>
+
+                  {isLoadingApiKeys ? (
+                    <>
+                      <Skeleton className="h-16 w-full" />
+                      <Skeleton className="h-16 w-full" />
+                    </>
+                  ) : apiKeysData?.api_keys.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-8 text-center">
+                      <Key className="h-8 w-8 text-muted-foreground" />
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        No API keys yet. Create one to get started.
+                      </p>
+                    </div>
+                  ) : (
+                    apiKeysData?.api_keys.map((apiKey) => (
+                      <div
+                        key={apiKey.id}
+                        className={cn(
+                          "flex items-center justify-between rounded-lg border border-border bg-card p-4",
+                          !apiKey.is_active && "opacity-60"
+                        )}
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium">{apiKey.name}</p>
+                            {!apiKey.is_active && (
+                              <span className="rounded bg-yellow-500/20 px-2 py-0.5 text-xs text-yellow-600 dark:text-yellow-400">
+                                Inactive
+                              </span>
+                            )}
+                          </div>
+                          <code className="rounded bg-muted px-2 py-1 font-mono text-xs">
+                            {apiKey.key_prefix}...
+                          </code>
+                          <p className="text-xs text-muted-foreground">
+                            Created: {formatDate(apiKey.created_at)}
+                            {apiKey.last_used_at &&
+                              ` • Last used: ${formatDate(apiKey.last_used_at)}`}
+                          </p>
+                        </div>
+
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-muted-foreground hover:text-destructive"
+                              disabled={deleteApiKeyMutation.isPending}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete API Key</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Are you sure you want to delete the &quot;{apiKey.name}&quot; API key?
+                                This action cannot be undone and any applications using this key will
+                                stop working.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => handleDeleteApiKey(apiKey.id)}
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                              >
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-border bg-muted/50 p-4">
+                  <p className="text-sm text-muted-foreground">
+                    <strong>Security note:</strong> API keys provide full access to your account.
+                    Keep them secure and never share them publicly. You can revoke a key at any time by deleting it.
                   </p>
                 </div>
               </CardContent>

@@ -45,7 +45,7 @@ export default function NewWorkflowPage() {
     <>
       <Header />
       <PageContainer>
-        <div className="mx-auto max-w-3xl">
+        <div className="max-w-3xl">
           <Link
             href="/workflows"
             className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"
@@ -54,7 +54,7 @@ export default function NewWorkflowPage() {
             Back to Workflows
           </Link>
 
-          <div className="text-center mb-8">
+          <div className="mb-8">
             <h1 className="text-2xl font-bold">Create a New Workflow</h1>
             <p className="mt-2 text-muted-foreground">
               Choose how you&apos;d like to create your workflow

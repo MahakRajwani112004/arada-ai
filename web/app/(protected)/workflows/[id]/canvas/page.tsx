@@ -145,6 +145,8 @@ function CanvasEditor() {
   const hasInitialized = useRef(false);
   // Track if we're currently saving (to prevent false "unsaved" states)
   const isSavingRef = useRef(false);
+  // Ref to hold save function for callbacks that need it before it's defined
+  const saveWorkflowRef = useRef<() => Promise<void>>();
 
   // Initialize nodes only once when workflow first loads
   // Don't reset on subsequent agentsData refetches to preserve user changes
@@ -521,14 +523,23 @@ function CanvasEditor() {
           })
         );
         setHasUnsavedChanges(true);
+        // Auto-save workflow after assigning agent
+        setTimeout(() => saveWorkflowRef.current?.(), 100);
         return existingAgent;
       }
+
+      // Determine agent type based on tools/MCPs
+      // - If agent has tools or MCPs, use ToolAgent (can call tools)
+      // - Otherwise, use LLMAgent (simple LLM call)
+      const hasTools = (suggestion.suggested_tools?.length ?? 0) > 0;
+      const hasMcps = (suggestion.required_mcps?.length ?? 0) > 0;
+      const agentType = (hasTools || hasMcps) ? "ToolAgent" : "LLMAgent";
 
       const agentData: AgentCreate = {
         id: agentId,
         name: suggestion.name,
         description: suggestion.description || `${suggestion.name} agent`,
-        agent_type: "SimpleAgent",
+        agent_type: agentType,
         role: {
           title: suggestion.name,
           expertise: [],
@@ -584,6 +595,8 @@ function CanvasEditor() {
         );
 
         setHasUnsavedChanges(true);
+        // Auto-save workflow after creating agent
+        setTimeout(() => saveWorkflowRef.current?.(), 100);
         return createdAgent;
       } catch (error: unknown) {
         // Handle 409 Conflict - agent already exists (created between our check and create)
@@ -611,6 +624,8 @@ function CanvasEditor() {
               })
             );
             setHasUnsavedChanges(true);
+            // Auto-save workflow after using existing agent
+            setTimeout(() => saveWorkflowRef.current?.(), 100);
             return existingAgentNow;
           }
         }
@@ -654,6 +669,8 @@ function CanvasEditor() {
         })
       );
       setHasUnsavedChanges(true);
+      // Auto-save workflow after assigning agent
+      setTimeout(() => saveWorkflowRef.current?.(), 100);
     },
     [setNodes]
   );
@@ -740,6 +757,11 @@ function CanvasEditor() {
       }, 500);
     }
   }, [workflow, nodes, workflowId, updateWorkflow]);
+
+  // Keep the ref updated with the latest handleSave
+  useEffect(() => {
+    saveWorkflowRef.current = handleSave;
+  }, [handleSave]);
 
   // Navigate back
   const handleBack = useCallback(() => {

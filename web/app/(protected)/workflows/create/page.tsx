@@ -123,7 +123,7 @@ export default function CreateWorkflowPage() {
     <>
       <Header />
       <PageContainer>
-        <div className="mx-auto max-w-4xl">
+        <div className="max-w-4xl">
           {/* Back Link */}
           <Link
             href="/workflows"

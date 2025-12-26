@@ -62,9 +62,9 @@ function EmptyState() {
       </p>
       <div className="mt-6 flex gap-3">
         <Button asChild variant="outline" className="gap-2">
-          <Link href="/workflows/new">
+          <Link href="/workflows/new/manual">
             <Plus className="h-4 w-4" />
-            Build Manually
+            Build manually
           </Link>
         </Button>
         <Button asChild className="gap-2">
@@ -176,16 +176,16 @@ export default function WorkflowsPage() {
   return (
     <>
       <Header />
-      <PageContainer>
+      <PageContainer className="items-start">
         <PageHeader
           title="Workflows"
           description="Orchestrate multi-step AI agent workflows"
           actions={
             <div className="flex gap-2">
               <Button asChild variant="outline" className="gap-2">
-                <Link href="/workflows/new">
+                <Link href="/workflows/new/manual">
                   <Plus className="h-4 w-4" />
-                  New Workflow
+                  Build manually
                 </Link>
               </Button>
               <Button asChild className="gap-2">
