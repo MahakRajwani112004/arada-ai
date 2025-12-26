@@ -163,7 +163,7 @@ function CanvasEditor() {
     hasInitialized.current = false;
   }, [workflowId]);
 
-  // Update agent info on existing nodes when agentsData changes (without resetting canvas)
+  // Update agent info and status on existing nodes when agentsData changes (without resetting canvas)
   useEffect(() => {
     if (!hasInitialized.current || !agentsData?.agents) return;
 
@@ -171,18 +171,50 @@ function CanvasEditor() {
       currentNodes.map((node) => {
         if (node.type === "agent") {
           const data = node.data as AgentNodeData;
-          if (data.agentId) {
-            const agent = agentsData.agents.find((a) => a.id === data.agentId);
-            if (agent && (!data.agentName || data.agentName !== agent.name)) {
+
+          // Try to find agent by ID first
+          let agent = data.agentId
+            ? agentsData.agents.find((a) => a.id === data.agentId)
+            : undefined;
+
+          // If no agent found by ID, try to find by generated ID from suggested agent name
+          if (!agent && data.suggestedAgent?.name) {
+            const expectedAgentId = data.suggestedAgent.name
+              .toLowerCase()
+              .replace(/\s+/g, "-")
+              .replace(/[^a-z0-9-]/g, "");
+            agent = agentsData.agents.find((a) => a.id === expectedAgentId);
+          }
+
+          if (agent) {
+            // Agent found - update to ready status with agent info
+            const needsUpdate =
+              data.status !== "ready" ||
+              data.agentName !== agent.name ||
+              data.agentId !== agent.id;
+
+            if (needsUpdate) {
               return {
                 ...node,
                 data: {
                   ...data,
+                  status: "ready" as const,
+                  agentId: agent.id,
                   agentName: agent.name,
                   agentGoal: agent.description || data.agentGoal,
+                  suggestedAgent: undefined, // Clear suggestion since agent exists
                 },
               };
             }
+          } else if (data.agentId && data.status !== "error") {
+            // Agent ID set but agent not found - mark as error
+            return {
+              ...node,
+              data: {
+                ...data,
+                status: "error" as const,
+              },
+            };
           }
         }
         return node;
