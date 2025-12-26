@@ -120,7 +120,7 @@ async def api_health_check():
     """
     from datetime import datetime, timezone
     from sqlalchemy import text
-    from src.storage import async_engine
+    from src.storage import get_async_session
     from redis.asyncio import Redis
 
     db_status = "disconnected"
@@ -128,8 +128,8 @@ async def api_health_check():
 
     # Check database
     try:
-        async with async_engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
+        async with get_async_session() as session:
+            await session.execute(text("SELECT 1"))
             db_status = "connected"
     except Exception:
         pass
