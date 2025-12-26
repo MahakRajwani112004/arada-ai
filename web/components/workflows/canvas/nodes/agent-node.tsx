@@ -60,7 +60,7 @@ function AgentNodeComponent({ data, selected }: AgentNodeProps) {
       <Handle
         type="target"
         position={Position.Top}
-        className="!h-3 !w-3 !border-2 !border-background !bg-primary"
+        className="!h-4 !w-4 !border-2 !border-background !bg-primary hover:!bg-primary/80 hover:!scale-125 transition-all !-top-2"
       />
 
       {/* Status badge - top right */}
@@ -142,7 +142,7 @@ function AgentNodeComponent({ data, selected }: AgentNodeProps) {
       <Handle
         type="source"
         position={Position.Bottom}
-        className="!h-3 !w-3 !border-2 !border-background !bg-primary"
+        className="!h-4 !w-4 !border-2 !border-background !bg-primary hover:!bg-primary/80 hover:!scale-125 transition-all !-bottom-2"
       />
     </div>
   );

@@ -26,18 +26,54 @@ export interface AgentNodeData extends Record<string, unknown> {
   requiredTools?: string[];
 }
 
+// Conditional node data - for intent classification/routing
+export interface ConditionalNodeData extends Record<string, unknown> {
+  type: "conditional";
+  stepId: string;
+  name: string;
+  classifierAgentId?: string; // RouterAgent that classifies input
+  classifierAgentName?: string;
+  branches: {
+    condition: string; // e.g., "calendar", "email"
+    targetStepId: string; // Step to route to
+    targetStepName?: string;
+  }[];
+  defaultStepId?: string; // Default step if no match
+  defaultStepName?: string;
+  status: NodeStatus;
+}
+
+// Parallel node data - for concurrent execution
+export interface ParallelNodeData extends Record<string, unknown> {
+  type: "parallel";
+  stepId: string;
+  name: string;
+  branches: {
+    id: string;
+    agentId?: string;
+    agentName?: string;
+    input?: string;
+    timeout?: number;
+  }[];
+  aggregation: "all" | "first" | "merge" | "best";
+  status: NodeStatus;
+  viewMode: "grouped" | "expanded"; // Toggle between container and separate nodes
+}
+
 export interface EndNodeData extends Record<string, unknown> {
   type: "end";
 }
 
-export type CanvasNodeData = TriggerNodeData | AgentNodeData | EndNodeData;
+export type CanvasNodeData = TriggerNodeData | AgentNodeData | ConditionalNodeData | ParallelNodeData | EndNodeData;
 
 // Canvas node types
 export type TriggerNode = Node<TriggerNodeData, "trigger">;
 export type AgentNode = Node<AgentNodeData, "agent">;
+export type ConditionalNode = Node<ConditionalNodeData, "conditional">;
+export type ParallelNode = Node<ParallelNodeData, "parallel">;
 export type EndNode = Node<EndNodeData, "end">;
 
-export type CanvasNode = TriggerNode | AgentNode | EndNode;
+export type CanvasNode = TriggerNode | AgentNode | ConditionalNode | ParallelNode | EndNode;
 
 // Edge types - use Record to satisfy ReactFlow
 export interface DataFlowEdgeData extends Record<string, unknown> {

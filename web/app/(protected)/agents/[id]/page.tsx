@@ -55,6 +55,11 @@ const agentTypeConfig: Record<AgentType, { label: string; icon: React.ReactNode;
     icon: <Workflow className="h-3 w-3" />,
     color: "bg-orange-500/10 text-orange-400 border-orange-500/20",
   },
+  OrchestratorAgent: {
+    label: "Orchestrator",
+    icon: <Workflow className="h-3 w-3" />,
+    color: "bg-violet-500/10 text-violet-400 border-violet-500/20",
+  },
 };
 
 const defaultConfig = {

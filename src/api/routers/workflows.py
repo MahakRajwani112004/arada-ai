@@ -40,7 +40,7 @@ from src.api.schemas.workflows import (
     WorkflowSummaryResponse,
 )
 from src.mcp.repository import MCPServerRepository
-from src.models.workflow_definition import validate_workflow_definition
+from src.models.workflow_definition import validate_workflow_definition as validate_definition
 from src.storage import BaseAgentRepository
 from src.storage.workflow_repository import (
     WorkflowFilters,
@@ -57,6 +57,7 @@ router = APIRouter(prefix="/workflows", tags=["workflows"])
 @router.post("", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
 async def create_workflow(
     request: CreateWorkflowRequest,
+    current_user: CurrentUser,
     workflow_repo: WorkflowRepository = Depends(get_workflow_repository),
 ) -> WorkflowResponse:
     """Create a new workflow."""
@@ -71,7 +72,7 @@ async def create_workflow(
     try:
         # exclude_none to avoid passing None values to the strict validator
         definition_dict = request.definition.model_dump(exclude_none=True)
-        validate_workflow_definition(definition_dict)
+        validate_definition(definition_dict)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -108,6 +109,7 @@ async def create_workflow(
 
 @router.get("", response_model=WorkflowListResponse)
 async def list_workflows(
+    current_user: CurrentUser,
     category: Optional[str] = Query(None, description="Filter by category"),
     is_template: Optional[bool] = Query(None, description="Filter templates only"),
     workflow_repo: WorkflowRepository = Depends(get_workflow_repository),
@@ -142,6 +144,7 @@ async def list_workflows(
 @router.get("/{workflow_id}", response_model=WorkflowResponse)
 async def get_workflow(
     workflow_id: str,
+    current_user: CurrentUser,
     workflow_repo: WorkflowRepository = Depends(get_workflow_repository),
 ) -> WorkflowResponse:
     """Get workflow by ID."""
@@ -173,6 +176,7 @@ async def get_workflow(
 async def update_workflow(
     workflow_id: str,
     request: UpdateWorkflowRequest,
+    current_user: CurrentUser,
     workflow_repo: WorkflowRepository = Depends(get_workflow_repository),
 ) -> WorkflowResponse:
     """Update a workflow."""
@@ -189,7 +193,7 @@ async def update_workflow(
     if request.definition:
         try:
             definition = request.definition.model_dump(exclude_none=True)
-            validate_workflow_definition(definition)
+            validate_definition(definition)
         except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -229,6 +233,7 @@ async def update_workflow(
 @router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_workflow(
     workflow_id: str,
+    current_user: CurrentUser,
     workflow_repo: WorkflowRepository = Depends(get_workflow_repository),
 ) -> None:
     """Delete a workflow (soft delete)."""
@@ -243,6 +248,7 @@ async def delete_workflow(
 async def copy_workflow(
     workflow_id: str,
     request: CopyWorkflowRequest,
+    current_user: CurrentUser,
     workflow_repo: WorkflowRepository = Depends(get_workflow_repository),
 ) -> WorkflowResponse:
     """Copy a workflow to a new ID."""
@@ -292,6 +298,7 @@ async def copy_workflow(
 async def execute_workflow(
     workflow_id: str,
     request: ExecuteWorkflowRequest,
+    current_user: CurrentUser,
     agent_repo: BaseAgentRepository = Depends(get_repository),
     workflow_repo: WorkflowRepository = Depends(get_workflow_repository),
 ) -> ExecuteWorkflowResponse:
@@ -324,6 +331,7 @@ async def execute_workflow(
     execution_id, exec_status, step_results, final_output, error = await executor.execute(
         workflow_id=workflow_id,
         user_input=request.user_input,
+        user_id=current_user.id,
         context=request.context,
         session_id=request.session_id,
     )
@@ -348,6 +356,7 @@ async def execute_workflow(
 @router.post("/{workflow_id}/validate", response_model=ValidateWorkflowResponse)
 async def validate_stored_workflow(
     workflow_id: str,
+    current_user: CurrentUser,
     agent_repo: BaseAgentRepository = Depends(get_repository),
     workflow_repo: WorkflowRepository = Depends(get_workflow_repository),
 ) -> ValidateWorkflowResponse:
@@ -379,6 +388,7 @@ async def validate_stored_workflow(
 @router.post("/validate", response_model=ValidateWorkflowResponse)
 async def validate_workflow_definition(
     request: ValidateWorkflowRequest,
+    current_user: CurrentUser,
     agent_repo: BaseAgentRepository = Depends(get_repository),
 ) -> ValidateWorkflowResponse:
     """Validate a workflow definition before saving."""
@@ -407,6 +417,7 @@ async def validate_workflow_definition(
 @router.get("/{workflow_id}/executions", response_model=WorkflowExecutionListResponse)
 async def list_executions(
     workflow_id: str,
+    current_user: CurrentUser,
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     workflow_repo: WorkflowRepository = Depends(get_workflow_repository),
@@ -447,6 +458,7 @@ async def list_executions(
 @router.get("/executions/{execution_id}", response_model=WorkflowExecutionResponse)
 async def get_execution(
     execution_id: str,
+    current_user: CurrentUser,
     workflow_repo: WorkflowRepository = Depends(get_workflow_repository),
 ) -> WorkflowExecutionResponse:
     """Get execution details by ID."""
@@ -479,6 +491,7 @@ async def get_execution(
 
 @router.get("/resources/agents", response_model=AvailableAgentsResponse)
 async def list_available_agents(
+    current_user: CurrentUser,
     agent_repo: BaseAgentRepository = Depends(get_repository),
 ) -> AvailableAgentsResponse:
     """List agents available for use in workflows."""
@@ -500,6 +513,7 @@ async def list_available_agents(
 
 @router.get("/resources/mcps", response_model=AvailableMCPsResponse)
 async def list_available_mcps(
+    current_user: CurrentUser,
     mcp_repo: MCPServerRepository = Depends(get_mcp_repository),
 ) -> AvailableMCPsResponse:
     """List MCP servers and their tools available for workflows."""
@@ -542,6 +556,7 @@ async def list_available_mcps(
 
 @router.get("/resources/tools", response_model=AvailableToolsResponse)
 async def list_available_tools(
+    current_user: CurrentUser,
     mcp_repo: MCPServerRepository = Depends(get_mcp_repository),
 ) -> AvailableToolsResponse:
     """List all tools (native and MCP) available for workflows."""
@@ -599,6 +614,7 @@ async def list_available_tools(
 async def generate_workflow_skeleton(
     request: GenerateSkeletonRequest,
     current_user: CurrentUser,
+    agent_repo: BaseAgentRepository = Depends(get_repository),
     mcp_repo: MCPServerRepository = Depends(get_mcp_repository),
 ) -> GenerateSkeletonResponse:
     """Generate a workflow skeleton from natural language (Phase 1 of two-phase creation).
@@ -610,12 +626,14 @@ async def generate_workflow_skeleton(
 
     generator = WorkflowGenerator()
 
-    # Get existing MCPs to check connectivity
+    # Get existing resources so AI can suggest reusing them
+    existing_agents = await agent_repo.list()
     existing_mcps = await mcp_repo.list_all()
 
     return await generator.generate_skeleton(
         request=request,
         user_id=current_user.id,
+        existing_agents=existing_agents,
         existing_mcps=existing_mcps,
     )
 
@@ -652,6 +670,7 @@ async def generate_workflow(
 @router.post("/generate/apply", response_model=ApplyGeneratedWorkflowResponse)
 async def apply_generated_workflow(
     request: ApplyGeneratedWorkflowRequest,
+    current_user: CurrentUser,
     agent_repo: BaseAgentRepository = Depends(get_repository),
     workflow_repo: WorkflowRepository = Depends(get_workflow_repository),
 ) -> ApplyGeneratedWorkflowResponse:

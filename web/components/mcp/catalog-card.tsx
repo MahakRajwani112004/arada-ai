@@ -13,10 +13,15 @@ interface CatalogCardProps {
 }
 
 // Map template IDs to OAuth service names
-const oauthServiceMap: Record<string, string> = {
+const googleOAuthServices: Record<string, string> = {
   "google-calendar": "calendar",
   "gmail": "gmail",
   "google-drive": "drive",
+};
+
+const microsoftOAuthServices: Record<string, string> = {
+  "outlook-calendar": "calendar",
+  "outlook-email": "email",
 };
 
 const serviceIcons: Record<string, React.ReactNode> = {
@@ -40,8 +45,8 @@ const serviceColors: Record<string, string> = {
 export function CatalogCard({ item, onConnect, isConnected }: CatalogCardProps) {
   const icon = serviceIcons[item.id] || <ExternalLink className="h-5 w-5" />;
   const color = serviceColors[item.id] || "bg-secondary text-muted-foreground";
-  const oauthService = oauthServiceMap[item.id];
-  const isGoogleOAuth = !!oauthService; // Only Google services are in the map
+  const isGoogleOAuth = !!googleOAuthServices[item.id];
+  const isMicrosoftOAuth = !!microsoftOAuthServices[item.id];
 
   const handleClick = () => {
     // Always use onConnect to open the sheet for name input
@@ -51,6 +56,7 @@ export function CatalogCard({ item, onConnect, isConnected }: CatalogCardProps) 
   const getButtonText = () => {
     if (isConnected) return "Manage";
     if (isGoogleOAuth) return "Sign in with Google";
+    if (isMicrosoftOAuth) return "Sign in with Microsoft";
     return "Connect";
   };
 

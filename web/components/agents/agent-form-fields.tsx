@@ -40,11 +40,14 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { useCatalog, useServers } from "@/lib/hooks/use-mcp";
+import { useAgents } from "@/lib/hooks/use-agents";
 import { generateAgentConfig } from "@/lib/api/agents";
-import type { AgentType, AgentExample, KnowledgeBaseConfig } from "@/types/agent";
+import type { AgentType, AgentExample, KnowledgeBaseConfig, RouterConfig, OrchestratorConfig } from "@/types/agent";
 import { ToolSelectorSheet } from "./tool-selector-sheet";
 import { SelectedToolsDisplay } from "./selected-tools-display";
 import { KBSelector } from "./kb-selector";
+import { RoutingTableBuilder } from "./routing-table-builder";
+import { OrchestratorConfigBuilder } from "./orchestrator-config-builder";
 
 export interface AgentFormData {
   name: string;
@@ -63,6 +66,10 @@ export interface AgentFormData {
   llmProvider: "openai" | "anthropic";
   llmModel: string;
   temperature: number;
+  // Advanced agent types
+  agentType?: AgentType;
+  routerConfig?: RouterConfig;
+  orchestratorConfig?: OrchestratorConfig;
 }
 
 export const defaultAgentFormData: AgentFormData = {
@@ -82,6 +89,25 @@ export const defaultAgentFormData: AgentFormData = {
   llmProvider: "openai",
   llmModel: "gpt-4o",
   temperature: 0.7,
+  agentType: undefined,
+  routerConfig: undefined,
+  orchestratorConfig: undefined,
+};
+
+// Default configs for advanced agent types
+export const defaultRouterConfig: RouterConfig = {
+  routing_table: {},
+  confidence_threshold: 0.7,
+};
+
+export const defaultOrchestratorConfig: OrchestratorConfig = {
+  mode: "llm_driven",
+  available_agents: [],
+  workflow_definition: null,
+  default_aggregation: "all",
+  max_parallel: 5,
+  max_depth: 3,
+  allow_self_reference: false,
 };
 
 interface AgentFormFieldsProps {
@@ -120,6 +146,7 @@ export function AgentFormFields({
 }: AgentFormFieldsProps) {
   const { data: catalog } = useCatalog();
   const { data: servers } = useServers();
+  const { data: agentsData } = useAgents();
 
   // UI state
   const [isAIFilling, setIsAIFilling] = useState(false);
@@ -321,14 +348,49 @@ export function AgentFormFields({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="roleTitle">Role Title</Label>
-              <Input
-                id="roleTitle"
-                value={data.roleTitle}
-                onChange={(e) => updateField("roleTitle", e.target.value)}
-                placeholder="e.g., Executive Assistant"
-              />
+              <Label htmlFor="agentType">Agent Type</Label>
+              <Select
+                value={data.agentType || "auto"}
+                onValueChange={(v) => {
+                  const newType = v === "auto" ? undefined : v as AgentType;
+                  const updates: Partial<AgentFormData> = { agentType: newType };
+
+                  // Initialize configs when type is selected
+                  if (v === "RouterAgent" && !data.routerConfig) {
+                    updates.routerConfig = defaultRouterConfig;
+                  }
+                  if (v === "OrchestratorAgent" && !data.orchestratorConfig) {
+                    updates.orchestratorConfig = defaultOrchestratorConfig;
+                  }
+
+                  onChange({ ...data, ...updates });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Auto-detect" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto-detect</SelectItem>
+                  <SelectItem value="LLMAgent">LLM Agent</SelectItem>
+                  <SelectItem value="ToolAgent">Tool Agent</SelectItem>
+                  <SelectItem value="RAGAgent">RAG Agent</SelectItem>
+                  <SelectItem value="FullAgent">Full Agent</SelectItem>
+                  <SelectItem value="RouterAgent">Router Agent</SelectItem>
+                  <SelectItem value="OrchestratorAgent">Orchestrator Agent</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
+          </div>
+
+          {/* Role Title - moved to separate row */}
+          <div className="space-y-1.5">
+            <Label htmlFor="roleTitle">Role Title</Label>
+            <Input
+              id="roleTitle"
+              value={data.roleTitle}
+              onChange={(e) => updateField("roleTitle", e.target.value)}
+              placeholder="e.g., Executive Assistant"
+            />
           </div>
 
           <div className="space-y-1.5">
@@ -436,6 +498,30 @@ export function AgentFormFields({
               }
             />
           </div>
+
+          {/* RouterAgent Configuration */}
+          {data.agentType === "RouterAgent" && data.routerConfig && (
+            <>
+              <Separator />
+              <RoutingTableBuilder
+                config={data.routerConfig}
+                onChange={(config) => updateField("routerConfig", config)}
+                agents={agentsData?.agents || []}
+              />
+            </>
+          )}
+
+          {/* OrchestratorAgent Configuration */}
+          {data.agentType === "OrchestratorAgent" && data.orchestratorConfig && (
+            <>
+              <Separator />
+              <OrchestratorConfigBuilder
+                config={data.orchestratorConfig}
+                onChange={(config) => updateField("orchestratorConfig", config)}
+                agents={agentsData?.agents || []}
+              />
+            </>
+          )}
         </div>
 
         {/* Advanced Options - Collapsible */}

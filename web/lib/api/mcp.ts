@@ -51,6 +51,13 @@ export async function getOAuthUrl(service: string): Promise<OAuthAuthorizeRespon
   return response.data;
 }
 
+export async function getMicrosoftOAuthUrl(service: string): Promise<OAuthAuthorizeResponse> {
+  const response = await apiClient.get<OAuthAuthorizeResponse>(
+    `/oauth/microsoft/authorize-url?service=${service}`
+  );
+  return response.data;
+}
+
 export interface ReconnectResponse {
   authorization_url: string;
   server_id: string;

@@ -5,6 +5,16 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+class SuggestedAgent(BaseModel):
+    """AI's suggestion for an agent to fulfill a step (for draft workflows)."""
+    name: str = Field(..., description="Suggested agent name")
+    description: Optional[str] = Field(None, description="Description of what the agent does")
+    goal: str = Field(..., description="What this agent should accomplish")
+    model: Optional[str] = Field(None, description="LLM model to use (e.g., gpt-4o)")
+    required_mcps: List[str] = Field(default_factory=list, description="MCP servers needed")
+    suggested_tools: List[str] = Field(default_factory=list, description="Tools the agent should use")
+
+
 class StepType(str, Enum):
     """Types of workflow steps."""
 
@@ -57,9 +67,14 @@ class WorkflowStep(BaseModel):
 
     id: str = Field(..., pattern=ID_PATTERN, description="Unique step identifier")
     type: StepType = Field(default=StepType.AGENT, description="Step type")
+    name: Optional[str] = Field(None, max_length=200, description="Human-readable step name")
 
     # Agent step fields
     agent_id: Optional[str] = Field(None, pattern=ID_PATTERN)
+    suggested_agent: Optional[SuggestedAgent] = Field(
+        None,
+        description="AI suggestion for agent (for draft workflows without agent_id)"
+    )
     input: Optional[str] = Field(None, max_length=10000)
     timeout: int = Field(default=120, ge=1, le=600)
     retries: int = Field(default=0, ge=0, le=5)
@@ -97,8 +112,9 @@ class WorkflowStep(BaseModel):
     def validate_step_type_fields(self) -> "WorkflowStep":
         """Validate that required fields are present for each step type."""
         if self.type == StepType.AGENT:
-            if not self.agent_id:
-                raise ValueError(f"Step '{self.id}': agent step requires agent_id")
+            # Allow either agent_id (ready) or suggested_agent (draft)
+            if not self.agent_id and not self.suggested_agent:
+                raise ValueError(f"Step '{self.id}': agent step requires agent_id or suggested_agent")
 
         elif self.type == StepType.PARALLEL:
             if not self.branches or len(self.branches) == 0:
@@ -220,6 +236,29 @@ class WorkflowDefinition(BaseModel):
             if step.id == step_id:
                 return step
         return None
+
+    def is_ready_to_run(self) -> bool:
+        """Check if all agent steps have agent_id (not just suggested_agent)."""
+        for step in self.steps:
+            if step.type == StepType.AGENT:
+                if not step.agent_id:
+                    return False
+            elif step.type == StepType.PARALLEL and step.branches:
+                for branch in step.branches:
+                    if not branch.agent_id:
+                        return False
+        return True
+
+    def get_draft_steps(self) -> List[WorkflowStep]:
+        """Get all steps that have suggested_agent but no agent_id."""
+        return [
+            step for step in self.steps
+            if step.type == StepType.AGENT and not step.agent_id and step.suggested_agent
+        ]
+
+    def get_missing_agent_ids(self) -> List[str]:
+        """Get step IDs that need agents created."""
+        return [step.id for step in self.get_draft_steps()]
 
 
 def validate_workflow_definition(data: Dict[str, Any]) -> WorkflowDefinition:

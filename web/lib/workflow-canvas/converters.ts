@@ -1,6 +1,15 @@
 import type { WorkflowDefinition, WorkflowStep, WorkflowTrigger, TriggerType } from "@/types/workflow";
 import type { Agent } from "@/types/agent";
-import type { CanvasNode, CanvasEdge, NodeStatus, TriggerNodeData, AgentNodeData, EndNodeData } from "./types";
+import type {
+  CanvasNode,
+  CanvasEdge,
+  NodeStatus,
+  TriggerNodeData,
+  AgentNodeData,
+  ConditionalNodeData,
+  ParallelNodeData,
+  EndNodeData
+} from "./types";
 import { createEdge, applyAutoLayout } from "./layout";
 
 interface ConversionContext {
@@ -24,19 +33,47 @@ export function workflowToCanvas(
   const triggerNode = createTriggerNode(trigger, context);
   nodes.push(triggerNode);
 
-  // 2. Create agent nodes for each step
+  // 2. Create nodes for each step based on type
   definition.steps.forEach((step, index) => {
-    const agentNode = createAgentNode(step, index, context);
-    nodes.push(agentNode);
+    let node: CanvasNode;
+
+    switch (step.type) {
+      case "conditional":
+        node = createConditionalNode(step, index, context, definition.steps);
+        break;
+      case "parallel":
+        node = createParallelNode(step, index, context);
+        break;
+      case "agent":
+      default:
+        node = createAgentNode(step, index, context);
+        break;
+    }
+
+    nodes.push(node);
 
     // Create edge from previous node
     if (index === 0) {
       // First step connects to trigger
       edges.push(createEdge("trigger", step.id));
     } else {
-      // Connect to previous step
+      // Connect to previous step (for linear flow)
+      // Note: Conditional steps will have additional edges created below
       const prevStep = definition.steps[index - 1];
-      edges.push(createEdge(prevStep.id, step.id));
+      if (prevStep.type !== "conditional") {
+        edges.push(createEdge(prevStep.id, step.id));
+      }
+    }
+
+    // Create edges for conditional branches
+    if (step.type === "conditional" && step.conditional_branches) {
+      Object.entries(step.conditional_branches).forEach(([condition, targetStepId]) => {
+        edges.push(createEdge(step.id, targetStepId, { label: condition }));
+      });
+      // Add default branch edge
+      if (step.default) {
+        edges.push(createEdge(step.id, step.default, { label: "default" }));
+      }
     }
   });
 
@@ -126,6 +163,97 @@ function createAgentNode(
 }
 
 /**
+ * Create a conditional node from a workflow step
+ */
+function createConditionalNode(
+  step: WorkflowStep,
+  index: number,
+  context: ConversionContext = {},
+  allSteps: WorkflowStep[]
+): CanvasNode {
+  // Find the classifier agent
+  const classifierAgent = context.agents?.find((a) => a.id === step.condition_source);
+
+  // Build branches array from conditional_branches
+  const branches = Object.entries(step.conditional_branches || {}).map(([condition, targetStepId]) => {
+    const targetStep = allSteps.find((s) => s.id === targetStepId);
+    return {
+      condition,
+      targetStepId,
+      targetStepName: targetStep?.name || targetStepId,
+    };
+  });
+
+  // Find default step
+  const defaultStep = step.default ? allSteps.find((s) => s.id === step.default) : undefined;
+
+  // Determine status
+  const status: NodeStatus = step.condition_source && classifierAgent ? "ready" : "draft";
+
+  const data: ConditionalNodeData = {
+    type: "conditional",
+    stepId: step.id,
+    name: step.name || `Conditional ${index + 1}`,
+    classifierAgentId: step.condition_source,
+    classifierAgentName: classifierAgent?.name,
+    branches,
+    defaultStepId: step.default,
+    defaultStepName: defaultStep?.name,
+    status,
+  };
+
+  return {
+    id: step.id,
+    type: "conditional",
+    position: { x: 0, y: 0 },
+    data,
+  };
+}
+
+/**
+ * Create a parallel node from a workflow step
+ */
+function createParallelNode(
+  step: WorkflowStep,
+  index: number,
+  context: ConversionContext = {}
+): CanvasNode {
+  // Build branches array
+  const branches = (step.branches || []).map((branch, branchIndex) => {
+    const branchData = branch as { id?: string; agent_id?: string; input?: string; timeout?: number };
+    const agent = context.agents?.find((a) => a.id === branchData.agent_id);
+    return {
+      id: branchData.id || `branch-${branchIndex}`,
+      agentId: branchData.agent_id,
+      agentName: agent?.name,
+      input: branchData.input,
+      timeout: branchData.timeout,
+    };
+  });
+
+  // Determine status - ready if all branches have agents
+  const allBranchesReady = branches.every((b) => b.agentId && context.agents?.some((a) => a.id === b.agentId));
+  const status: NodeStatus = branches.length > 0 && allBranchesReady ? "ready" : "draft";
+
+  const data: ParallelNodeData = {
+    type: "parallel",
+    stepId: step.id,
+    name: step.name || `Parallel ${index + 1}`,
+    branches,
+    aggregation: step.aggregation || "all",
+    status,
+    viewMode: "grouped", // Default to grouped view
+  };
+
+  return {
+    id: step.id,
+    type: "parallel",
+    position: { x: 0, y: 0 },
+    data,
+  };
+}
+
+/**
  * Create the end node
  */
 function createEndNode(): CanvasNode {
@@ -171,28 +299,70 @@ export function canvasToWorkflow(
   edges: CanvasEdge[],
   originalDefinition: WorkflowDefinition
 ): WorkflowDefinition {
-  // Get agent nodes in order
-  const agentNodes = nodes
-    .filter((n): n is CanvasNode & { data: AgentNodeData } => n.type === "agent")
-    .sort((a, b) => {
-      // Sort by y position (top to bottom)
-      return a.position.y - b.position.y;
-    });
+  // Get all workflow nodes (exclude trigger and end)
+  const workflowNodes = nodes
+    .filter((n) => n.type !== "trigger" && n.type !== "end")
+    .sort((a, b) => a.position.y - b.position.y);
 
   // Build new steps array
-  const steps: WorkflowStep[] = agentNodes.map((node) => {
+  const steps: WorkflowStep[] = workflowNodes.map((node) => {
     // Find original step to preserve properties
     const originalStep = originalDefinition.steps.find(
-      (s) => s.id === node.data.stepId
+      (s) => s.id === (node.data as { stepId?: string }).stepId
     );
 
+    if (node.type === "conditional") {
+      const data = node.data as ConditionalNodeData;
+      // Convert branches array back to conditional_branches object
+      const conditionalBranches: Record<string, string> = {};
+      data.branches.forEach((branch) => {
+        conditionalBranches[branch.condition] = branch.targetStepId;
+      });
+
+      return {
+        id: data.stepId,
+        type: "conditional" as const,
+        name: data.name,
+        condition_source: data.classifierAgentId,
+        conditional_branches: conditionalBranches,
+        default: data.defaultStepId,
+        timeout: originalStep?.timeout || 120,
+        retries: originalStep?.retries || 0,
+        on_error: originalStep?.on_error || "fail",
+      };
+    }
+
+    if (node.type === "parallel") {
+      const data = node.data as ParallelNodeData;
+      // Convert branches array back to workflow format
+      const branches = data.branches.map((branch) => ({
+        id: branch.id,
+        agent_id: branch.agentId,
+        input: branch.input || "${user_input}",
+        timeout: branch.timeout || 120,
+      }));
+
+      return {
+        id: data.stepId,
+        type: "parallel" as const,
+        name: data.name,
+        branches,
+        aggregation: data.aggregation,
+        timeout: originalStep?.timeout || 120,
+        retries: originalStep?.retries || 0,
+        on_error: originalStep?.on_error || "fail",
+      };
+    }
+
+    // Default: Agent node
+    const data = node.data as AgentNodeData;
     return {
-      id: node.data.stepId,
+      id: data.stepId,
       type: "agent" as const,
-      name: node.data.name,
-      agent_id: node.data.agentId,
-      suggested_agent: node.data.suggestedAgent,
-      input: node.data.role || originalStep?.input || "${user_input}",
+      name: data.name,
+      agent_id: data.agentId,
+      suggested_agent: data.suggestedAgent,
+      input: data.role || originalStep?.input || "${user_input}",
       timeout: originalStep?.timeout || 120,
       retries: originalStep?.retries || 0,
       on_error: originalStep?.on_error || "fail",
