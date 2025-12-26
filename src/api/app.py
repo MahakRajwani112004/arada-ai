@@ -107,8 +107,51 @@ if settings.monitoring_enabled:
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check endpoint (internal Docker healthcheck)."""
     return {"status": "healthy", "version": "0.1.0"}
+
+
+@app.get("/api/v1/health")
+async def api_health_check():
+    """
+    API health check endpoint (external).
+
+    Checks database and redis connectivity.
+    """
+    from datetime import datetime, timezone
+    from sqlalchemy import text
+    from src.storage import async_engine
+    from redis.asyncio import Redis
+
+    db_status = "disconnected"
+    redis_status = "disconnected"
+
+    # Check database
+    try:
+        async with async_engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+            db_status = "connected"
+    except Exception:
+        pass
+
+    # Check Redis
+    try:
+        redis = Redis.from_url(settings.redis_url)
+        await redis.ping()
+        await redis.close()
+        redis_status = "connected"
+    except Exception:
+        pass
+
+    overall = "healthy" if db_status == "connected" and redis_status == "connected" else "degraded"
+
+    return {
+        "status": overall,
+        "version": "0.1.0",
+        "database": db_status,
+        "redis": redis_status,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
 
 
 @app.get("/")
