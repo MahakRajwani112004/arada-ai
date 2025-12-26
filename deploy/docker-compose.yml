@@ -194,7 +194,7 @@ services:
 
   # API Server
   api:
-    image: magureme/magoneai-api:latest
+    image: magureme/magoneai-api:${IMAGE_TAG:-latest}
     container_name: magure-api
     environment:
       # Application
@@ -277,7 +277,7 @@ services:
 
   # Temporal Worker
   worker:
-    image: magureme/magoneai-worker:latest
+    image: magureme/magoneai-worker:${IMAGE_TAG:-latest}
     container_name: magure-worker
     environment:
       # Application
@@ -327,7 +327,7 @@ services:
 
   # Web UI (Next.js)
   web:
-    image: magureme/magoneai-web:v3
+    image: magureme/magoneai-web:${IMAGE_TAG:-latest}
     container_name: magure-web
     environment:
       NEXT_PUBLIC_API_URL: https://magoneai.magure.ai/api/v1
