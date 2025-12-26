@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { Workflow, Plus, Sparkles, Filter } from "lucide-react";
+import { Workflow, Plus, Filter } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Header } from "@/components/layout/header";
@@ -60,17 +60,11 @@ function EmptyState() {
         Create your first workflow to automate tasks and orchestrate your AI
         agents
       </p>
-      <div className="mt-6 flex gap-3">
-        <Button asChild variant="outline" className="gap-2">
-          <Link href="/workflows/new/manual">
-            <Plus className="h-4 w-4" />
-            Build manually
-          </Link>
-        </Button>
+      <div className="mt-6">
         <Button asChild className="gap-2">
-          <Link href="/workflows/create">
-            <Sparkles className="h-4 w-4" />
-            AI Generate
+          <Link href="/workflows/new">
+            <Plus className="h-4 w-4" />
+            Create New Workflow
           </Link>
         </Button>
       </div>
@@ -181,20 +175,12 @@ export default function WorkflowsPage() {
           title="Workflows"
           description="Orchestrate multi-step AI agent workflows"
           actions={
-            <div className="flex gap-2">
-              <Button asChild variant="outline" className="gap-2">
-                <Link href="/workflows/new/manual">
-                  <Plus className="h-4 w-4" />
-                  Build manually
-                </Link>
-              </Button>
-              <Button asChild className="gap-2">
-                <Link href="/workflows/create">
-                  <Sparkles className="h-4 w-4" />
-                  AI Generate
-                </Link>
-              </Button>
-            </div>
+            <Button asChild className="gap-2">
+              <Link href="/workflows/create">
+                <Plus className="h-4 w-4" />
+                Create New Workflow
+              </Link>
+            </Button>
           }
         />
 

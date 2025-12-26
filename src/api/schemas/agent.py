@@ -120,6 +120,10 @@ class AgentResponse(BaseModel):
     description: str
     agent_type: AgentType
     created: bool = True
+    warnings: List[str] = Field(
+        default_factory=list,
+        description="Warnings about potential issues (e.g., hallucination risks)"
+    )
 
     class Config:
         from_attributes = True
