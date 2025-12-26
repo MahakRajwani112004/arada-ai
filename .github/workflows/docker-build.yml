@@ -371,6 +371,17 @@ jobs:
             ${{ secrets.GCP_SSH_USER }}@${{ secrets.GCP_SERVER_IP }}:${{ secrets.GCP_DEPLOY_PATH }}/init-db.sql
           echo "init-db.sql copied successfully"
 
+      - name: Copy monitoring configs to server
+        run: |
+          echo "Copying monitoring configs to server..."
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.GCP_SSH_USER }}@${{ secrets.GCP_SERVER_IP }} \
+            "mkdir -p ${{ secrets.GCP_DEPLOY_PATH }}/monitoring/{prometheus,grafana/provisioning/datasources,grafana/provisioning/dashboards/json,loki,promtail}"
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -r \
+            docker/monitoring/* \
+            ${{ secrets.GCP_SSH_USER }}@${{ secrets.GCP_SERVER_IP }}:${{ secrets.GCP_DEPLOY_PATH }}/monitoring/
+          echo "Monitoring configs copied successfully"
+
       - name: Deploy to GCP server
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
