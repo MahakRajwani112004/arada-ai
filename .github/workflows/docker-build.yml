@@ -238,3 +238,137 @@ jobs:
             # Start services
             docker-compose up -d
             ```
+
+  # ============================================
+  # Deploy to GCP Server
+  # ============================================
+  deploy:
+    name: Deploy to GCP
+    needs: [build-api, build-worker, build-web]
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need previous commit to detect changes
+
+      - name: Determine image tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${{ github.ref_name }}"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="latest"
+          fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Check if docker-compose.yml changed
+        id: compose_changed
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -q "^deploy/docker-compose.yml$"; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "docker-compose.yml has changes - will copy to server"
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "docker-compose.yml unchanged - will only update images"
+          fi
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GCP_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.GCP_SERVER_IP }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Copy docker-compose.yml to server
+        if: steps.compose_changed.outputs.changed == 'true'
+        env:
+          SSH_USER: ${{ secrets.GCP_SSH_USER }}
+          SERVER_IP: ${{ secrets.GCP_SERVER_IP }}
+          DEPLOY_PATH: ${{ secrets.GCP_DEPLOY_PATH }}
+        run: |
+          echo "Copying docker-compose.yml to server..."
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            deploy/docker-compose.yml \
+            ${SSH_USER}@${SERVER_IP}:${DEPLOY_PATH}/docker-compose.yml
+          echo "docker-compose.yml copied successfully"
+
+      - name: Deploy to GCP server
+        env:
+          SSH_USER: ${{ secrets.GCP_SSH_USER }}
+          SERVER_IP: ${{ secrets.GCP_SERVER_IP }}
+          DEPLOY_PATH: ${{ secrets.GCP_DEPLOY_PATH }}
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
+          COMPOSE_CHANGED: ${{ steps.compose_changed.outputs.changed }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${SSH_USER}@${SERVER_IP} << ENDSSH
+          set -e
+
+          echo "Starting deployment..."
+          cd ${DEPLOY_PATH}
+
+          # Update IMAGE_TAG in .env file
+          echo "Setting IMAGE_TAG=${IMAGE_TAG}..."
+          if grep -q "^IMAGE_TAG=" .env; then
+            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/" .env
+          else
+            echo "IMAGE_TAG=${IMAGE_TAG}" >> .env
+          fi
+
+          # Pull new images
+          echo "Pulling images (tag: ${IMAGE_TAG})..."
+          docker-compose pull
+
+          # Restart services based on whether compose file changed
+          if [ "${COMPOSE_CHANGED}" = "true" ]; then
+            echo "docker-compose.yml changed - restarting all services..."
+            docker-compose down
+            docker-compose up -d --remove-orphans
+          else
+            echo "Rolling restart with new images..."
+            docker-compose stop api && docker-compose rm -f api && docker-compose up -d api
+            sleep 10
+            docker-compose stop worker && docker-compose rm -f worker && docker-compose up -d worker
+            sleep 5
+            docker-compose stop web && docker-compose rm -f web && docker-compose up -d web
+          fi
+
+          # Cleanup old images
+          echo "Cleaning up old images..."
+          docker image prune -f
+
+          echo "Deployment complete!"
+          docker-compose ps
+          ENDSSH
+
+      - name: Health check
+        env:
+          DOMAIN: ${{ secrets.GCP_DOMAIN }}
+        run: |
+          echo "Running health check..."
+          sleep 30
+
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://${DOMAIN}/health || echo "000")
+
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "API is healthy (HTTP $HTTP_STATUS)"
+          else
+            echo "API health check returned HTTP $HTTP_STATUS"
+            exit 1
+          fi
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "=================================="
+          echo "Deployment Summary"
+          echo "=================================="
+          echo "Image Tag: ${{ steps.tag.outputs.tag }}"
+          echo "Compose Changed: ${{ steps.compose_changed.outputs.changed }}"
+          echo "Status: ${{ job.status }}"
+          echo "=================================="
