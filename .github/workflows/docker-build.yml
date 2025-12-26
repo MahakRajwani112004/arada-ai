@@ -301,52 +301,20 @@ jobs:
           echo "docker-compose.yml copied successfully"
 
       - name: Deploy to GCP server
-        env:
-          SSH_USER: ${{ secrets.GCP_SSH_USER }}
-          SERVER_IP: ${{ secrets.GCP_SERVER_IP }}
-          DEPLOY_PATH: ${{ secrets.GCP_DEPLOY_PATH }}
-          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
-          COMPOSE_CHANGED: ${{ steps.compose_changed.outputs.changed }}
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${SSH_USER}@${SERVER_IP} << ENDSSH
-          set -e
-
-          echo "Starting deployment..."
-          cd ${DEPLOY_PATH}
-
-          # Update IMAGE_TAG in .env file
-          echo "Setting IMAGE_TAG=${IMAGE_TAG}..."
-          if grep -q "^IMAGE_TAG=" .env; then
-            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/" .env
-          else
-            echo "IMAGE_TAG=${IMAGE_TAG}" >> .env
-          fi
-
-          # Pull new images
-          echo "Pulling images (tag: ${IMAGE_TAG})..."
-          docker-compose pull
-
-          # Restart services based on whether compose file changed
-          if [ "${COMPOSE_CHANGED}" = "true" ]; then
-            echo "docker-compose.yml changed - restarting all services..."
-            docker-compose down
-            docker-compose up -d --remove-orphans
-          else
-            echo "Rolling restart with new images..."
-            docker-compose stop api && docker-compose rm -f api && docker-compose up -d api
-            sleep 10
-            docker-compose stop worker && docker-compose rm -f worker && docker-compose up -d worker
-            sleep 5
-            docker-compose stop web && docker-compose rm -f web && docker-compose up -d web
-          fi
-
-          # Cleanup old images
-          echo "Cleaning up old images..."
-          docker image prune -f
-
-          echo "Deployment complete!"
-          docker-compose ps
-          ENDSSH
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.GCP_SSH_USER }}@${{ secrets.GCP_SERVER_IP }} \
+            "cd ${{ secrets.GCP_DEPLOY_PATH }} && \
+            echo 'Starting deployment...' && \
+            sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${{ steps.tag.outputs.tag }}/' .env || echo 'IMAGE_TAG=${{ steps.tag.outputs.tag }}' >> .env && \
+            echo 'Pulling images...' && \
+            docker-compose pull && \
+            echo 'Restarting services...' && \
+            docker-compose up -d --remove-orphans && \
+            echo 'Cleaning up...' && \
+            docker image prune -f && \
+            echo 'Deployment complete!' && \
+            docker-compose ps"
 
       - name: Health check
         env:
