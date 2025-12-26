@@ -9,9 +9,27 @@ on:
       - main
     tags:
       - 'v*'
+    paths:
+      - 'src/**'
+      - 'Dockerfile'
+      - 'Dockerfile.worker'
+      - 'web/**'
+      - 'requirements*.txt'
+      - 'pyproject.toml'
+      - 'mcp_servers/**'
+      - '.github/workflows/docker-build.yml'
   pull_request:
     branches:
       - main
+    paths:
+      - 'src/**'
+      - 'Dockerfile'
+      - 'Dockerfile.worker'
+      - 'web/**'
+      - 'requirements*.txt'
+      - 'pyproject.toml'
+      - 'mcp_servers/**'
+      - '.github/workflows/docker-build.yml'
   workflow_dispatch:
     inputs:
       tag:
@@ -26,10 +44,44 @@ env:
 
 jobs:
   # ============================================
+  # Detect which components changed
+  # ============================================
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      worker: ${{ steps.filter.outputs.worker }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for file changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api:
+              - 'src/**'
+              - 'Dockerfile'
+              - 'requirements*.txt'
+              - 'pyproject.toml'
+            worker:
+              - 'src/**'
+              - 'Dockerfile.worker'
+              - 'requirements*.txt'
+              - 'pyproject.toml'
+            web:
+              - 'web/**'
+
+  # ============================================
   # Build API Image
   # ============================================
   build-api:
     name: Build API Image
+    needs: changes
+    if: needs.changes.outputs.api == 'true' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -85,6 +137,8 @@ jobs:
   # ============================================
   build-worker:
     name: Build Worker Image
+    needs: changes
+    if: needs.changes.outputs.worker == 'true' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -140,6 +194,8 @@ jobs:
   # ============================================
   build-web:
     name: Build Web Image
+    needs: changes
+    if: needs.changes.outputs.web == 'true' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -197,8 +253,8 @@ jobs:
   # ============================================
   release:
     name: Create Release
-    needs: [build-api, build-worker, build-web]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [changes, build-api, build-worker, build-web]
+    if: always() && !failure() && !cancelled() && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -244,8 +300,8 @@ jobs:
   # ============================================
   deploy:
     name: Deploy to GCP
-    needs: [build-api, build-worker, build-web]
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [changes, build-api, build-worker, build-web]
+    if: always() && !failure() && !cancelled() && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     environment: production
 
