@@ -17,6 +17,7 @@ on:
       - 'requirements*.txt'
       - 'pyproject.toml'
       - 'mcp_servers/**'
+      - 'deploy/**'
       - '.github/workflows/docker-build.yml'
   pull_request:
     branches:
@@ -29,6 +30,7 @@ on:
       - 'requirements*.txt'
       - 'pyproject.toml'
       - 'mcp_servers/**'
+      - 'deploy/**'
       - '.github/workflows/docker-build.yml'
   workflow_dispatch:
     inputs:
@@ -323,16 +325,24 @@ jobs:
           fi
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
-      - name: Check if docker-compose.yml changed
-        id: compose_changed
+      - name: Check if deploy files changed
+        id: deploy_changed
         run: |
+          COMPOSE_CHANGED=false
+          INITDB_CHANGED=false
+
           if git diff --name-only HEAD~1 HEAD | grep -q "^deploy/docker-compose.yml$"; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-            echo "docker-compose.yml has changes - will copy to server"
-          else
-            echo "changed=false" >> $GITHUB_OUTPUT
-            echo "docker-compose.yml unchanged - will only update images"
+            COMPOSE_CHANGED=true
+            echo "docker-compose.yml has changes"
           fi
+
+          if git diff --name-only HEAD~1 HEAD | grep -q "^deploy/init-db.sql$"; then
+            INITDB_CHANGED=true
+            echo "init-db.sql has changes"
+          fi
+
+          echo "compose_changed=${COMPOSE_CHANGED}" >> $GITHUB_OUTPUT
+          echo "initdb_changed=${INITDB_CHANGED}" >> $GITHUB_OUTPUT
 
       - name: Setup SSH key
         env:
@@ -344,17 +354,22 @@ jobs:
           ssh-keyscan -H ${{ secrets.GCP_SERVER_IP }} >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Copy docker-compose.yml to server
-        if: steps.compose_changed.outputs.changed == 'true'
-        env:
-          SSH_USER: ${{ secrets.GCP_SSH_USER }}
-          SERVER_IP: ${{ secrets.GCP_SERVER_IP }}
-          DEPLOY_PATH: ${{ secrets.GCP_DEPLOY_PATH }}
+        if: steps.deploy_changed.outputs.compose_changed == 'true'
         run: |
           echo "Copying docker-compose.yml to server..."
           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             deploy/docker-compose.yml \
-            ${SSH_USER}@${SERVER_IP}:${DEPLOY_PATH}/docker-compose.yml
+            ${{ secrets.GCP_SSH_USER }}@${{ secrets.GCP_SERVER_IP }}:${{ secrets.GCP_DEPLOY_PATH }}/docker-compose.yml
           echo "docker-compose.yml copied successfully"
+
+      - name: Copy init-db.sql to server
+        if: steps.deploy_changed.outputs.initdb_changed == 'true'
+        run: |
+          echo "Copying init-db.sql to server..."
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            deploy/init-db.sql \
+            ${{ secrets.GCP_SSH_USER }}@${{ secrets.GCP_SERVER_IP }}:${{ secrets.GCP_DEPLOY_PATH }}/init-db.sql
+          echo "init-db.sql copied successfully"
 
       - name: Deploy to GCP server
         run: |
@@ -395,7 +410,7 @@ jobs:
           echo "Deployment Summary"
           echo "=================================="
           echo "Image Tag: ${{ steps.tag.outputs.tag }}"
-          echo "Compose Changed: ${{ steps.compose_changed.outputs.changed }}"
+          echo "Compose Changed: ${{ steps.deploy_changed.outputs.compose_changed }}"
+          echo "Init-DB Changed: ${{ steps.deploy_changed.outputs.initdb_changed }}"
           echo "Status: ${{ job.status }}"
           echo "=================================="
-# CI/CD test Fri Dec 26 13:13:37 IST 2025
