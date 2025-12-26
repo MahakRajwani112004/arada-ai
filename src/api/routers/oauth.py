@@ -1,4 +1,4 @@
-"""OAuth callback endpoints for Google services."""
+"""OAuth callback endpoints for Google and Microsoft services."""
 import base64
 import json
 import os
@@ -6,6 +6,7 @@ import uuid
 from typing import Dict, Optional
 from urllib.parse import urlencode
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
@@ -33,6 +34,25 @@ GOOGLE_SCOPES = {
         "https://www.googleapis.com/auth/gmail.modify",
     ],
     "drive": ["https://www.googleapis.com/auth/drive"],
+}
+
+# Microsoft OAuth Configuration
+MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID", "")
+MICROSOFT_CLIENT_SECRET = os.getenv("MICROSOFT_CLIENT_SECRET", "")
+MICROSOFT_TENANT_ID = os.getenv("MICROSOFT_TENANT_ID", "common")
+MICROSOFT_OAUTH_REDIRECT_URI = os.getenv(
+    "MICROSOFT_OAUTH_REDIRECT_URI",
+    "http://localhost:8000/api/v1/oauth/microsoft/callback"
+)
+MICROSOFT_AUTH_URL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
+MICROSOFT_TOKEN_URL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+
+# Microsoft Graph API scopes for different services
+MICROSOFT_SCOPES = {
+    "calendar": ["Calendars.ReadWrite", "offline_access"],
+    "email": ["Mail.ReadWrite", "Mail.Send", "offline_access"],
+    "sharepoint": ["Sites.ReadWrite.All", "Files.ReadWrite.All", "offline_access"],
+    "onedrive": ["Files.ReadWrite.All", "offline_access"],
 }
 
 
@@ -281,3 +301,212 @@ async def get_authorize_url(
     )
 
     return {"authorization_url": auth_url, "service": service}
+
+
+# =============================================================================
+# Microsoft OAuth Endpoints
+# =============================================================================
+
+
+@router.get("/microsoft/authorize-url")
+async def get_microsoft_authorize_url(
+    current_user: CurrentUser,
+    service: str = Query(..., description="Service to authorize: calendar, email, sharepoint, onedrive"),
+    redirect_after: Optional[str] = Query(None, description="URL to redirect after OAuth"),
+):
+    """
+    Get the Microsoft authorization URL without redirecting.
+
+    Requires authentication to track which user is authorizing.
+    Useful for SPAs that want to handle the redirect themselves.
+    """
+    if service not in MICROSOFT_SCOPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid service. Choose from: {list(MICROSOFT_SCOPES.keys())}"
+        )
+
+    if not MICROSOFT_CLIENT_ID:
+        raise HTTPException(
+            status_code=500,
+            detail="Microsoft OAuth not configured. Set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET."
+        )
+
+    scopes = MICROSOFT_SCOPES[service]
+    state = _encode_oauth_state(str(current_user.id), f"microsoft-{service}", redirect_after)
+
+    params = {
+        "client_id": MICROSOFT_CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": MICROSOFT_OAUTH_REDIRECT_URI,
+        "response_mode": "query",
+        "scope": " ".join(scopes),
+        "state": state,
+        "prompt": "consent",  # Force consent to get refresh token
+    }
+
+    auth_url = f"{MICROSOFT_AUTH_URL.format(tenant=MICROSOFT_TENANT_ID)}?{urlencode(params)}"
+    return {"authorization_url": auth_url, "service": f"outlook-{service}"}
+
+
+@router.get("/microsoft/authorize")
+async def microsoft_authorize(
+    current_user: CurrentUser,
+    service: str = Query(..., description="Service to authorize: calendar, email, sharepoint, onedrive"),
+    state: Optional[str] = Query(None, description="Optional state to pass through"),
+):
+    """
+    Start Microsoft OAuth flow.
+
+    Requires authentication to track which user is authorizing.
+    Redirects user to Microsoft consent screen.
+    After authorization, Microsoft redirects to /oauth/microsoft/callback
+    """
+    result = await get_microsoft_authorize_url(current_user, service, state)
+    return RedirectResponse(url=result["authorization_url"])
+
+
+@router.get("/microsoft/callback")
+async def microsoft_callback(
+    code: Optional[str] = Query(None, description="Authorization code from Microsoft"),
+    state: Optional[str] = Query(None, description="State passed through OAuth"),
+    error: Optional[str] = Query(None, description="Error from Microsoft"),
+    error_description: Optional[str] = Query(None, description="Error description"),
+):
+    """
+    Microsoft OAuth callback.
+
+    Exchanges authorization code for tokens, stores in vault, and redirects to frontend.
+    Handles both new connections and reconnections (credential updates).
+    Tokens are stored under user-specific paths for security isolation.
+    """
+    # Parse state to extract user_id and service
+    service = "calendar"  # default
+    user_id = None
+    is_reconnect = False
+    server_id = None
+
+    if state:
+        state_data = _decode_oauth_state(state)
+        user_id = state_data.get("user_id")
+        full_service = state_data.get("service", "microsoft-calendar")
+        # Extract service name (e.g., "microsoft-calendar" -> "calendar")
+        service = full_service.replace("microsoft-", "") if full_service.startswith("microsoft-") else full_service
+        extra = state_data.get("extra")
+
+        # Check if this is a reconnect flow
+        if extra and extra.startswith("reconnect:"):
+            is_reconnect = True
+            server_id = extra.split(":", 1)[1] if ":" in extra else None
+
+    callback_path = "/oauth/callback"
+
+    # Handle OAuth errors - redirect to frontend with error
+    if error:
+        error_msg = error_description or error
+        logger.warning("microsoft_oauth_error", error=error, description=error_description, service=service)
+        params = urlencode({"error": error_msg, "service": service, "provider": "microsoft"})
+        if is_reconnect and server_id:
+            params = urlencode({
+                "error": error_msg,
+                "service": service,
+                "server_id": server_id,
+                "reconnect": "true",
+                "provider": "microsoft",
+            })
+        return RedirectResponse(url=f"{FRONTEND_URL}{callback_path}?{params}")
+
+    # Ensure we have required data
+    if not code or not user_id:
+        logger.warning("microsoft_oauth_callback_invalid", has_code=bool(code), has_user_id=bool(user_id))
+        params = urlencode({
+            "error": "OAuth session expired or invalid. Please try again.",
+            "service": service,
+            "provider": "microsoft",
+        })
+        return RedirectResponse(url=f"{FRONTEND_URL}{callback_path}?{params}")
+
+    # Exchange authorization code for tokens
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                MICROSOFT_TOKEN_URL.format(tenant=MICROSOFT_TENANT_ID),
+                data={
+                    "client_id": MICROSOFT_CLIENT_ID,
+                    "client_secret": MICROSOFT_CLIENT_SECRET,
+                    "code": code,
+                    "redirect_uri": MICROSOFT_OAUTH_REDIRECT_URI,
+                    "grant_type": "authorization_code",
+                },
+            )
+
+            if response.status_code != 200:
+                error_data = response.json()
+                error_msg = error_data.get("error_description", error_data.get("error", "Token exchange failed"))
+                logger.error("microsoft_oauth_token_exchange_failed", error=error_msg, status=response.status_code)
+                params = urlencode({"error": error_msg, "service": service, "provider": "microsoft"})
+                return RedirectResponse(url=f"{FRONTEND_URL}{callback_path}?{params}")
+
+            tokens = response.json()
+    except Exception as e:
+        logger.error("microsoft_oauth_token_exchange_exception", error=str(e))
+        params = urlencode({"error": f"Token exchange failed: {str(e)}", "service": service, "provider": "microsoft"})
+        return RedirectResponse(url=f"{FRONTEND_URL}{callback_path}?{params}")
+
+    refresh_token = tokens.get("refresh_token")
+    if not refresh_token:
+        logger.warning("microsoft_oauth_no_refresh_token", service=service)
+        params = urlencode({
+            "error": "No refresh token received. Try revoking app access at https://account.live.com/consent/manage and re-authorizing.",
+            "service": service,
+            "provider": "microsoft",
+        })
+        return RedirectResponse(url=f"{FRONTEND_URL}{callback_path}?{params}")
+
+    # Store refresh token securely in vault under user-specific path
+    secrets_manager = get_secrets_manager()
+    token_ref = f"users/{user_id}/oauth/microsoft/{service}/{uuid.uuid4().hex}"
+
+    try:
+        await secrets_manager.store(
+            key=token_ref,
+            value={
+                "refresh_token": refresh_token,
+                "service": f"outlook-{service}",
+                "provider": "microsoft",
+                "user_id": user_id,
+            }
+        )
+        logger.info(
+            "microsoft_oauth_token_stored",
+            service=service,
+            token_ref=token_ref,
+            user_id=user_id,
+            is_reconnect=is_reconnect,
+        )
+    except Exception as e:
+        logger.error("microsoft_oauth_token_storage_failed", error=str(e))
+        params = urlencode({
+            "error": "Failed to store OAuth credentials securely",
+            "service": service,
+            "provider": "microsoft",
+        })
+        return RedirectResponse(url=f"{FRONTEND_URL}{callback_path}?{params}")
+
+    # Redirect to frontend with token reference
+    if is_reconnect and server_id:
+        params = urlencode({
+            "token_ref": token_ref,
+            "service": service,
+            "server_id": server_id,
+            "reconnect": "true",
+            "provider": "microsoft",
+        })
+    else:
+        params = urlencode({
+            "token_ref": token_ref,
+            "service": service,
+            "provider": "microsoft",
+        })
+
+    return RedirectResponse(url=f"{FRONTEND_URL}{callback_path}?{params}")

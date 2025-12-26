@@ -195,9 +195,17 @@ services:
       CORS_ORIGINS: '["http://localhost:3000", "http://localhost:8000"]'
       MCP_GOOGLE_CALENDAR_URL: http://mcp-google-calendar:8000/mcp
       MCP_GOOGLE_GMAIL_URL: http://mcp-google-gmail:8000/mcp
+      MCP_OUTLOOK_CALENDAR_URL: http://mcp-outlook-calendar:8000/mcp
+      MCP_OUTLOOK_EMAIL_URL: http://mcp-outlook-email:8000/mcp
+      # Google OAuth
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       OAUTH_REDIRECT_URI: http://localhost:8000/api/v1/oauth/google/callback
+      # Microsoft OAuth
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
+      MICROSOFT_OAUTH_REDIRECT_URI: http://localhost:8000/api/v1/oauth/microsoft/callback
       FRONTEND_URL: http://localhost:3000
       # Monitoring
       MONITORING_ENABLED: "true"
@@ -297,6 +305,46 @@ services:
     environment:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # MCP Server - Outlook Calendar
+  # ============================================
+  mcp-outlook-calendar:
+    build:
+      context: ./mcp_servers
+      dockerfile: outlook-calendar/Dockerfile
+    container_name: magone-mcp-outlook-calendar
+    restart: unless-stopped
+    environment:
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # MCP Server - Outlook Email
+  # ============================================
+  mcp-outlook-email:
+    build:
+      context: ./mcp_servers
+      dockerfile: outlook-email/Dockerfile
+    container_name: magone-mcp-outlook-email
+    restart: unless-stopped
+    environment:
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

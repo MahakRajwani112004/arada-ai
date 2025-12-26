@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X, Bot, Check, Sparkles, Loader2 } from "lucide-react";
+import { X, Bot, Check, Sparkles, Loader2, GitBranch, Split, Plus, Trash2, ChevronRight, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { AgentCreationSheet } from "@/components/agents/agent-creation-sheet";
-import type { CanvasNode, AgentNodeData, TriggerNodeData } from "@/lib/workflow-canvas/types";
+import type { CanvasNode, AgentNodeData, TriggerNodeData, ConditionalNodeData, ParallelNodeData } from "@/lib/workflow-canvas/types";
 import type { Agent } from "@/types/agent";
 import type { SuggestedAgent } from "@/types/workflow";
 
@@ -50,6 +50,26 @@ export function NodeConfigPanel({
   if (node.type === "end") {
     return (
       <EndConfigPanel onClose={onClose} />
+    );
+  }
+
+  if (node.type === "conditional") {
+    return (
+      <ConditionalConfigPanel
+        data={node.data as ConditionalNodeData}
+        agents={agents}
+        onClose={onClose}
+      />
+    );
+  }
+
+  if (node.type === "parallel") {
+    return (
+      <ParallelConfigPanel
+        data={node.data as ParallelNodeData}
+        agents={agents}
+        onClose={onClose}
+      />
     );
   }
 
@@ -368,6 +388,290 @@ function EndConfigPanel({ onClose }: { onClose: () => void }) {
           This marks the end of your workflow. The final output from the previous step
           will be returned as the workflow result.
         </p>
+      </div>
+    </div>
+  );
+}
+
+function ConditionalConfigPanel({
+  data,
+  agents,
+  onClose,
+}: {
+  data: ConditionalNodeData;
+  agents: Agent[];
+  onClose: () => void;
+}) {
+  const [newCondition, setNewCondition] = useState("");
+  const routerAgents = agents.filter((a) => a.agent_type === "RouterAgent");
+
+  return (
+    <div className="w-[380px] min-w-[380px] border-l border-border bg-card flex flex-col h-full overflow-hidden">
+      <div className="flex items-center justify-between p-4 border-b border-border shrink-0">
+        <div className="flex items-center gap-2">
+          <GitBranch className="h-5 w-5 text-blue-500" />
+          <h2 className="font-semibold">Conditional Step</h2>
+        </div>
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClose}>
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        {/* Step Name */}
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Step Name</label>
+          <Input value={data.name} readOnly className="bg-muted" />
+        </div>
+
+        {/* Classifier Agent Selection */}
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Classifier Agent</label>
+          <p className="text-xs text-muted-foreground">
+            Select a RouterAgent that will classify user input and determine which branch to take.
+          </p>
+          <Select defaultValue={data.classifierAgentId}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select a RouterAgent..." />
+            </SelectTrigger>
+            <SelectContent>
+              {routerAgents.length === 0 ? (
+                <div className="p-2 text-sm text-muted-foreground text-center">
+                  No RouterAgents available. Create one first.
+                </div>
+              ) : (
+                routerAgents.map((agent) => (
+                  <SelectItem key={agent.id} value={agent.id}>
+                    <div className="flex items-center gap-2">
+                      <GitBranch className="h-4 w-4 text-blue-500" />
+                      <span>{agent.name}</span>
+                    </div>
+                  </SelectItem>
+                ))
+              )}
+            </SelectContent>
+          </Select>
+          {data.classifierAgentName && (
+            <div className="text-xs text-green-600 flex items-center gap-1">
+              <Check className="h-3 w-3" />
+              Using: {data.classifierAgentName}
+            </div>
+          )}
+        </div>
+
+        {/* Branches Configuration */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium">Branches</label>
+            <Badge variant="secondary" className="text-xs">
+              {data.branches.length} configured
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Map classification results to target steps.
+          </p>
+
+          {/* Existing branches */}
+          <div className="space-y-2">
+            {data.branches.map((branch, index) => (
+              <div key={index} className="flex items-center gap-2 p-2 rounded border bg-muted/50">
+                <ChevronRight className="h-4 w-4 text-blue-500 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium">{branch.condition}</div>
+                  <div className="text-xs text-muted-foreground truncate">
+                    → {branch.targetStepName || branch.targetStepId}
+                  </div>
+                </div>
+                <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
+            ))}
+          </div>
+
+          {/* Default branch */}
+          {data.defaultStepId && (
+            <div className="flex items-center gap-2 p-2 rounded border border-dashed bg-muted/30">
+              <ChevronRight className="h-4 w-4 text-gray-400 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-muted-foreground">default</div>
+                <div className="text-xs text-muted-foreground truncate">
+                  → {data.defaultStepName || data.defaultStepId}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Add new branch */}
+          <div className="flex gap-2">
+            <Input
+              placeholder="Condition name..."
+              value={newCondition}
+              onChange={(e) => setNewCondition(e.target.value)}
+              className="flex-1"
+            />
+            <Button size="sm" variant="outline" disabled={!newCondition}>
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Help text */}
+        <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3">
+          <div className="text-xs text-blue-600 font-medium mb-1">How it works</div>
+          <p className="text-xs text-muted-foreground">
+            1. User input goes to the classifier agent<br />
+            2. Classifier returns a category (e.g., &quot;calendar&quot;)<br />
+            3. Workflow routes to the matching branch step
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const AGGREGATION_OPTIONS = [
+  { value: "all", label: "Collect All", description: "Return all results as an array" },
+  { value: "first", label: "First Completed", description: "Return the first result that completes" },
+  { value: "merge", label: "Merge Results", description: "Combine all results into one object" },
+  { value: "best", label: "LLM Selects Best", description: "Use AI to pick the best result" },
+];
+
+function ParallelConfigPanel({
+  data,
+  agents,
+  onClose,
+}: {
+  data: ParallelNodeData;
+  agents: Agent[];
+  onClose: () => void;
+}) {
+  return (
+    <div className="w-[380px] min-w-[380px] border-l border-border bg-card flex flex-col h-full overflow-hidden">
+      <div className="flex items-center justify-between p-4 border-b border-border shrink-0">
+        <div className="flex items-center gap-2">
+          <Split className="h-5 w-5 text-purple-500" />
+          <h2 className="font-semibold">Parallel Step</h2>
+        </div>
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClose}>
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        {/* Step Name */}
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Step Name</label>
+          <Input value={data.name} readOnly className="bg-muted" />
+        </div>
+
+        {/* Branches Configuration */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium">Parallel Branches</label>
+            <Badge variant="secondary" className="text-xs">
+              {data.branches.length} agent{data.branches.length !== 1 ? "s" : ""}
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            These agents will run concurrently. Results are combined based on the aggregation strategy.
+          </p>
+
+          {/* Branch list */}
+          <div className="space-y-2">
+            {data.branches.map((branch, index) => (
+              <div key={branch.id} className="p-3 rounded border bg-muted/50 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Bot className={`h-4 w-4 ${branch.agentId ? "text-purple-500" : "text-gray-400"}`} />
+                    <span className="text-sm font-medium">
+                      {branch.agentName || `Branch ${index + 1}`}
+                    </span>
+                  </div>
+                  <Button variant="ghost" size="icon" className="h-6 w-6">
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+
+                {/* Agent selector */}
+                {!branch.agentId && (
+                  <Select>
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue placeholder="Select agent..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {agents.map((agent) => (
+                        <SelectItem key={agent.id} value={agent.id}>
+                          <div className="flex items-center gap-2">
+                            <Bot className="h-3 w-3" />
+                            <span>{agent.name}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+
+                {/* Input template */}
+                <div className="text-xs text-muted-foreground font-mono truncate">
+                  Input: {branch.input || "${user_input}"}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Add branch button */}
+          <Button variant="outline" size="sm" className="w-full">
+            <Plus className="h-4 w-4 mr-2" />
+            Add Branch
+          </Button>
+        </div>
+
+        {/* Aggregation Strategy */}
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Layers className="h-4 w-4 text-muted-foreground" />
+            <label className="text-sm font-medium">Aggregation Strategy</label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            How should results from all branches be combined?
+          </p>
+
+          <div className="space-y-2">
+            {AGGREGATION_OPTIONS.map((option) => (
+              <label
+                key={option.value}
+                className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition-colors ${
+                  data.aggregation === option.value
+                    ? "border-purple-500/50 bg-purple-500/5"
+                    : "hover:bg-muted/50"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="aggregation"
+                  value={option.value}
+                  checked={data.aggregation === option.value}
+                  onChange={() => {}}
+                  className="mt-0.5"
+                />
+                <div>
+                  <div className="text-sm font-medium">{option.label}</div>
+                  <div className="text-xs text-muted-foreground">{option.description}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Help text */}
+        <div className="rounded-lg border border-purple-500/20 bg-purple-500/5 p-3">
+          <div className="text-xs text-purple-600 font-medium mb-1">How it works</div>
+          <p className="text-xs text-muted-foreground">
+            All branches execute simultaneously. The workflow waits for all to complete
+            (or just the first, depending on strategy) before proceeding.
+          </p>
+        </div>
       </div>
     </div>
   );

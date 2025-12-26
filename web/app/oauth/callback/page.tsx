@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { useCreateServer, useUpdateServerCredentials } from "@/lib/hooks/use-mcp";
 import { useAuth } from "@/lib/auth";
 
-const serviceConfig: Record<string, { name: string; icon: React.ReactNode; template: string }> = {
+// Google services
+const googleServiceConfig: Record<string, { name: string; icon: React.ReactNode; template: string }> = {
   calendar: {
     name: "Google Calendar",
     icon: <Calendar className="h-8 w-8" />,
@@ -22,6 +23,20 @@ const serviceConfig: Record<string, { name: string; icon: React.ReactNode; templ
     name: "Google Drive",
     icon: <HardDrive className="h-8 w-8" />,
     template: "google-drive",
+  },
+};
+
+// Microsoft services
+const microsoftServiceConfig: Record<string, { name: string; icon: React.ReactNode; template: string }> = {
+  calendar: {
+    name: "Outlook Calendar",
+    icon: <Calendar className="h-8 w-8" />,
+    template: "outlook-calendar",
+  },
+  email: {
+    name: "Outlook Email",
+    icon: <Mail className="h-8 w-8" />,
+    template: "outlook-email",
   },
 };
 
@@ -52,6 +67,7 @@ function OAuthCallbackContent() {
   const urlError = searchParams.get("error");
   const urlServerId = searchParams.get("server_id");
   const urlReconnect = searchParams.get("reconnect");
+  const urlProvider = searchParams.get("provider");
 
   // Restore from sessionStorage if URL params are missing (after login redirect)
   const savedParams = typeof window !== "undefined"
@@ -64,8 +80,13 @@ function OAuthCallbackContent() {
   const error = urlError || parsedSavedParams.error;
   const serverId = urlServerId || parsedSavedParams.server_id;
   const reconnect = (urlReconnect || parsedSavedParams.reconnect) === "true";
+  const provider = urlProvider || parsedSavedParams.provider || "google";
 
-  const config = serviceConfig[service] || serviceConfig.calendar;
+  // Get config based on provider
+  const isMicrosoft = provider === "microsoft";
+  const serviceConfigMap = isMicrosoft ? microsoftServiceConfig : googleServiceConfig;
+  const defaultConfig = isMicrosoft ? microsoftServiceConfig.calendar : googleServiceConfig.calendar;
+  const config = serviceConfigMap[service] || defaultConfig;
 
   useEffect(() => {
     if (hasRun.current) return;
@@ -162,6 +183,7 @@ function OAuthCallbackContent() {
       error: error,
       server_id: serverId,
       reconnect: reconnect ? "true" : undefined,
+      provider: provider,
     };
     sessionStorage.setItem("oauth_callback_params", JSON.stringify(paramsToSave));
 

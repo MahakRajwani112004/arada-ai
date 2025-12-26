@@ -72,6 +72,10 @@ export function applyAutoLayout(
   });
 }
 
+// Height for conditional and parallel nodes (slightly taller to show branches)
+const CONDITIONAL_NODE_HEIGHT = 140;
+const PARALLEL_NODE_HEIGHT = 160;
+
 /**
  * Get node height based on type
  */
@@ -81,10 +85,19 @@ function getNodeHeight(node: CanvasNode): number {
       return TRIGGER_NODE_HEIGHT;
     case "end":
       return END_NODE_HEIGHT;
+    case "conditional":
+      return CONDITIONAL_NODE_HEIGHT;
+    case "parallel":
+      return PARALLEL_NODE_HEIGHT;
     case "agent":
     default:
       return NODE_HEIGHT;
   }
+}
+
+interface EdgeOptions {
+  animated?: boolean;
+  label?: string;
 }
 
 /**
@@ -93,16 +106,29 @@ function getNodeHeight(node: CanvasNode): number {
 export function createEdge(
   sourceId: string,
   targetId: string,
-  animated = false
+  options: EdgeOptions | boolean = false
 ): CanvasEdge {
+  // Handle backwards compatibility with boolean animated param
+  const opts: EdgeOptions = typeof options === "boolean" ? { animated: options } : options;
+
   return {
-    id: `${sourceId}-${targetId}`,
+    id: `${sourceId}-${targetId}${opts.label ? `-${opts.label}` : ""}`,
     source: sourceId,
     target: targetId,
-    type: "smoothstep",
-    animated,
+    type: "labeled", // Use custom labeled edge type with bezier curves
+    animated: opts.animated ?? false,
+    data: {
+      label: opts.label || "",
+    },
     style: {
       strokeWidth: 2,
+      stroke: "hsl(var(--muted-foreground))",
+    },
+    markerEnd: {
+      type: "arrowclosed" as const,
+      width: 16,
+      height: 16,
+      color: "hsl(var(--muted-foreground))",
     },
   };
 }

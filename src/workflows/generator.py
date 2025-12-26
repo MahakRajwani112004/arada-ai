@@ -35,110 +35,332 @@ from src.storage.workflow_repository import WorkflowMetadata, WorkflowRepository
 logger = get_logger(__name__)
 
 # Skeleton generation prompt (Phase 1 of two-phase creation)
-GENERATE_SKELETON_PROMPT = """You are an AI workflow architect. Given a user's description,
-design a workflow SKELETON - just the structure and step roles, without creating agents.
+GENERATE_SKELETON_PROMPT = """You are an expert AI workflow architect specializing in designing intelligent automation workflows.
 
-## YOUR TASK
+## EXISTING RESOURCES (REUSE WHEN POSSIBLE)
 
-Design the workflow structure:
-1. Identify the steps needed to accomplish the user's goal
-2. Give each step a clear name and role description
-3. Suggest the best trigger type (manual or webhook)
-4. Identify what tools/MCPs each step might need
+### Available Agents:
+{existing_agents_json}
 
-## OUTPUT FORMAT
+### Configured MCP Servers (Integrations):
+{existing_mcps_json}
+
+**Important**: If an existing agent can fulfill a step's requirement, reference it by ID instead of suggesting a new one. This saves time and ensures consistency.
+
+## YOUR MISSION
+
+Analyze the user's request and design an optimal workflow skeleton that:
+1. Accomplishes the user's goal efficiently
+2. Uses the right step types for each task (agent, conditional, parallel)
+3. Handles edge cases and errors gracefully
+4. Scales well for production use
+
+## STEP TYPES AVAILABLE
+
+### 1. AGENT STEP (type: "agent")
+Execute a single AI agent to perform a specific task.
+Use for: Processing, analysis, generation, API calls, data transformation.
+
+### 2. CONDITIONAL STEP (type: "conditional")
+Route the workflow based on classification or decision-making.
+Use for: Intent classification, routing to different handlers, branching logic.
+Structure: A classifier agent analyzes input and routes to different branches.
+
+### 3. PARALLEL STEP (type: "parallel")
+Execute multiple agents simultaneously.
+Use for: Concurrent processing, gathering data from multiple sources, fan-out operations.
+Results are aggregated (all, first, merge, or best).
+
+## OUTPUT SCHEMA
 
 Return a JSON object with these exact fields:
 
-1. "workflow_name": A descriptive name for the workflow
-2. "workflow_description": What the workflow accomplishes
-3. "trigger_type": "manual" or "webhook" based on the use case
-4. "trigger_reason": Why this trigger type was chosen
+{{
+  "workflow_name": "Descriptive Name",
+  "workflow_description": "What this workflow accomplishes",
+  "trigger_type": "manual" | "webhook",
+  "trigger_reason": "Why this trigger type was chosen",
 
-5. "steps": Array of workflow steps, each with:
-   - "id": Lowercase identifier with hyphens (e.g., "classify-email")
-   - "name": Human-readable name (e.g., "Classify Email")
-   - "role": What this step should do (1-2 sentences)
-   - "order": Step sequence number (0, 1, 2, ...)
-   - "suggested_agent": {{
-       "name": Suggested agent name,
-       "goal": What the agent should accomplish,
-       "required_mcps": Array of MCP templates needed (e.g., ["gmail", "slack"]),
-       "suggested_tools": Array of tool names (e.g., ["gmail_send_message"])
-     }}
+  "steps": [
+    {{
+      "id": "step-id-with-hyphens",
+      "name": "Human Readable Name",
+      "type": "agent" | "conditional" | "parallel",
+      "role": "What this step accomplishes (1-2 sentences)",
+      "order": 0,
 
-6. "mcp_dependencies": Array of {{
-     "template": MCP template name,
-     "name": Display name,
-     "reason": Why needed
-   }}
+      // For AGENT steps - use ONE of these:
+      "agent_id": "existing-agent-id",  // Use if an existing agent fits
+      // OR
+      "suggested_agent": {{              // Use if no existing agent fits
+        "name": "Agent Name",
+        "description": "What the agent does",
+        "goal": "Specific objective for this step",
+        "required_mcps": ["template-name"],
+        "suggested_tools": ["tool_name"]
+      }},
 
-7. "explanation": Brief explanation of the workflow design
-8. "warnings": Array of potential issues (can be empty)
+      // For CONDITIONAL steps:
+      "condition_source": "Expression to evaluate (e.g., ${{steps.classifier.output}})",
+      "branches": {{
+        "branch-value": "target-step-id"
+      }},
+      "default_branch": "fallback-step-id",
+      "classifier_agent": {{
+        "name": "Classifier Agent",
+        "goal": "Classify input into categories: category1, category2, etc.",
+        "classification_categories": ["category1", "category2", "default"]
+      }},
+
+      // For PARALLEL steps:
+      "parallel_branches": [
+        {{
+          "id": "branch-id",
+          "agent_name": "Branch Agent Name",
+          "goal": "What this parallel branch does"
+        }}
+      ],
+      "aggregation": "all" | "first" | "merge" | "best"
+    }}
+  ],
+
+  "existing_agents_used": ["agent-id-1", "agent-id-2"],  // IDs of reused agents
+  "existing_mcps_used": ["mcp-id-1"],                    // IDs of reused MCPs
+
+  "mcp_dependencies": [
+    {{"template": "service-name", "name": "Display Name", "reason": "Why needed"}}
+  ],
+
+  "explanation": "Brief explanation of the workflow architecture and design decisions",
+  "warnings": ["Any potential issues or limitations"]
+}}
+
+## DESIGN PRINCIPLES
+
+1. **Start Simple**: Use agent steps for straightforward tasks
+2. **Branch Wisely**: Use conditional steps when different inputs need different handling
+3. **Parallelize When Possible**: Use parallel steps for independent operations
+4. **Fail Gracefully**: Include fallback/default branches in conditionals
+5. **Be Specific**: Agent goals should be clear and measurable
 
 ## TRIGGER TYPE GUIDELINES
 
-- Use "manual" for:
-  - Chat-initiated workflows
-  - User-driven actions
-  - One-off tasks
+**Use "manual" for:**
+- Chat-initiated workflows (user types a message)
+- On-demand tasks (user clicks "run")
+- Interactive assistants
 
-- Use "webhook" for:
-  - External event triggers (email received, form submitted)
-  - Scheduled automation
-  - Integration callbacks
+**Use "webhook" for:**
+- External event triggers (email received, form submitted)
+- Scheduled automation
+- API callbacks from other services
 
-## EXAMPLE OUTPUT
+## EXAMPLE 1: Simple Linear Workflow
+
+User request: "Summarize articles and post to Slack"
 
 {{
-  "workflow_name": "Email Urgency Handler",
-  "workflow_description": "Monitors emails, classifies urgency, and notifies for urgent ones",
-  "trigger_type": "webhook",
-  "trigger_reason": "Triggered by incoming email notifications",
+  "workflow_name": "Article Summary Publisher",
+  "workflow_description": "Fetches articles, generates summaries, and posts to Slack",
+  "trigger_type": "manual",
+  "trigger_reason": "User-initiated when they want to summarize specific content",
   "steps": [
     {{
-      "id": "fetch-email",
-      "name": "Fetch Email",
-      "role": "Retrieve the full email content from the incoming webhook data",
+      "id": "fetch-article",
+      "name": "Fetch Article",
+      "type": "agent",
+      "role": "Retrieve article content from the provided URL",
       "order": 0,
       "suggested_agent": {{
-        "name": "Email Fetcher",
-        "goal": "Extract and parse email content from webhook payload",
-        "required_mcps": ["gmail"],
-        "suggested_tools": ["gmail_get_message"]
+        "name": "Article Fetcher",
+        "description": "Fetches and parses web articles",
+        "goal": "Extract the main content from the article URL",
+        "required_mcps": [],
+        "suggested_tools": ["web_fetch"]
       }}
     }},
     {{
-      "id": "classify-urgency",
-      "name": "Classify Urgency",
-      "role": "Analyze the email content and determine its urgency level",
+      "id": "generate-summary",
+      "name": "Generate Summary",
+      "type": "agent",
+      "role": "Create a concise summary of the article content",
       "order": 1,
       "suggested_agent": {{
-        "name": "Urgency Classifier",
-        "goal": "Classify email urgency as high, medium, or low",
+        "name": "Content Summarizer",
+        "description": "AI-powered text summarization",
+        "goal": "Generate a 2-3 sentence summary capturing key points",
         "required_mcps": [],
         "suggested_tools": []
       }}
     }},
     {{
-      "id": "send-notification",
-      "name": "Send Notification",
-      "role": "Notify the user about urgent emails via Slack",
+      "id": "post-to-slack",
+      "name": "Post to Slack",
+      "type": "agent",
+      "role": "Send the summary to the designated Slack channel",
       "order": 2,
       "suggested_agent": {{
-        "name": "Slack Notifier",
-        "goal": "Send formatted notifications to Slack for urgent emails",
+        "name": "Slack Publisher",
+        "description": "Posts messages to Slack channels",
+        "goal": "Format and send the summary to #articles channel",
         "required_mcps": ["slack"],
         "suggested_tools": ["slack_send_message"]
       }}
     }}
   ],
   "mcp_dependencies": [
-    {{"template": "gmail", "name": "Gmail", "reason": "To fetch email content"}},
-    {{"template": "slack", "name": "Slack", "reason": "To send notifications"}}
+    {{"template": "slack", "name": "Slack", "reason": "To post summaries to channels"}}
   ],
-  "explanation": "This workflow uses a webhook trigger to receive email notifications, then processes each email through classification and notification steps.",
+  "explanation": "Linear workflow: fetch → summarize → post. Each step depends on the previous.",
   "warnings": []
+}}
+
+## EXAMPLE 2: Conditional Routing Workflow
+
+User request: "Handle customer inquiries - route to different handlers based on type"
+
+{{
+  "workflow_name": "Customer Inquiry Router",
+  "workflow_description": "Classifies customer inquiries and routes to specialized handlers",
+  "trigger_type": "manual",
+  "trigger_reason": "Triggered when customer sends a message",
+  "steps": [
+    {{
+      "id": "classify-inquiry",
+      "name": "Classify Inquiry",
+      "type": "conditional",
+      "role": "Analyze the inquiry and route to the appropriate handler",
+      "order": 0,
+      "condition_source": "${{steps.classify-inquiry.output}}",
+      "branches": {{
+        "billing": "handle-billing",
+        "technical": "handle-technical",
+        "sales": "handle-sales"
+      }},
+      "default_branch": "handle-general",
+      "classifier_agent": {{
+        "name": "Intent Classifier",
+        "goal": "Classify customer inquiry into: billing, technical, sales, or general",
+        "classification_categories": ["billing", "technical", "sales", "general"]
+      }}
+    }},
+    {{
+      "id": "handle-billing",
+      "name": "Handle Billing",
+      "type": "agent",
+      "role": "Address billing-related questions and issues",
+      "order": 1,
+      "suggested_agent": {{
+        "name": "Billing Assistant",
+        "description": "Handles billing inquiries with access to payment systems",
+        "goal": "Resolve billing questions: invoices, payments, refunds",
+        "required_mcps": ["stripe"],
+        "suggested_tools": ["stripe_get_invoice", "stripe_list_charges"]
+      }}
+    }},
+    {{
+      "id": "handle-technical",
+      "name": "Handle Technical",
+      "type": "agent",
+      "role": "Provide technical support and troubleshooting",
+      "order": 1,
+      "suggested_agent": {{
+        "name": "Tech Support Agent",
+        "description": "Technical troubleshooting specialist",
+        "goal": "Diagnose and resolve technical issues",
+        "required_mcps": [],
+        "suggested_tools": []
+      }}
+    }},
+    {{
+      "id": "handle-sales",
+      "name": "Handle Sales",
+      "type": "agent",
+      "role": "Answer sales questions and provide product information",
+      "order": 1,
+      "suggested_agent": {{
+        "name": "Sales Assistant",
+        "description": "Handles sales inquiries and product questions",
+        "goal": "Provide product info, pricing, and guide purchase decisions",
+        "required_mcps": [],
+        "suggested_tools": []
+      }}
+    }},
+    {{
+      "id": "handle-general",
+      "name": "Handle General",
+      "type": "agent",
+      "role": "Handle general inquiries that don't fit other categories",
+      "order": 1,
+      "suggested_agent": {{
+        "name": "General Assistant",
+        "description": "Handles miscellaneous customer questions",
+        "goal": "Provide helpful responses to general questions",
+        "required_mcps": [],
+        "suggested_tools": []
+      }}
+    }}
+  ],
+  "mcp_dependencies": [
+    {{"template": "stripe", "name": "Stripe", "reason": "For billing inquiries"}}
+  ],
+  "explanation": "Conditional workflow with intent classification. Routes to specialized handlers based on inquiry type with general fallback.",
+  "warnings": ["Ensure all handlers have appropriate fallback responses"]
+}}
+
+## EXAMPLE 3: Parallel Processing Workflow
+
+User request: "Research a topic by checking multiple sources simultaneously"
+
+{{
+  "workflow_name": "Multi-Source Researcher",
+  "workflow_description": "Researches topics by querying multiple sources in parallel",
+  "trigger_type": "manual",
+  "trigger_reason": "User initiates research on a specific topic",
+  "steps": [
+    {{
+      "id": "parallel-research",
+      "name": "Research Sources",
+      "type": "parallel",
+      "role": "Query multiple sources simultaneously for comprehensive research",
+      "order": 0,
+      "parallel_branches": [
+        {{
+          "id": "web-search",
+          "agent_name": "Web Researcher",
+          "goal": "Search the web for recent articles and information"
+        }},
+        {{
+          "id": "knowledge-base",
+          "agent_name": "KB Searcher",
+          "goal": "Search internal knowledge base for relevant documentation"
+        }},
+        {{
+          "id": "news-search",
+          "agent_name": "News Aggregator",
+          "goal": "Find recent news articles on the topic"
+        }}
+      ],
+      "aggregation": "merge"
+    }},
+    {{
+      "id": "synthesize-findings",
+      "name": "Synthesize Findings",
+      "type": "agent",
+      "role": "Combine and synthesize research from all sources",
+      "order": 1,
+      "suggested_agent": {{
+        "name": "Research Synthesizer",
+        "description": "Combines information from multiple sources",
+        "goal": "Create a comprehensive summary from all research sources",
+        "required_mcps": [],
+        "suggested_tools": []
+      }}
+    }}
+  ],
+  "mcp_dependencies": [],
+  "explanation": "Parallel step gathers information from 3 sources simultaneously, then synthesizes into coherent output.",
+  "warnings": ["Performance depends on slowest parallel branch"]
 }}
 
 ## USER REQUEST
@@ -147,100 +369,344 @@ Return a JSON object with these exact fields:
 
 {context_section}
 
-Respond ONLY with valid JSON. No additional text."""
+## INSTRUCTIONS
+
+1. Analyze the user's request carefully
+2. Determine the optimal workflow architecture (linear, conditional, parallel, or hybrid)
+3. Design steps that are specific, measurable, and achievable
+4. Include all necessary MCP dependencies
+5. Add warnings for any potential issues
+
+Respond ONLY with valid JSON. No additional text before or after."""
 
 # AI generation prompt template
-GENERATE_WORKFLOW_PROMPT = """You are an AI workflow architect. Given a user's description,
-design a complete workflow system.
+GENERATE_WORKFLOW_PROMPT = """You are an expert AI workflow architect. Design a complete, production-ready workflow system.
 
 ## EXISTING RESOURCES (PREFER REUSING THESE)
 
-### Existing Agents:
+### Available Agents:
 {existing_agents_json}
 
-### Existing MCP Servers (already configured):
+### Configured MCP Servers:
 {existing_mcps_json}
 
-## YOUR TASK
+## DESIGN PRINCIPLES
 
-1. PREFER using existing agents/MCPs when they fit the requirement
-2. Only suggest NEW agents if existing ones don't cover the need
-3. Only suggest NEW MCPs if they're not already configured
+1. **Reuse First**: Always check if existing agents/MCPs can fulfill the requirement
+2. **Right Tool for the Job**: Use the appropriate step type for each task
+3. **Fail Gracefully**: Include error handling and default branches
+4. **Be Specific**: Agent goals should be clear and measurable
+5. **Keep It Simple**: Don't over-engineer; prefer fewer, well-defined steps
 
-## OUTPUT FORMAT
+## STEP TYPES REFERENCE
 
-You must output a valid JSON object with these exact fields:
+### 1. AGENT Step (type: "agent")
+Execute a single AI agent.
 
-1. "workflow": A workflow definition with:
-   - id: unique workflow identifier (lowercase, alphanumeric with hyphens)
-   - name: descriptive name
-   - description: what the workflow does
-   - steps: array of workflow steps (use existing agent IDs when possible!)
-   - entry_step: first step ID
+```json
+{{
+  "id": "step-id",
+  "type": "agent",
+  "name": "Human Readable Name",
+  "agent_id": "existing-agent-id",
+  "input": "${{user_input}}",
+  "timeout": 120,
+  "retries": 1,
+  "on_error": "fail"
+}}
+```
 
-2. "agents_to_create": Array of NEW agent configurations (ONLY if needed):
-   - Each agent should have: id, name, description, agent_type, role, goal, instructions
-   - Set to empty array [] if existing agents are sufficient
-   - agent_type must be one of: ChatAgent, RAGAgent, ToolAgent, FullAgent, RouterAgent, OrchestratorAgent
+If no existing agent fits, use `suggested_agent` instead of `agent_id`:
+```json
+{{
+  "id": "step-id",
+  "type": "agent",
+  "name": "Process Data",
+  "suggested_agent": {{
+    "name": "Data Processor",
+    "description": "Processes and transforms data",
+    "goal": "Extract key information from input",
+    "model": "gpt-4o",
+    "required_mcps": [],
+    "suggested_tools": []
+  }},
+  "input": "${{user_input}}",
+  "timeout": 120,
+  "retries": 0,
+  "on_error": "fail"
+}}
+```
 
-3. "existing_agents_used": List of existing agent IDs used in the workflow
+### 2. CONDITIONAL Step (type: "conditional")
+Route workflow based on classification or conditions.
 
-4. "mcps_suggested": Array of NEW MCP server suggestions (ONLY if not already configured):
-   - template: MCP template name (e.g., "gmail", "slack", "notion")
-   - reason: why this MCP is needed
-   - required_for_steps: list of step IDs that need this MCP
-   - Set to empty array [] if existing MCPs are sufficient
+```json
+{{
+  "id": "route-request",
+  "type": "conditional",
+  "name": "Route by Intent",
+  "condition_source": "${{steps.classify.output}}",
+  "conditional_branches": {{
+    "billing": "handle-billing",
+    "technical": "handle-technical",
+    "sales": "handle-sales"
+  }},
+  "default": "handle-general"
+}}
+```
 
-5. "existing_mcps_used": List of existing MCP IDs used in the workflow
+### 3. PARALLEL Step (type: "parallel")
+Execute multiple agents concurrently.
 
-6. "explanation": Brief explanation of the workflow design, mentioning which
-   existing resources are being reused
+```json
+{{
+  "id": "gather-data",
+  "type": "parallel",
+  "name": "Gather from Multiple Sources",
+  "branches": [
+    {{
+      "id": "web-search",
+      "agent_id": "web-searcher",
+      "input": "${{user_input}}",
+      "timeout": 60
+    }},
+    {{
+      "id": "db-search",
+      "agent_id": "database-querier",
+      "input": "${{user_input}}",
+      "timeout": 60
+    }}
+  ],
+  "aggregation": "merge"
+}}
+```
 
-7. "warnings": Array of potential issues or suggestions (can be empty)
-
-8. "estimated_complexity": One of "simple", "moderate", "complex"
-
-## STEP TYPES
-
-Step types available:
-- "agent": Execute an agent (existing or new)
-  Required fields: id, type, agent_id, input
-- "parallel": Execute multiple branches concurrently
-  Required fields: id, type, branches (array of step arrays), aggregation (all/first/merge)
-- "conditional": Route based on conditions
-  Required fields: id, type, condition_source, conditional_branches (map of condition to step_id), default
-- "loop": Iterate until condition met
-  Required fields: id, type, steps (array), max_iterations, exit_condition
+Aggregation options: "all" (return array), "first" (fastest), "merge" (combine), "best" (LLM picks)
 
 ## TEMPLATE VARIABLES
 
-Use these placeholders in step inputs:
-- ${{user_input}}: The original user input
-- ${{steps.STEP_ID.output}}: Output from a previous step
-- ${{context.KEY}}: Context variables passed at runtime
+- `${{user_input}}` - Original user input
+- `${{steps.STEP_ID.output}}` - Output from previous step
+- `${{context.KEY}}` - Runtime context variables
 
-## EXAMPLE OUTPUT
+## OUTPUT SCHEMA
 
+```json
 {{
   "workflow": {{
-    "id": "customer-support-flow",
-    "name": "Customer Support Workflow",
-    "description": "Handles customer inquiries with classification and routing",
+    "id": "workflow-id",
+    "name": "Workflow Name",
+    "description": "What it does",
+    "steps": [...],
+    "entry_step": "first-step-id"
+  }},
+  "agents_to_create": [
+    {{
+      "id": "agent-id",
+      "name": "Agent Name",
+      "description": "What it does",
+      "agent_type": "ChatAgent|RAGAgent|ToolAgent|FullAgent|RouterAgent",
+      "role": "Agent's role",
+      "goal": "What it should accomplish",
+      "instructions": ["Step 1", "Step 2"]
+    }}
+  ],
+  "existing_agents_used": ["agent-id-1", "agent-id-2"],
+  "mcps_suggested": [
+    {{
+      "template": "slack",
+      "reason": "To send notifications",
+      "required_for_steps": ["notify-user"]
+    }}
+  ],
+  "existing_mcps_used": ["mcp-id-1"],
+  "explanation": "Brief design explanation",
+  "warnings": ["Any potential issues"],
+  "estimated_complexity": "simple|moderate|complex"
+}}
+```
+
+## EXAMPLE 1: Simple Linear Workflow
+
+User: "Summarize articles and post to Slack"
+
+```json
+{{
+  "workflow": {{
+    "id": "article-summarizer",
+    "name": "Article Summary Publisher",
+    "description": "Fetches articles, summarizes them, and posts to Slack",
     "steps": [
       {{
-        "id": "classify",
+        "id": "fetch-content",
         "type": "agent",
-        "agent_id": "customer-classifier",
+        "name": "Fetch Article",
+        "suggested_agent": {{
+          "name": "Content Fetcher",
+          "description": "Retrieves web content",
+          "goal": "Extract article text from URL",
+          "model": "gpt-4o",
+          "required_mcps": [],
+          "suggested_tools": ["web_fetch"]
+        }},
         "input": "${{user_input}}",
-        "timeout": 120,
+        "timeout": 60,
         "retries": 1,
         "on_error": "fail"
       }},
       {{
-        "id": "respond",
+        "id": "summarize",
         "type": "agent",
-        "agent_id": "response-generator",
-        "input": "Classification: ${{steps.classify.output}}\nOriginal query: ${{user_input}}",
+        "name": "Generate Summary",
+        "suggested_agent": {{
+          "name": "Content Summarizer",
+          "description": "AI-powered summarization",
+          "goal": "Create concise 2-3 sentence summary",
+          "model": "gpt-4o",
+          "required_mcps": [],
+          "suggested_tools": []
+        }},
+        "input": "Summarize this article:\n\n${{steps.fetch-content.output}}",
+        "timeout": 120,
+        "retries": 0,
+        "on_error": "fail"
+      }},
+      {{
+        "id": "post-slack",
+        "type": "agent",
+        "name": "Post to Slack",
+        "suggested_agent": {{
+          "name": "Slack Publisher",
+          "description": "Posts messages to Slack",
+          "goal": "Send summary to #articles channel",
+          "model": "gpt-4o",
+          "required_mcps": ["slack"],
+          "suggested_tools": ["slack_send_message"]
+        }},
+        "input": "Post this summary to #articles:\n\n${{steps.summarize.output}}",
+        "timeout": 30,
+        "retries": 2,
+        "on_error": "fail"
+      }}
+    ],
+    "entry_step": "fetch-content"
+  }},
+  "agents_to_create": [],
+  "existing_agents_used": [],
+  "mcps_suggested": [
+    {{"template": "slack", "reason": "To post summaries", "required_for_steps": ["post-slack"]}}
+  ],
+  "existing_mcps_used": [],
+  "explanation": "Linear workflow: fetch → summarize → post. Each step builds on the previous output.",
+  "warnings": [],
+  "estimated_complexity": "simple"
+}}
+```
+
+## EXAMPLE 2: Conditional Routing Workflow
+
+User: "Handle customer inquiries - route to different handlers based on type"
+
+```json
+{{
+  "workflow": {{
+    "id": "customer-router",
+    "name": "Customer Inquiry Router",
+    "description": "Classifies and routes customer inquiries to specialized handlers",
+    "steps": [
+      {{
+        "id": "classify",
+        "type": "agent",
+        "name": "Classify Intent",
+        "suggested_agent": {{
+          "name": "Intent Classifier",
+          "description": "Classifies customer inquiry type",
+          "goal": "Output exactly one of: billing, technical, sales, general",
+          "model": "gpt-4o",
+          "required_mcps": [],
+          "suggested_tools": []
+        }},
+        "input": "Classify this customer inquiry into exactly one category (billing, technical, sales, general):\n\n${{user_input}}",
+        "timeout": 30,
+        "retries": 1,
+        "on_error": "fail"
+      }},
+      {{
+        "id": "route",
+        "type": "conditional",
+        "name": "Route to Handler",
+        "condition_source": "${{steps.classify.output}}",
+        "conditional_branches": {{
+          "billing": "handle-billing",
+          "technical": "handle-technical",
+          "sales": "handle-sales"
+        }},
+        "default": "handle-general"
+      }},
+      {{
+        "id": "handle-billing",
+        "type": "agent",
+        "name": "Handle Billing",
+        "suggested_agent": {{
+          "name": "Billing Assistant",
+          "description": "Handles billing inquiries",
+          "goal": "Resolve billing questions about invoices, payments, refunds",
+          "model": "gpt-4o",
+          "required_mcps": ["stripe"],
+          "suggested_tools": ["stripe_get_invoice"]
+        }},
+        "input": "${{user_input}}",
+        "timeout": 120,
+        "retries": 0,
+        "on_error": "fail"
+      }},
+      {{
+        "id": "handle-technical",
+        "type": "agent",
+        "name": "Handle Technical",
+        "suggested_agent": {{
+          "name": "Tech Support",
+          "description": "Technical troubleshooting specialist",
+          "goal": "Diagnose and resolve technical issues",
+          "model": "gpt-4o",
+          "required_mcps": [],
+          "suggested_tools": []
+        }},
+        "input": "${{user_input}}",
+        "timeout": 120,
+        "retries": 0,
+        "on_error": "fail"
+      }},
+      {{
+        "id": "handle-sales",
+        "type": "agent",
+        "name": "Handle Sales",
+        "suggested_agent": {{
+          "name": "Sales Assistant",
+          "description": "Handles sales inquiries",
+          "goal": "Provide product info and guide purchase decisions",
+          "model": "gpt-4o",
+          "required_mcps": [],
+          "suggested_tools": []
+        }},
+        "input": "${{user_input}}",
+        "timeout": 120,
+        "retries": 0,
+        "on_error": "fail"
+      }},
+      {{
+        "id": "handle-general",
+        "type": "agent",
+        "name": "Handle General",
+        "suggested_agent": {{
+          "name": "General Assistant",
+          "description": "Handles misc inquiries",
+          "goal": "Provide helpful responses to general questions",
+          "model": "gpt-4o",
+          "required_mcps": [],
+          "suggested_tools": []
+        }},
+        "input": "${{user_input}}",
         "timeout": 120,
         "retries": 0,
         "on_error": "fail"
@@ -249,13 +715,111 @@ Use these placeholders in step inputs:
     "entry_step": "classify"
   }},
   "agents_to_create": [],
-  "existing_agents_used": ["customer-classifier", "response-generator"],
+  "existing_agents_used": [],
+  "mcps_suggested": [
+    {{"template": "stripe", "reason": "For billing account access", "required_for_steps": ["handle-billing"]}}
+  ],
+  "existing_mcps_used": [],
+  "explanation": "Intent classification followed by conditional routing to specialized handlers. Includes general fallback.",
+  "warnings": ["Ensure classifier output matches branch keys exactly"],
+  "estimated_complexity": "moderate"
+}}
+```
+
+## EXAMPLE 3: Parallel Processing Workflow
+
+User: "Research topics by searching multiple sources"
+
+```json
+{{
+  "workflow": {{
+    "id": "multi-source-research",
+    "name": "Multi-Source Researcher",
+    "description": "Researches topics by querying multiple sources in parallel",
+    "steps": [
+      {{
+        "id": "parallel-search",
+        "type": "parallel",
+        "name": "Search All Sources",
+        "branches": [
+          {{
+            "id": "web-search",
+            "agent_id": "web-researcher",
+            "input": "Search the web for: ${{user_input}}",
+            "timeout": 60
+          }},
+          {{
+            "id": "news-search",
+            "agent_id": "news-aggregator",
+            "input": "Find recent news about: ${{user_input}}",
+            "timeout": 60
+          }},
+          {{
+            "id": "kb-search",
+            "agent_id": "kb-searcher",
+            "input": "Search knowledge base for: ${{user_input}}",
+            "timeout": 60
+          }}
+        ],
+        "aggregation": "merge"
+      }},
+      {{
+        "id": "synthesize",
+        "type": "agent",
+        "name": "Synthesize Findings",
+        "suggested_agent": {{
+          "name": "Research Synthesizer",
+          "description": "Combines research from multiple sources",
+          "goal": "Create comprehensive summary from all sources",
+          "model": "gpt-4o",
+          "required_mcps": [],
+          "suggested_tools": []
+        }},
+        "input": "Synthesize these research findings into a coherent summary:\n\n${{steps.parallel-search.output}}",
+        "timeout": 180,
+        "retries": 0,
+        "on_error": "fail"
+      }}
+    ],
+    "entry_step": "parallel-search"
+  }},
+  "agents_to_create": [
+    {{
+      "id": "web-researcher",
+      "name": "Web Researcher",
+      "description": "Searches the web",
+      "agent_type": "ToolAgent",
+      "role": "Web search specialist",
+      "goal": "Find relevant web content",
+      "instructions": ["Search web for query", "Extract key information", "Return structured results"]
+    }},
+    {{
+      "id": "news-aggregator",
+      "name": "News Aggregator",
+      "description": "Searches news sources",
+      "agent_type": "ToolAgent",
+      "role": "News aggregation",
+      "goal": "Find recent news articles",
+      "instructions": ["Search news APIs", "Filter by relevance", "Return summaries"]
+    }},
+    {{
+      "id": "kb-searcher",
+      "name": "Knowledge Base Searcher",
+      "description": "Searches internal knowledge base",
+      "agent_type": "RAGAgent",
+      "role": "Knowledge retrieval",
+      "goal": "Find relevant internal documentation",
+      "instructions": ["Query vector store", "Rank by relevance", "Return excerpts"]
+    }}
+  ],
+  "existing_agents_used": [],
   "mcps_suggested": [],
   "existing_mcps_used": [],
-  "explanation": "This workflow uses existing agents to classify and respond to customer inquiries.",
-  "warnings": [],
-  "estimated_complexity": "simple"
+  "explanation": "Parallel step searches 3 sources simultaneously, then synthesizes findings. Merge aggregation combines all results.",
+  "warnings": ["Total time depends on slowest parallel branch"],
+  "estimated_complexity": "moderate"
 }}
+```
 
 ## USER REQUEST
 
@@ -265,7 +829,15 @@ Use these placeholders in step inputs:
 
 Preferred complexity: {preferred_complexity}
 
-Respond ONLY with valid JSON. No additional text before or after the JSON."""
+## INSTRUCTIONS
+
+1. Analyze the user's request carefully
+2. Check if existing agents/MCPs can be reused
+3. Choose the right step types for each task
+4. Include proper error handling
+5. Use suggested_agent when no existing agent fits
+
+Respond ONLY with valid JSON. No additional text before or after."""
 
 
 class WorkflowGenerator:
@@ -419,6 +991,7 @@ class WorkflowGenerator:
         self,
         request: GenerateSkeletonRequest,
         user_id: str,
+        existing_agents: Optional[List[AgentConfig]] = None,
         existing_mcps: Optional[List[MCPServerInstance]] = None,
     ) -> GenerateSkeletonResponse:
         """Generate a workflow skeleton from natural language prompt.
@@ -428,14 +1001,46 @@ class WorkflowGenerator:
 
         Args:
             request: The skeleton generation request
+            user_id: The user ID making the request
+            existing_agents: List of existing agents to potentially reuse
             existing_mcps: List of existing MCP servers to check connectivity
 
         Returns:
             GenerateSkeletonResponse with skeleton structure and suggestions
         """
+        # Format existing resources for the prompt
+        agents_json = json.dumps(
+            [
+                {
+                    "id": a.id,
+                    "name": a.name,
+                    "description": a.description or "",
+                    "type": a.agent_type.value,
+                    "goal": a.goal.objective if a.goal else "",
+                }
+                for a in (existing_agents or [])
+            ],
+            indent=2,
+        )
+
+        mcps_json = json.dumps(
+            [
+                {
+                    "id": m.id,
+                    "name": m.name,
+                    "template": m.template,
+                    "status": m.status.value if hasattr(m.status, "value") else str(m.status),
+                }
+                for m in (existing_mcps or [])
+            ],
+            indent=2,
+        )
+
         context_section = f"Additional context: {request.context}" if request.context else ""
 
         full_prompt = GENERATE_SKELETON_PROMPT.format(
+            existing_agents_json=agents_json if agents_json != "[]" else "No existing agents available.",
+            existing_mcps_json=mcps_json if mcps_json != "[]" else "No MCP servers configured yet.",
             user_prompt=request.prompt,
             context_section=context_section,
         )

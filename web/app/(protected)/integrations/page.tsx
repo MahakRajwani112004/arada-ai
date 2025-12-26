@@ -24,7 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCatalog, useServers, useCreateServer, useDeleteServer, useReconnectServer } from "@/lib/hooks/use-mcp";
 import { useSecretsStats, useSecrets, useDeleteSecret } from "@/lib/hooks/use-secrets";
-import { getOAuthUrl } from "@/lib/api/mcp";
+import { getOAuthUrl, getMicrosoftOAuthUrl } from "@/lib/api/mcp";
 import type { MCPCatalogItem, MCPServer } from "@/types/mcp";
 
 // Map template IDs to OAuth service names
@@ -32,6 +32,11 @@ const googleOAuthServices: Record<string, string> = {
   "google-calendar": "calendar",
   "gmail": "gmail",
   "google-drive": "drive",
+};
+
+const microsoftOAuthServices: Record<string, string> = {
+  "outlook-calendar": "calendar",
+  "outlook-email": "email",
 };
 
 function CatalogSkeleton() {
@@ -84,6 +89,8 @@ function ConnectedServerCard({
   isDisconnecting: boolean;
 }) {
   const isGoogleOAuth = server.template ? !!googleOAuthServices[server.template] : false;
+  const isMicrosoftOAuth = server.template ? !!microsoftOAuthServices[server.template] : false;
+  const isOAuthService = isGoogleOAuth || isMicrosoftOAuth;
 
   return (
     <div className="rounded-lg border border-border bg-card p-4">
@@ -100,7 +107,7 @@ function ConnectedServerCard({
         <p className="mt-2 text-sm text-destructive">{server.error_message}</p>
       )}
       <div className="mt-4 flex gap-2">
-        {isGoogleOAuth && (
+        {isOAuthService && (
           <Button
             variant="outline"
             size="sm"
@@ -157,6 +164,8 @@ export default function IntegrationsPage() {
 
   const connectedServers = servers?.servers || [];
   const isGoogleOAuth = selectedItem ? !!googleOAuthServices[selectedItem.id] : false;
+  const isMicrosoftOAuth = selectedItem ? !!microsoftOAuthServices[selectedItem.id] : false;
+  const isOAuthService = isGoogleOAuth || isMicrosoftOAuth;
 
   const handleConnect = (item: MCPCatalogItem) => {
     setSelectedItem(item);
@@ -179,6 +188,26 @@ export default function IntegrationsPage() {
       window.location.href = authorization_url;
     } catch (error) {
       console.error("Failed to get OAuth URL:", error);
+      setIsOAuthLoading(false);
+    }
+  };
+
+  const handleMicrosoftOAuth = async () => {
+    if (!selectedItem) return;
+
+    const oauthService = microsoftOAuthServices[selectedItem.id];
+    if (!oauthService) return;
+
+    setIsOAuthLoading(true);
+    try {
+      // Store server name and template in localStorage for the callback page
+      localStorage.setItem("oauth_server_name", serverName);
+      localStorage.setItem("oauth_template", selectedItem.id);
+
+      const { authorization_url } = await getMicrosoftOAuthUrl(oauthService);
+      window.location.href = authorization_url;
+    } catch (error) {
+      console.error("Failed to get Microsoft OAuth URL:", error);
       setIsOAuthLoading(false);
     }
   };
@@ -336,7 +365,9 @@ export default function IntegrationsPage() {
             <SheetDescription>
               {isGoogleOAuth
                 ? "Enter a name for this connection, then sign in with Google."
-                : "Enter your credentials to connect this integration."}
+                : isMicrosoftOAuth
+                  ? "Enter a name for this connection, then sign in with Microsoft."
+                  : "Enter your credentials to connect this integration."}
             </SheetDescription>
           </SheetHeader>
 
@@ -352,8 +383,8 @@ export default function IntegrationsPage() {
                 />
               </div>
 
-              {/* Show credential fields only for non-Google OAuth services */}
-              {!isGoogleOAuth && selectedItem.credentials_required.map((cred) => (
+              {/* Show credential fields only for non-OAuth services */}
+              {!isOAuthService && selectedItem.credentials_required.map((cred) => (
                 <div key={cred.name} className="space-y-2">
                   <Label htmlFor={cred.name}>{cred.description}</Label>
                   <Input
@@ -371,7 +402,7 @@ export default function IntegrationsPage() {
                 </div>
               ))}
 
-              {!isGoogleOAuth && selectedItem.token_guide_url && (
+              {!isOAuthService && selectedItem.token_guide_url && (
                 <p className="text-xs text-muted-foreground">
                   Need help?{" "}
                   <a
@@ -393,6 +424,15 @@ export default function IntegrationsPage() {
                 >
                   {isOAuthLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   {isOAuthLoading ? "Redirecting..." : "Sign in with Google"}
+                </Button>
+              ) : isMicrosoftOAuth ? (
+                <Button
+                  onClick={handleMicrosoftOAuth}
+                  disabled={isOAuthLoading || !serverName.trim()}
+                  className="w-full"
+                >
+                  {isOAuthLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {isOAuthLoading ? "Redirecting..." : "Sign in with Microsoft"}
                 </Button>
               ) : (
                 <Button

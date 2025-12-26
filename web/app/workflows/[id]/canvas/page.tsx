@@ -1,23 +1,34 @@
 "use client";
 
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef, DragEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ReactFlow,
   Background,
   MiniMap,
+  Controls,
   useNodesState,
   useEdgesState,
   useReactFlow,
   ReactFlowProvider,
+  addEdge,
   type OnNodesChange,
+  type OnEdgesChange,
+  type OnConnect,
   type NodeTypes,
+  type EdgeTypes,
+  type Connection,
   BackgroundVariant,
   Panel,
+  MarkerType,
+  ConnectionMode,
+  ConnectionLineType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { TriggerNode, AgentNode, EndNode } from "@/components/workflows/canvas/nodes";
+import { TriggerNode, AgentNode, ConditionalNode, ParallelNode, EndNode } from "@/components/workflows/canvas/nodes";
+import { LabeledEdge } from "@/components/workflows/canvas/edges";
+import { CanvasContext } from "@/components/workflows/canvas/canvas-context";
 import { CanvasToolbar } from "@/components/workflows/canvas/canvas-toolbar";
 import { CanvasStatusBar } from "@/components/workflows/canvas/canvas-status-bar";
 import { NodeConfigPanel } from "@/components/workflows/canvas/node-config-panel";
@@ -26,16 +37,42 @@ import { CanvasExecutionPanel } from "@/components/workflows/canvas/canvas-execu
 import { workflowToCanvas } from "@/lib/workflow-canvas";
 import { useWorkflow, useUpdateWorkflow } from "@/lib/hooks/use-workflows";
 import { useAgents, useCreateAgent } from "@/lib/hooks/use-agents";
-import type { CanvasNode, CanvasEdge, AgentNodeData } from "@/lib/workflow-canvas/types";
+import type { CanvasNode, CanvasEdge, AgentNodeData, ConditionalNodeData, ParallelNodeData } from "@/lib/workflow-canvas/types";
 import type { Agent, AgentCreate } from "@/types/agent";
 import type { SuggestedAgent } from "@/types/workflow";
-import { Loader2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 
 // Custom node types
 const nodeTypes: NodeTypes = {
   trigger: TriggerNode,
   agent: AgentNode,
+  conditional: ConditionalNode,
+  parallel: ParallelNode,
   end: EndNode,
+};
+
+// Custom edge types
+const edgeTypes: EdgeTypes = {
+  labeled: LabeledEdge,
+};
+
+// Default edge options for better visuals - using bezier for smooth flowing curves
+const defaultEdgeOptions = {
+  type: "default", // "default" = bezier curves (smooth flowing lines)
+  animated: false,
+  style: { strokeWidth: 2, stroke: "hsl(var(--muted-foreground))" },
+  markerEnd: {
+    type: MarkerType.ArrowClosed,
+    width: 16,
+    height: 16,
+    color: "hsl(var(--muted-foreground))",
+  },
+};
+
+// Connection line style when dragging
+const connectionLineStyle = {
+  strokeWidth: 2,
+  stroke: "hsl(var(--primary))",
 };
 
 function CanvasEditor() {
@@ -43,6 +80,7 @@ function CanvasEditor() {
   const router = useRouter();
   const workflowId = params.id as string;
   const reactFlowInstance = useReactFlow();
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
   const { data: workflow, isLoading: isLoadingWorkflow, error } = useWorkflow(workflowId);
   const { data: agentsData } = useAgents();
@@ -54,6 +92,7 @@ function CanvasEditor() {
   const [isExecutionPanelOpen, setIsExecutionPanelOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   // Convert workflow definition to canvas format
   const { nodes: initialNodes, edges: initialEdges } = useMemo(() => {
@@ -128,19 +167,22 @@ function CanvasEditor() {
     []
   );
 
+  // Handle pane click (deselect)
+  const handlePaneClick = useCallback(() => {
+    setSelectedNodeId(null);
+  }, []);
+
   // Close config panel
   const handleClosePanel = useCallback(() => {
     setSelectedNodeId(null);
   }, []);
 
-  // Handle nodes change (mark as dirty)
+  // Handle nodes change (track all changes including position)
   const handleNodesChange: OnNodesChange<CanvasNode> = useCallback(
     (changes) => {
       onNodesChange(changes);
-      // Mark as having unsaved changes (but not for selection changes)
-      const hasRealChanges = changes.some(
-        (c) => c.type !== "select" && c.type !== "position"
-      );
+      // Track any change as unsaved (including position changes now!)
+      const hasRealChanges = changes.some((c) => c.type !== "select");
       if (hasRealChanges) {
         setHasUnsavedChanges(true);
       }
@@ -148,18 +190,130 @@ function CanvasEditor() {
     [onNodesChange]
   );
 
-  // Zoom controls
-  const handleZoomIn = useCallback(() => {
-    reactFlowInstance.zoomIn();
-  }, [reactFlowInstance]);
+  // Handle edges change
+  const handleEdgesChange: OnEdgesChange<CanvasEdge> = useCallback(
+    (changes) => {
+      onEdgesChange(changes);
+      // Mark as having unsaved changes
+      const hasRealChanges = changes.some((c) => c.type !== "select");
+      if (hasRealChanges) {
+        setHasUnsavedChanges(true);
+      }
+    },
+    [onEdgesChange]
+  );
 
-  const handleZoomOut = useCallback(() => {
-    reactFlowInstance.zoomOut();
-  }, [reactFlowInstance]);
+  // Handle new connections (drag from handle to handle)
+  const handleConnect: OnConnect = useCallback(
+    (connection: Connection) => {
+      // Don't allow self-connections
+      if (connection.source === connection.target) return;
 
-  const handleFitView = useCallback(() => {
-    reactFlowInstance.fitView({ padding: 0.2 });
-  }, [reactFlowInstance]);
+      // Add the new edge with styling - using bezier for smooth curves
+      const newEdge: CanvasEdge = {
+        id: `edge-${connection.source}-${connection.target}`,
+        source: connection.source!,
+        target: connection.target!,
+        sourceHandle: connection.sourceHandle,
+        targetHandle: connection.targetHandle,
+        type: "labeled",
+        animated: false,
+        style: { strokeWidth: 2, stroke: "hsl(var(--muted-foreground))" },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 16,
+          height: 16,
+          color: "hsl(var(--muted-foreground))",
+        },
+        data: { label: "" },
+      };
+
+      setEdges((eds) => addEdge(newEdge, eds));
+      setHasUnsavedChanges(true);
+    },
+    [setEdges]
+  );
+
+  // Handle drag over (from palette)
+  const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setIsDraggingOver(true);
+  }, []);
+
+  // Handle drag leave
+  const handleDragLeave = useCallback(() => {
+    setIsDraggingOver(false);
+  }, []);
+
+  // Handle drop (from palette)
+  const handleDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      setIsDraggingOver(false);
+
+      const agentData = event.dataTransfer.getData("application/agent");
+      if (!agentData) return;
+
+      try {
+        const agent: Agent = JSON.parse(agentData);
+
+        // Get the drop position in flow coordinates
+        const reactFlowBounds = reactFlowWrapper.current?.getBoundingClientRect();
+        if (!reactFlowBounds) return;
+
+        const position = reactFlowInstance.screenToFlowPosition({
+          x: event.clientX - reactFlowBounds.left,
+          y: event.clientY - reactFlowBounds.top,
+        });
+
+        // Create a unique step ID
+        const stepId = `step-${Date.now()}`;
+
+        // Create a new agent node
+        const newNode: CanvasNode = {
+          id: stepId,
+          type: "agent",
+          position,
+          data: {
+            type: "agent",
+            stepId,
+            name: agent.name,
+            agentId: agent.id,
+            agentName: agent.name,
+            agentGoal: agent.description,
+            status: "ready",
+          } as AgentNodeData,
+        };
+
+        setNodes((nds) => [...nds, newNode]);
+        setHasUnsavedChanges(true);
+
+        // Select the new node
+        setSelectedNodeId(stepId);
+      } catch (e) {
+        console.error("Failed to parse dropped agent:", e);
+      }
+    },
+    [reactFlowInstance, setNodes]
+  );
+
+  // Keyboard shortcuts disabled for now to prevent accidental deletions while typing
+  // TODO: Re-enable with proper focus management (only when canvas is focused, not input fields)
+
+  // Delete selected node
+  const handleDeleteNode = useCallback(() => {
+    if (!selectedNodeId) return;
+    const node = nodes.find((n) => n.id === selectedNodeId);
+    if (node && node.type !== "trigger" && node.type !== "end") {
+      setNodes((nds) => nds.filter((n) => n.id !== selectedNodeId));
+      setEdges((eds) =>
+        eds.filter((e) => e.source !== selectedNodeId && e.target !== selectedNodeId)
+      );
+      setSelectedNodeId(null);
+      setHasUnsavedChanges(true);
+    }
+  }, [selectedNodeId, nodes, setNodes, setEdges]);
 
   // Create agent from suggestion
   const handleCreateAgent = useCallback(
@@ -218,7 +372,7 @@ function CanvasEditor() {
                   ...n.data,
                   agentId: createdAgent.id,
                   agentName: createdAgent.name,
-                  agentGoal: suggestion.goal, // Use the suggestion's goal
+                  agentGoal: suggestion.goal,
                   status: "ready" as const,
                   suggestedAgent: undefined,
                 },
@@ -244,7 +398,6 @@ function CanvasEditor() {
       try {
         await handleCreateAgent(nodeId, suggestion);
       } catch (error) {
-        // Continue with other agents even if one fails
         console.error(`Failed to create agent for node ${nodeId}:`, error);
       }
     }
@@ -262,7 +415,7 @@ function CanvasEditor() {
                 ...n.data,
                 agentId: agent.id,
                 agentName: agent.name,
-                agentGoal: agent.description, // Use description as goal summary
+                agentGoal: agent.description,
                 status: "ready" as const,
                 suggestedAgent: undefined,
               },
@@ -283,24 +436,42 @@ function CanvasEditor() {
     setIsSaving(true);
     try {
       // Convert canvas back to workflow definition
-      const agentNodes = nodes
-        .filter((n): n is CanvasNode & { data: AgentNodeData } => n.type === "agent")
+      // Filter out trigger and end nodes, keep agent/conditional/parallel
+      const stepNodes = nodes
+        .filter((n): n is CanvasNode =>
+          n.type === "agent" || n.type === "conditional" || n.type === "parallel"
+        )
         .sort((a, b) => a.position.y - b.position.y);
 
-      const steps = agentNodes.map((node) => {
+      const steps = stepNodes.map((node) => {
+        if (node.type === "agent") {
+          const data = node.data as AgentNodeData;
+          const originalStep = workflow.definition?.steps?.find(
+            (s) => s.id === data.stepId
+          );
+          return {
+            id: data.stepId,
+            type: "agent" as const,
+            name: data.name,
+            agent_id: data.agentId,
+            suggested_agent: data.suggestedAgent,
+            input: data.role || originalStep?.input || "${user_input}",
+            timeout: originalStep?.timeout || 120,
+            retries: originalStep?.retries || 0,
+            on_error: originalStep?.on_error || "fail",
+          };
+        }
+        // Handle other step types (conditional, parallel)
+        const nodeData = node.data as ConditionalNodeData | ParallelNodeData;
         const originalStep = workflow.definition?.steps?.find(
-          (s) => s.id === node.data.stepId
+          (s) => s.id === nodeData.stepId
         );
-        return {
-          id: node.data.stepId,
-          type: "agent" as const,
-          name: node.data.name,
-          agent_id: node.data.agentId,
-          suggested_agent: node.data.suggestedAgent,
-          input: node.data.role || originalStep?.input || "${user_input}",
-          timeout: originalStep?.timeout || 120,
-          retries: originalStep?.retries || 0,
-          on_error: originalStep?.on_error || "fail",
+        return originalStep || {
+          id: nodeData.stepId,
+          type: node.type as "conditional" | "parallel",
+          timeout: 120,
+          retries: 0,
+          on_error: "fail" as const,
         };
       });
 
@@ -334,6 +505,16 @@ function CanvasEditor() {
     }
   }, [router, workflowId, hasUnsavedChanges]);
 
+  // Mark as having unsaved changes (for edge label edits)
+  const markUnsaved = useCallback(() => {
+    setHasUnsavedChanges(true);
+  }, []);
+
+  // Context value for edge components
+  const canvasContextValue = useMemo(() => ({
+    markUnsaved,
+  }), [markUnsaved]);
+
   if (isLoadingWorkflow) {
     return (
       <div className="h-full w-full flex items-center justify-center bg-background">
@@ -355,10 +536,13 @@ function CanvasEditor() {
     );
   }
 
+  const canDeleteNode = selectedNode && selectedNode.type !== "trigger" && selectedNode.type !== "end";
+
   return (
-    <div className="h-full w-full flex flex-col bg-background overflow-hidden">
-      {/* Top Toolbar */}
-      <CanvasToolbar
+    <CanvasContext.Provider value={canvasContextValue}>
+      <div className="h-full w-full flex flex-col bg-background overflow-hidden">
+        {/* Top Toolbar */}
+        <CanvasToolbar
         workflowName={workflow.name}
         hasUnsavedChanges={hasUnsavedChanges}
         isSaving={isSaving}
@@ -382,14 +566,29 @@ function CanvasEditor() {
         />
 
         {/* Canvas */}
-        <div className="flex-1 relative">
+        <div
+          ref={reactFlowWrapper}
+          className={`flex-1 relative transition-all ${
+            isDraggingOver ? "ring-2 ring-primary ring-inset bg-primary/5" : ""
+          }`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
           <ReactFlow
             nodes={nodes}
             edges={edges}
             onNodesChange={handleNodesChange}
-            onEdgesChange={onEdgesChange}
+            onEdgesChange={handleEdgesChange}
+            onConnect={handleConnect}
             onNodeClick={handleNodeClick}
+            onPaneClick={handlePaneClick}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            defaultEdgeOptions={defaultEdgeOptions}
+            connectionLineStyle={connectionLineStyle}
+            connectionLineType={ConnectionLineType.Bezier}
+            connectionMode={ConnectionMode.Loose}
             fitView
             fitViewOptions={{
               padding: 0.2,
@@ -401,6 +600,9 @@ function CanvasEditor() {
             elementsSelectable={true}
             panOnDrag={true}
             zoomOnScroll={true}
+            selectNodesOnDrag={false}
+            snapToGrid={true}
+            snapGrid={[15, 15]}
             className="bg-background"
           >
             <Background
@@ -419,6 +621,10 @@ function CanvasEditor() {
                     return "hsl(var(--primary))";
                   case "agent":
                     return "hsl(270, 60%, 60%)";
+                  case "conditional":
+                    return "hsl(210, 80%, 55%)";
+                  case "parallel":
+                    return "hsl(280, 60%, 60%)";
                   case "end":
                     return "hsl(var(--muted-foreground))";
                   default:
@@ -428,33 +634,40 @@ function CanvasEditor() {
               className="!bg-card !border-border"
               maskColor="hsl(var(--background) / 0.8)"
               position="bottom-left"
+              pannable
+              zoomable
             />
 
-            {/* Zoom controls */}
-            <Panel position="bottom-right" className="flex gap-1 mb-12 mr-2">
-              <button
-                onClick={handleZoomIn}
-                className="h-8 w-8 flex items-center justify-center rounded border border-border bg-card hover:bg-accent transition-colors"
-                title="Zoom in"
-              >
-                <span className="text-lg font-medium">+</span>
-              </button>
-              <button
-                onClick={handleZoomOut}
-                className="h-8 w-8 flex items-center justify-center rounded border border-border bg-card hover:bg-accent transition-colors"
-                title="Zoom out"
-              >
-                <span className="text-lg font-medium">-</span>
-              </button>
-              <button
-                onClick={handleFitView}
-                className="h-8 w-8 flex items-center justify-center rounded border border-border bg-card hover:bg-accent transition-colors text-xs"
-                title="Fit view"
-              >
-                Fit
-              </button>
-            </Panel>
+            {/* Controls (zoom in/out/fit) */}
+            <Controls
+              showInteractive={false}
+              className="!bg-card !border-border !shadow-sm"
+              position="bottom-right"
+            />
+
+            {/* Delete button when node selected */}
+            {canDeleteNode && (
+              <Panel position="top-right" className="mr-2 mt-2">
+                <button
+                  onClick={handleDeleteNode}
+                  className="flex items-center gap-2 px-3 py-2 rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors text-sm font-medium"
+                  title="Delete node"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete
+                </button>
+              </Panel>
+            )}
           </ReactFlow>
+
+          {/* Drop zone indicator */}
+          {isDraggingOver && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+              <div className="bg-primary/10 border-2 border-dashed border-primary rounded-lg p-8">
+                <p className="text-primary font-medium">Drop agent here</p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right Config Panel */}
@@ -479,17 +692,18 @@ function CanvasEditor() {
             onClose={() => setIsExecutionPanelOpen(false)}
           />
         )}
-      </div>
+        </div>
 
-      {/* Bottom Status Bar */}
-      <CanvasStatusBar
-        nodeCount={nodes.length}
-        draftCount={draftCount}
-        draftAgents={draftAgents}
-        onCreateAll={handleCreateAllAgents}
-        isCreating={createAgent.isPending}
-      />
-    </div>
+        {/* Bottom Status Bar */}
+        <CanvasStatusBar
+          nodeCount={nodes.length}
+          draftCount={draftCount}
+          draftAgents={draftAgents}
+          onCreateAll={handleCreateAllAgents}
+          isCreating={createAgent.isPending}
+        />
+      </div>
+    </CanvasContext.Provider>
   );
 }
 

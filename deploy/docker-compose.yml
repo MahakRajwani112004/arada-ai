@@ -222,10 +222,21 @@ services:
       RATE_LIMIT_WORKFLOW: ${RATE_LIMIT_WORKFLOW:-10/minute}
       RATE_LIMIT_AGENTS: ${RATE_LIMIT_AGENTS:-20/minute}
       RATE_LIMIT_DEFAULT: ${RATE_LIMIT_DEFAULT:-100/minute}
-      # OAuth (optional)
+      # MCP Server URLs
+      MCP_GOOGLE_CALENDAR_URL: http://mcp-google-calendar:8000/mcp
+      MCP_GOOGLE_GMAIL_URL: http://mcp-google-gmail:8000/mcp
+      MCP_OUTLOOK_CALENDAR_URL: http://mcp-outlook-calendar:8000/mcp
+      MCP_OUTLOOK_EMAIL_URL: http://mcp-outlook-email:8000/mcp
+      # Google OAuth (optional)
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       OAUTH_REDIRECT_URI: https://${DOMAIN:-localhost}/api/v1/oauth/google/callback
+      # Microsoft OAuth (optional)
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
+      MICROSOFT_OAUTH_REDIRECT_URI: https://${DOMAIN:-localhost}/api/v1/oauth/microsoft/callback
+      FRONTEND_URL: https://${DOMAIN:-localhost}
     networks:
       - magone-network
     labels:
@@ -329,6 +340,46 @@ services:
     environment:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+    networks:
+      - magone-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # MCP Server - Outlook Calendar
+  # ============================================
+  mcp-outlook-calendar:
+    image: ${DOCKER_REGISTRY:-magureme}/magoneai-mcp-outlook-calendar:${IMAGE_TAG:-v2}
+    container_name: magone-mcp-outlook-calendar
+    restart: unless-stopped
+    environment:
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
+    networks:
+      - magone-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # MCP Server - Outlook Email
+  # ============================================
+  mcp-outlook-email:
+    image: ${DOCKER_REGISTRY:-magureme}/magoneai-mcp-outlook-email:${IMAGE_TAG:-v2}
+    container_name: magone-mcp-outlook-email
+    restart: unless-stopped
+    environment:
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
     networks:
       - magone-network
     healthcheck:

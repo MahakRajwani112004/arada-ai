@@ -2,13 +2,11 @@
 
 import { useState, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { LayoutGrid, List } from "lucide-react";
+import { ExternalLink, Play, Bot, GitBranch, Split } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { PageContainer } from "@/components/layout/page-container";
 import { WorkflowHeader } from "@/components/workflows/workflow-header";
 import { BlockedWorkflowBanner } from "@/components/workflows/blocked-workflow-banner";
-import { StepList } from "@/components/workflows/steps/step-list";
-import { WorkflowCanvas } from "@/components/workflows/canvas";
 import { RunWorkflowPanel } from "@/components/workflows/execution/run-workflow-panel";
 import { ExecutionHistory } from "@/components/workflows/execution/execution-history";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -53,15 +51,12 @@ function WorkflowDetailSkeleton() {
   );
 }
 
-type ViewMode = "canvas" | "list";
-
 export default function WorkflowDetailPage() {
   const params = useParams();
   const router = useRouter();
   const workflowId = params.id as string;
 
   const [activeTab, setActiveTab] = useState("definition");
-  const [viewMode, setViewMode] = useState<ViewMode>("canvas");
 
   const { data: workflow, isLoading: isLoadingWorkflow, error } = useWorkflow(workflowId);
   const { data: executionsData, isLoading: isLoadingExecutions } = useWorkflowExecutions(workflowId);
@@ -117,11 +112,6 @@ export default function WorkflowDetailPage() {
     // Navigate to agent creation with context about which agents are needed
     // For now, navigate to agents page
     router.push("/agents");
-  };
-
-  const handleCreateAgent = (agentId: string) => {
-    // Navigate to agent creation form with prefilled agent ID
-    router.push(`/agents/new?suggested_id=${agentId}`);
   };
 
   if (isLoadingWorkflow) {
@@ -186,69 +176,84 @@ export default function WorkflowDetailPage() {
                 <div className="grid gap-6 lg:grid-cols-3">
                   <div className="lg:col-span-2">
                     <Card>
-                      <CardContent className="p-0">
-                        {/* View toggle header */}
-                        <div className="flex items-center justify-between border-b p-4">
-                          <h3 className="font-semibold">Workflow Steps</h3>
-                          <div className="flex items-center gap-1 rounded-lg border p-1">
+                      <CardContent className="p-6">
+                        {/* Steps Summary */}
+                        <div className="space-y-4">
+                          <div className="flex items-center justify-between">
+                            <h3 className="font-semibold">Workflow Steps</h3>
                             <Button
-                              variant={viewMode === "canvas" ? "secondary" : "ghost"}
-                              size="sm"
-                              className="h-7 w-7 p-0"
-                              onClick={() => setViewMode("canvas")}
+                              onClick={() => router.push(`/workflows/${workflowId}/canvas`)}
+                              className="gap-2"
                             >
-                              <LayoutGrid className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant={viewMode === "list" ? "secondary" : "ghost"}
-                              size="sm"
-                              className="h-7 w-7 p-0"
-                              onClick={() => setViewMode("list")}
-                            >
-                              <List className="h-4 w-4" />
+                              <ExternalLink className="h-4 w-4" />
+                              Open Canvas Editor
                             </Button>
                           </div>
-                        </div>
 
-                        {/* Canvas View */}
-                        {viewMode === "canvas" && (
-                          <div className="h-[500px]">
-                            {workflow.definition?.steps && workflow.definition.steps.length > 0 ? (
-                              <WorkflowCanvas
-                                definition={workflow.definition}
-                                agents={agentsData?.agents}
-                                baseWebhookUrl={`${typeof window !== "undefined" ? window.location.origin : ""}/api/v1/webhooks`}
-                                onNodeClick={(nodeId) => {
-                                  console.log("Node clicked:", nodeId);
-                                  // TODO: Open node configuration panel
-                                }}
-                              />
-                            ) : (
-                              <div className="flex items-center justify-center h-full">
-                                <p className="text-muted-foreground">
-                                  No steps defined yet
-                                </p>
+                          {workflow.definition?.steps && workflow.definition.steps.length > 0 ? (
+                            <div className="space-y-3">
+                              {/* Step count summary */}
+                              <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                                <span>{workflow.definition.steps.length} step{workflow.definition.steps.length !== 1 ? "s" : ""}</span>
+                                {workflow.definition.steps.filter(s => s.type === "agent").length > 0 && (
+                                  <span className="flex items-center gap-1">
+                                    <Bot className="h-3.5 w-3.5" />
+                                    {workflow.definition.steps.filter(s => s.type === "agent").length} agent{workflow.definition.steps.filter(s => s.type === "agent").length !== 1 ? "s" : ""}
+                                  </span>
+                                )}
+                                {workflow.definition.steps.filter(s => s.type === "conditional").length > 0 && (
+                                  <span className="flex items-center gap-1">
+                                    <GitBranch className="h-3.5 w-3.5" />
+                                    {workflow.definition.steps.filter(s => s.type === "conditional").length} conditional
+                                  </span>
+                                )}
+                                {workflow.definition.steps.filter(s => s.type === "parallel").length > 0 && (
+                                  <span className="flex items-center gap-1">
+                                    <Split className="h-3.5 w-3.5" />
+                                    {workflow.definition.steps.filter(s => s.type === "parallel").length} parallel
+                                  </span>
+                                )}
                               </div>
-                            )}
-                          </div>
-                        )}
 
-                        {/* List View */}
-                        {viewMode === "list" && (
-                          <div className="p-6">
-                            {workflow.definition?.steps && workflow.definition.steps.length > 0 ? (
-                              <StepList
-                                steps={workflow.definition.steps}
-                                missingAgents={missingAgents}
-                                onCreateAgent={handleCreateAgent}
-                              />
-                            ) : (
-                              <p className="text-muted-foreground text-center py-8">
+                              {/* Simple step list */}
+                              <div className="rounded-lg border divide-y">
+                                {workflow.definition.steps.map((step, index) => (
+                                  <div key={step.id} className="flex items-center gap-3 p-3">
+                                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-medium">
+                                      {index + 1}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="font-medium text-sm truncate">
+                                        {step.name || step.agent_id || step.id}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground capitalize">
+                                        {step.type}
+                                      </p>
+                                    </div>
+                                    {step.type === "agent" && step.agent_id && !agentsData?.agents?.find(a => a.id === step.agent_id) && (
+                                      <span className="text-xs text-red-500">Missing agent</span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-center justify-center py-12 text-center">
+                              <div className="rounded-full bg-muted p-3 mb-3">
+                                <Play className="h-6 w-6 text-muted-foreground" />
+                              </div>
+                              <p className="text-muted-foreground mb-4">
                                 No steps defined yet
                               </p>
-                            )}
-                          </div>
-                        )}
+                              <Button
+                                onClick={() => router.push(`/workflows/${workflowId}/canvas`)}
+                                variant="outline"
+                              >
+                                Open Canvas to Add Steps
+                              </Button>
+                            </div>
+                          )}
+                        </div>
                       </CardContent>
                     </Card>
                   </div>

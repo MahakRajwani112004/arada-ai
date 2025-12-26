@@ -1,5 +1,16 @@
 // Backend agent types - must match src/models/enums.py
-export type AgentType = "SimpleAgent" | "LLMAgent" | "RAGAgent" | "ToolAgent" | "FullAgent" | "RouterAgent";
+export type AgentType = "SimpleAgent" | "LLMAgent" | "RAGAgent" | "ToolAgent" | "FullAgent" | "RouterAgent" | "OrchestratorAgent";
+
+// RouterAgent configuration - maps intent categories to target agents
+export interface RouterConfig {
+  routing_table: Record<string, RoutingEntry>;
+  confidence_threshold?: number;
+}
+
+export interface RoutingEntry {
+  target_agent: string;
+  description?: string;
+}
 
 export interface AgentRole {
   title: string;
@@ -65,6 +76,10 @@ export interface AgentCreate {
   knowledge_base?: KnowledgeBaseConfig;
   tools: ToolReference[];
   safety: SafetyConfig;
+  // RouterAgent specific
+  router_config?: RouterConfig;
+  // OrchestratorAgent specific
+  orchestrator_config?: OrchestratorConfig;
 }
 
 export interface Agent {
