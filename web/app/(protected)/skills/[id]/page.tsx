@@ -48,6 +48,16 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   useSkill,
   useDeleteSkill,
   useTestSkill,
@@ -100,6 +110,7 @@ export default function SkillDetailPage() {
   const router = useRouter();
   const [testInput, setTestInput] = useState("");
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const { data: skill, isLoading, error } = useSkill(id);
   const { data: stats } = useSkillStats(id);
@@ -108,11 +119,14 @@ export default function SkillDetailPage() {
   const publishSkill = usePublishSkill();
 
   const handleDelete = () => {
-    if (confirm("Are you sure you want to delete this skill?")) {
-      deleteSkill.mutate(id, {
-        onSuccess: () => router.push("/skills"),
-      });
-    }
+    setShowDeleteDialog(true);
+  };
+
+  const confirmDelete = () => {
+    deleteSkill.mutate(id, {
+      onSuccess: () => router.push("/skills"),
+    });
+    setShowDeleteDialog(false);
   };
 
   const handleTest = () => {
@@ -734,6 +748,27 @@ export default function SkillDetailPage() {
           </div>
           {skill.created_by && <span>By {skill.created_by}</span>}
         </div>
+
+        {/* Delete Confirmation Dialog */}
+        <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Skill</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete &quot;{skill.name}&quot;? This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmDelete}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </PageContainer>
     </>
   );

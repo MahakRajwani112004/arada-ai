@@ -9,6 +9,7 @@ from src.api.dependencies import get_skill_repository
 from src.skills.file_service import (
     FileUploadResult,
     get_supported_extensions,
+    get_max_file_size_mb,
     is_supported_file,
     upload_skill_file,
     delete_skill_file,
@@ -37,6 +38,10 @@ from src.api.schemas.skills import (
     SearchSkillsRequest,
     SearchSkillsResponse,
     SkillCategoryEnum,
+    SkillFileDownloadResponse,
+    SkillFileInfoResponse,
+    SkillFilesListResponse,
+    SkillFileUploadResponse,
     SkillListResponse,
     SkillMatchSchema,
     SkillResponse,
@@ -45,6 +50,7 @@ from src.api.schemas.skills import (
     SkillSummaryResponse,
     SkillVersionSchema,
     SkillVersionsResponse,
+    SupportedFileTypesResponse,
     TestSkillRequest,
     TestSkillResponse,
     UpdateSkillRequest,
@@ -144,19 +150,28 @@ async def list_skills(
     # Parse tags if provided
     tag_list = [t.strip() for t in tags.split(",")] if tags else None
 
+    # Build common filter args
+    filter_args = {
+        "category": SkillCategory(category.value) if category else None,
+        "tags": tag_list,
+        "status": SkillStatus(status_filter.value) if status_filter else None,
+        "search": search,
+        "include_public": include_public,
+    }
+
+    # Get total count for pagination
+    total = await skill_repo.count(**filter_args)
+
+    # Get paginated results
     skills = await skill_repo.list(
-        category=SkillCategory(category.value) if category else None,
-        tags=tag_list,
-        status=SkillStatus(status_filter.value) if status_filter else None,
-        search=search,
-        include_public=include_public,
+        **filter_args,
         limit=limit,
         offset=offset,
     )
 
     return SkillListResponse(
         skills=[_to_summary(s) for s in skills],
-        total=len(skills),
+        total=total,
     )
 
 
@@ -185,6 +200,19 @@ async def update_skill(
     skill_repo: SkillRepository = Depends(get_skill_repository),
 ) -> SkillResponse:
     """Update a skill."""
+    # Check if skill exists and user has permission
+    if not await skill_repo.exists(skill_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Skill '{skill_id}' not found",
+        )
+
+    if not await skill_repo.is_owner(skill_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to update this skill",
+        )
+
     # Convert definition if provided
     definition = None
     if request.definition:
@@ -201,6 +229,7 @@ async def update_skill(
         changelog=request.changelog,
     )
 
+    # This should not happen now, but keep as safety check
     if not skill:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -217,24 +246,37 @@ async def delete_skill(
     skill_repo: SkillRepository = Depends(get_skill_repository),
 ) -> None:
     """Delete a skill."""
-    if not await skill_repo.delete(skill_id):
+    # Check if skill exists and user has permission
+    if not await skill_repo.exists(skill_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Skill '{skill_id}' not found",
         )
 
+    if not await skill_repo.is_owner(skill_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to delete this skill",
+        )
+
+    await skill_repo.delete(skill_id)
+
 
 # ==================== File Management ====================
 
 
-@router.post("/{skill_id}/files")
+# Maximum file size in bytes (10 MB) - must match file_service.py
+MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
+
+
+@router.post("/{skill_id}/files", response_model=SkillFileUploadResponse)
 async def upload_file_to_skill(
     skill_id: str,
     current_user: CurrentUser,
     file: UploadFile = File(...),
     file_type: str = Query("reference", description="File type: 'reference' or 'template'"),
     skill_repo: SkillRepository = Depends(get_skill_repository),
-):
+) -> SkillFileUploadResponse:
     """Upload a file to a skill.
 
     Supported file types:
@@ -245,15 +287,15 @@ async def upload_file_to_skill(
 
     Files are stored in MinIO and text is extracted for prompt injection.
     """
-    # Check skill exists
-    skill = await skill_repo.get(skill_id)
-    if not skill:
+    # Check Content-Length header BEFORE reading file to prevent memory exhaustion
+    content_length = file.size
+    if content_length and content_length > MAX_FILE_SIZE_BYTES:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Skill '{skill_id}' not found",
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum size is {MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB",
         )
 
-    # Validate file type
+    # Validate file type before reading
     if not is_supported_file(file.filename):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -270,10 +312,28 @@ async def upload_file_to_skill(
             detail="file_type must be 'reference' or 'template'",
         )
 
-    # Read file content
-    file_data = await file.read()
+    # Check skill exists and user owns it BEFORE expensive file read
+    if not await skill_repo.exists(skill_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Skill '{skill_id}' not found",
+        )
 
-    # Upload file
+    if not await skill_repo.is_owner(skill_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to upload files to this skill",
+        )
+
+    # Read file content with size limit as additional safety check
+    file_data = await file.read()
+    if len(file_data) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum size is {MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB",
+        )
+
+    # Upload file to storage
     result = await upload_skill_file(
         skill_id=skill_id,
         filename=file.filename,
@@ -287,30 +347,34 @@ async def upload_file_to_skill(
             detail=result.error,
         )
 
-    # Add file to skill's resources
-    skill.definition.resources.files.append(result.skill_file)
-    await skill_repo.update(
-        skill_id=skill_id,
-        definition=skill.definition,
+    # Add file to skill atomically (uses row-level locking to prevent race conditions)
+    updated_skill = await skill_repo.add_file_atomically(skill_id, result.skill_file)
+    if not updated_skill:
+        # Skill was deleted or ownership changed during upload - clean up the uploaded file
+        from src.skills.file_service import delete_skill_file
+        await delete_skill_file(result.skill_file.storage_url)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Skill '{skill_id}' not found or no longer accessible",
+        )
+
+    return SkillFileUploadResponse(
+        file_id=result.skill_file.id,
+        filename=result.skill_file.name,
+        file_type=result.skill_file.file_type.value,
+        mime_type=result.skill_file.mime_type,
+        size_bytes=result.skill_file.size_bytes,
+        preview_length=len(result.skill_file.content_preview),
+        message="File uploaded successfully",
     )
 
-    return {
-        "file_id": result.skill_file.id,
-        "filename": result.skill_file.name,
-        "file_type": result.skill_file.file_type.value,
-        "mime_type": result.skill_file.mime_type,
-        "size_bytes": result.skill_file.size_bytes,
-        "preview_length": len(result.skill_file.content_preview),
-        "message": "File uploaded successfully",
-    }
 
-
-@router.get("/{skill_id}/files")
+@router.get("/{skill_id}/files", response_model=SkillFilesListResponse)
 async def list_skill_files(
     skill_id: str,
     current_user: CurrentUser,
     skill_repo: SkillRepository = Depends(get_skill_repository),
-):
+) -> SkillFilesListResponse:
     """List all files attached to a skill."""
     skill = await skill_repo.get(skill_id)
     if not skill:
@@ -320,29 +384,29 @@ async def list_skill_files(
         )
 
     files = skill.definition.resources.files
-    return {
-        "files": [
-            {
-                "id": f.id,
-                "name": f.name,
-                "file_type": f.file_type.value,
-                "mime_type": f.mime_type,
-                "size_bytes": f.size_bytes,
-                "uploaded_at": f.uploaded_at.isoformat(),
-            }
+    return SkillFilesListResponse(
+        files=[
+            SkillFileInfoResponse(
+                id=f.id,
+                name=f.name,
+                file_type=f.file_type.value,
+                mime_type=f.mime_type,
+                size_bytes=f.size_bytes,
+                uploaded_at=f.uploaded_at.isoformat(),
+            )
             for f in files
         ],
-        "total": len(files),
-    }
+        total=len(files),
+    )
 
 
-@router.get("/{skill_id}/files/{file_id}/download")
+@router.get("/{skill_id}/files/{file_id}/download", response_model=SkillFileDownloadResponse)
 async def get_file_download(
     skill_id: str,
     file_id: str,
     current_user: CurrentUser,
     skill_repo: SkillRepository = Depends(get_skill_repository),
-):
+) -> SkillFileDownloadResponse:
     """Get a presigned download URL for a skill file."""
     skill = await skill_repo.get(skill_id)
     if not skill:
@@ -367,11 +431,11 @@ async def get_file_download(
     # Get presigned URL
     download_url = await get_file_download_url(target_file.storage_url)
 
-    return {
-        "download_url": download_url,
-        "filename": target_file.name,
-        "expires_in_seconds": 3600,
-    }
+    return SkillFileDownloadResponse(
+        download_url=download_url,
+        filename=target_file.name,
+        expires_in_seconds=3600,
+    )
 
 
 @router.delete("/{skill_id}/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -382,51 +446,58 @@ async def delete_file_from_skill(
     skill_repo: SkillRepository = Depends(get_skill_repository),
 ):
     """Delete a file from a skill."""
-    skill = await skill_repo.get(skill_id)
-    if not skill:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Skill '{skill_id}' not found",
-        )
+    # Remove file from skill atomically first (this validates ownership too)
+    updated_skill, storage_url = await skill_repo.remove_file_atomically(skill_id, file_id)
 
-    # Find and remove the file
-    target_file = None
-    updated_files = []
-    for f in skill.definition.resources.files:
-        if f.id == file_id:
-            target_file = f
-        else:
-            updated_files.append(f)
-
-    if not target_file:
+    if updated_skill is None and storage_url is None:
+        # Could be skill not found, not owned, or file not found
+        # Check which case to provide better error message
+        if not await skill_repo.exists(skill_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Skill '{skill_id}' not found",
+            )
+        if not await skill_repo.is_owner(skill_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to delete files from this skill",
+            )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"File '{file_id}' not found in skill",
         )
 
-    # Delete from MinIO
-    await delete_skill_file(target_file.storage_url)
+    # Delete from storage AFTER successful database update
+    # This ensures we don't have orphaned files if the DB update failed
+    if storage_url:
+        deletion_success = await delete_skill_file(storage_url)
+        if not deletion_success:
+            # Log the failure but don't fail the request
+            # The file reference is already removed from the skill
+            # Storage cleanup can be handled by a background job
+            from src.config.logging import get_logger
+            logger = get_logger(__name__)
+            logger.warning(
+                "storage_file_deletion_failed",
+                skill_id=skill_id,
+                file_id=file_id,
+                storage_url=storage_url,
+            )
 
-    # Update skill
-    skill.definition.resources.files = updated_files
-    await skill_repo.update(
-        skill_id=skill_id,
-        definition=skill.definition,
-    )
 
-
-@router.get("/supported-file-types")
-async def get_supported_file_types():
+@router.get("/supported-file-types", response_model=SupportedFileTypesResponse)
+async def get_supported_file_types() -> SupportedFileTypesResponse:
     """Get list of supported file types for skill uploads."""
-    return {
-        "supported_extensions": get_supported_extensions(),
-        "categories": {
+    return SupportedFileTypesResponse(
+        extensions=get_supported_extensions(),
+        categories={
             "documents": ["pdf", "txt", "md", "docx"],
             "code": ["py", "js", "ts", "jsx", "tsx", "json", "yaml", "yml", "xml", "html", "css", "sql", "sh", "bash"],
             "data": ["csv", "tsv"],
             "config": ["env", "ini", "toml", "conf"],
         },
-    }
+        max_size_mb=get_max_file_size_mb(),
+    )
 
 
 # ==================== AI Generation ====================
@@ -669,11 +740,25 @@ async def rollback_skill_version(
     skill_repo: SkillRepository = Depends(get_skill_repository),
 ) -> SkillResponse:
     """Rollback a skill to a previous version."""
+    # Check skill exists
+    if not await skill_repo.exists(skill_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Skill '{skill_id}' not found",
+        )
+
+    # Check ownership - only owner can rollback
+    if not await skill_repo.is_owner(skill_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to rollback this skill",
+        )
+
     skill = await skill_repo.rollback_to_version(skill_id, version)
     if not skill:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Skill '{skill_id}' or version {version} not found",
+            detail=f"Version {version} not found for skill '{skill_id}'",
         )
 
     return _to_response(skill)
@@ -750,11 +835,25 @@ async def publish_skill(
     skill_repo: SkillRepository = Depends(get_skill_repository),
 ) -> PublishSkillResponse:
     """Publish a skill to the marketplace."""
-    skill = await skill_repo.publish_to_marketplace(skill_id)
-    if not skill:
+    # Check skill exists
+    if not await skill_repo.exists(skill_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Skill '{skill_id}' not found",
+        )
+
+    # Check ownership - only owner can publish
+    if not await skill_repo.is_owner(skill_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to publish this skill",
+        )
+
+    skill = await skill_repo.publish_to_marketplace(skill_id)
+    if not skill:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to publish skill",
         )
 
     return PublishSkillResponse(

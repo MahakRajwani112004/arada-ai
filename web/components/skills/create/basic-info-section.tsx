@@ -64,22 +64,24 @@ export function BasicInfoSection({
   return (
     <div className="space-y-4">
       <div>
-        <label className="mb-2 block text-sm font-medium">
+        <label htmlFor="skill-name" className="mb-2 block text-sm font-medium">
           Name <span className="text-destructive">*</span>
         </label>
         <Input
+          id="skill-name"
           placeholder="e.g., Legal Contract Analysis"
           value={name}
           onChange={(e) => onNameChange(e.target.value)}
+          aria-required="true"
         />
       </div>
 
       <div>
-        <label className="mb-2 block text-sm font-medium">
+        <label htmlFor="skill-category" className="mb-2 block text-sm font-medium">
           Category <span className="text-destructive">*</span>
         </label>
         <Select value={category} onValueChange={(v) => onCategoryChange(v as SkillCategory)}>
-          <SelectTrigger>
+          <SelectTrigger id="skill-category" aria-required="true">
             <SelectValue placeholder="Select a category" />
           </SelectTrigger>
           <SelectContent>
@@ -93,8 +95,9 @@ export function BasicInfoSection({
       </div>
 
       <div>
-        <label className="mb-2 block text-sm font-medium">Description</label>
+        <label htmlFor="skill-description" className="mb-2 block text-sm font-medium">Description</label>
         <Textarea
+          id="skill-description"
           placeholder="Describe what this skill does and when to use it..."
           value={description}
           onChange={(e) => onDescriptionChange(e.target.value)}
@@ -103,9 +106,10 @@ export function BasicInfoSection({
       </div>
 
       <div>
-        <label className="mb-2 block text-sm font-medium">Tags</label>
+        <label htmlFor="skill-tags" className="mb-2 block text-sm font-medium">Tags</label>
         <div className="flex gap-2">
           <Input
+            id="skill-tags"
             placeholder="Add a tag..."
             value={tagInput}
             onChange={(e) => onTagInputChange(e.target.value)}
@@ -117,14 +121,15 @@ export function BasicInfoSection({
           </Button>
         </div>
         {tags.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-2">
+          <div className="mt-2 flex flex-wrap gap-2" role="list" aria-label="Added tags">
             {tags.map((tag) => (
-              <Badge key={tag} variant="secondary" className="gap-1">
+              <Badge key={tag} variant="secondary" className="gap-1" role="listitem">
                 {tag}
                 <button
                   type="button"
                   onClick={() => handleRemoveTag(tag)}
                   className="ml-1 rounded-full hover:bg-muted-foreground/20"
+                  aria-label={`Remove tag ${tag}`}
                 >
                   <X className="h-3 w-3" />
                 </button>

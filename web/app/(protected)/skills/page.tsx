@@ -2,7 +2,7 @@
 
 import { Lightbulb, Plus, Sparkles, Search, Filter } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Header } from "@/components/layout/header";
 import { PageContainer, PageHeader } from "@/components/layout/page-container";
@@ -17,6 +17,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useSkills, useDeleteSkill } from "@/lib/hooks/use-skills";
 import { SKILL_CATEGORY_LABELS, type SkillCategory } from "@/types/skill";
 
@@ -77,20 +87,39 @@ function EmptyState() {
 
 export default function SkillsPage() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<SkillCategory | "all">(
     "all"
   );
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [skillToDelete, setSkillToDelete] = useState<{ id: string; name: string } | null>(null);
+
+  // Debounce search query to avoid excessive API calls
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   const { data, isLoading, error } = useSkills({
-    search: searchQuery || undefined,
+    search: debouncedSearch || undefined,
     category: categoryFilter === "all" ? undefined : categoryFilter,
   });
   const deleteSkill = useDeleteSkill();
 
-  const handleDelete = (id: string) => {
-    if (confirm("Are you sure you want to delete this skill?")) {
-      deleteSkill.mutate(id);
+  const handleDelete = (id: string, name: string) => {
+    setSkillToDelete({ id, name });
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (skillToDelete) {
+      deleteSkill.mutate(skillToDelete.id);
     }
+    setDeleteDialogOpen(false);
+    setSkillToDelete(null);
   };
 
   return (
@@ -166,7 +195,7 @@ export default function SkillsPage() {
           </div>
         )}
 
-        {data && data.skills.length === 0 && !searchQuery && !categoryFilter && (
+        {data && data.skills.length === 0 && !searchQuery && categoryFilter === "all" && (
           <EmptyState />
         )}
 
@@ -200,12 +229,33 @@ export default function SkillsPage() {
                 <SkillCard
                   key={skill.id}
                   skill={skill}
-                  onDelete={handleDelete}
+                  onDelete={(id) => handleDelete(id, skill.name)}
                 />
               ))}
             </div>
           </>
         )}
+
+        {/* Delete Confirmation Dialog */}
+        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Skill</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete &quot;{skillToDelete?.name}&quot;? This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmDelete}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </PageContainer>
     </>
   );

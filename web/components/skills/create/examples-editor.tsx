@@ -77,8 +77,9 @@ export function ExamplesEditor({ examples, onChange }: ExamplesEditorProps) {
   const renderForm = (isNew: boolean) => (
     <div className="space-y-3">
       <div>
-        <label className="mb-1 block text-sm font-medium">Context (optional)</label>
+        <label htmlFor={`example-context-${isNew ? 'new' : editingId}`} className="mb-1 block text-sm font-medium">Context (optional)</label>
         <Input
+          id={`example-context-${isNew ? 'new' : editingId}`}
           placeholder="e.g., Customer requesting refund"
           value={draft.context || ""}
           onChange={(e) => setDraft({ ...draft, context: e.target.value })}
@@ -86,25 +87,29 @@ export function ExamplesEditor({ examples, onChange }: ExamplesEditorProps) {
         />
       </div>
       <div>
-        <label className="mb-1 block text-sm font-medium">
+        <label htmlFor={`example-input-${isNew ? 'new' : editingId}`} className="mb-1 block text-sm font-medium">
           Input <span className="text-destructive">*</span>
         </label>
         <Textarea
+          id={`example-input-${isNew ? 'new' : editingId}`}
           placeholder="Sample input or question..."
           value={draft.input || ""}
           onChange={(e) => setDraft({ ...draft, input: e.target.value })}
           rows={3}
+          aria-required="true"
         />
       </div>
       <div>
-        <label className="mb-1 block text-sm font-medium">
+        <label htmlFor={`example-output-${isNew ? 'new' : editingId}`} className="mb-1 block text-sm font-medium">
           Expected Output <span className="text-destructive">*</span>
         </label>
         <Textarea
+          id={`example-output-${isNew ? 'new' : editingId}`}
           placeholder="Ideal response..."
           value={draft.output || ""}
           onChange={(e) => setDraft({ ...draft, output: e.target.value })}
           rows={3}
+          aria-required="true"
         />
       </div>
       <div className="flex justify-end gap-2">
@@ -183,6 +188,7 @@ export function ExamplesEditor({ examples, onChange }: ExamplesEditorProps) {
                     size="icon"
                     className="h-8 w-8"
                     onClick={() => handleEdit(example)}
+                    aria-label="Edit example"
                   >
                     <Edit2 className="h-4 w-4" />
                   </Button>
@@ -192,6 +198,7 @@ export function ExamplesEditor({ examples, onChange }: ExamplesEditorProps) {
                     size="icon"
                     className="h-8 w-8 text-destructive hover:text-destructive"
                     onClick={() => handleDelete(example.id)}
+                    aria-label="Delete example"
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>

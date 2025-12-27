@@ -4,13 +4,17 @@ Skills need file content for prompt injection, not vector search.
 So we extract text and store a preview (first ~2000 chars) in the DB.
 """
 
+import asyncio
 import mimetypes
 import os
+import re
 import tempfile
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Tuple
+
+import aiofiles
 
 from src.config.logging import get_logger
 from src.skills.models import FileType, SkillFile
@@ -20,6 +24,12 @@ logger = get_logger(__name__)
 
 # Maximum preview size for DB storage (chars)
 MAX_PREVIEW_SIZE = 4000
+
+# Maximum file size in bytes (10 MB)
+MAX_FILE_SIZE = 10 * 1024 * 1024
+
+# Minimum file size in bytes (1 byte)
+MIN_FILE_SIZE = 1
 
 # Supported file types for text extraction
 SUPPORTED_EXTENSIONS = {
@@ -68,6 +78,60 @@ def get_file_extension(filename: str) -> str:
     return filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
 
+def sanitize_filename(filename: str) -> str:
+    """Sanitize filename to prevent path traversal attacks.
+
+    Removes path separators, null bytes, and special characters.
+    Preserves the file extension.
+
+    Args:
+        filename: Original filename from user input
+
+    Returns:
+        Sanitized filename safe for storage paths
+    """
+    if not filename:
+        return "unnamed_file"
+
+    # Get the extension before sanitizing
+    ext = get_file_extension(filename)
+
+    # Get base name (without any path components)
+    base = os.path.basename(filename)
+
+    # Remove extension to sanitize the name part
+    if ext and base.endswith(f".{ext}"):
+        name_part = base[: -(len(ext) + 1)]
+    else:
+        name_part = base
+
+    # Remove null bytes and path separators
+    name_part = name_part.replace("\x00", "").replace("/", "_").replace("\\", "_")
+
+    # Keep only safe characters (alphanumeric, underscore, hyphen, dot)
+    name_part = re.sub(r"[^a-zA-Z0-9._-]", "_", name_part)
+
+    # Collapse multiple underscores
+    name_part = re.sub(r"_+", "_", name_part)
+
+    # Remove leading/trailing underscores and dots (prevent hidden files)
+    name_part = name_part.strip("_.")
+
+    # Ensure we have something left
+    if not name_part:
+        name_part = "file"
+
+    # Limit length (leave room for extension)
+    max_name_length = 200
+    if len(name_part) > max_name_length:
+        name_part = name_part[:max_name_length]
+
+    # Reconstruct with extension
+    if ext:
+        return f"{name_part}.{ext}"
+    return name_part
+
+
 def is_supported_file(filename: str) -> bool:
     """Check if file type is supported."""
     ext = get_file_extension(filename)
@@ -113,12 +177,12 @@ async def extract_text(file_path: str, file_ext: str) -> str:
 
 async def _extract_text_file(file_path: str) -> str:
     """Extract text from plain text files."""
-    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-        return f.read()
+    async with aiofiles.open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        return await f.read()
 
 
-async def _extract_pdf(file_path: str) -> str:
-    """Extract text from PDF file."""
+def _extract_pdf_sync(file_path: str) -> str:
+    """Synchronous PDF extraction (runs in executor)."""
     try:
         from pypdf import PdfReader
 
@@ -150,8 +214,14 @@ async def _extract_pdf(file_path: str) -> str:
             )
 
 
-async def _extract_docx(file_path: str) -> str:
-    """Extract text from DOCX file."""
+async def _extract_pdf(file_path: str) -> str:
+    """Extract text from PDF file (runs blocking code in executor)."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _extract_pdf_sync, file_path)
+
+
+def _extract_docx_sync(file_path: str) -> str:
+    """Synchronous DOCX extraction (runs in executor)."""
     try:
         from docx import Document
 
@@ -164,6 +234,17 @@ async def _extract_docx(file_path: str) -> str:
             "DOCX support requires python-docx. "
             "Install with: pip install python-docx"
         )
+
+
+async def _extract_docx(file_path: str) -> str:
+    """Extract text from DOCX file (runs blocking code in executor)."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _extract_docx_sync, file_path)
+
+
+def get_max_file_size_mb() -> float:
+    """Get maximum file size in megabytes."""
+    return MAX_FILE_SIZE / (1024 * 1024)
 
 
 async def upload_skill_file(
@@ -185,6 +266,28 @@ async def upload_skill_file(
     """
     file_ext = get_file_extension(filename)
 
+    # Validate filename
+    if not filename or not filename.strip():
+        return FileUploadResult(
+            success=False,
+            error="Filename cannot be empty"
+        )
+
+    # Validate file size - not empty
+    if len(file_data) < MIN_FILE_SIZE:
+        return FileUploadResult(
+            success=False,
+            error="File is empty"
+        )
+
+    # Validate file size - not too large
+    if len(file_data) > MAX_FILE_SIZE:
+        max_mb = MAX_FILE_SIZE / (1024 * 1024)
+        return FileUploadResult(
+            success=False,
+            error=f"File too large. Maximum size is {max_mb:.0f} MB"
+        )
+
     # Validate file type
     if not is_supported_file(filename):
         return FileUploadResult(
@@ -193,10 +296,20 @@ async def upload_skill_file(
         )
 
     try:
-        # Save to temp file for extraction
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp:
-            tmp.write(file_data)
-            tmp_path = tmp.name
+        # Sanitize filename to prevent path traversal
+        safe_filename = sanitize_filename(filename)
+
+        # Save to temp file for extraction (use executor for blocking I/O)
+        loop = asyncio.get_event_loop()
+
+        def write_temp_file() -> str:
+            with tempfile.NamedTemporaryFile(
+                delete=False, suffix=f".{file_ext}"
+            ) as tmp:
+                tmp.write(file_data)
+                return tmp.name
+
+        tmp_path = await loop.run_in_executor(None, write_temp_file)
 
         try:
             # Extract text content
@@ -208,28 +321,28 @@ async def upload_skill_file(
                 content_preview += "\n\n[... content truncated ...]"
 
         finally:
-            # Clean up temp file
-            os.unlink(tmp_path)
+            # Clean up temp file (use executor for blocking I/O)
+            await loop.run_in_executor(None, os.unlink, tmp_path)
 
-        # Generate unique file ID and storage key
+        # Generate unique file ID and storage key (using sanitized filename)
         file_id = f"file_{uuid.uuid4().hex[:12]}"
-        storage_key = f"skills/{skill_id}/{file_id}_{filename}"
+        storage_key = f"skills/{skill_id}/{file_id}_{safe_filename}"
 
         # Upload to MinIO
         storage = get_storage()
         mime_type = get_mime_type(filename)
         await storage.upload(storage_key, file_data, content_type=mime_type)
 
-        # Create SkillFile object
+        # Create SkillFile object (store original filename for display)
         skill_file = SkillFile(
             id=file_id,
-            name=filename,
+            name=filename,  # Keep original name for display
             file_type=file_type,
             mime_type=mime_type,
             storage_url=storage_key,
             content_preview=content_preview,
             size_bytes=len(file_data),
-            uploaded_at=datetime.utcnow(),
+            uploaded_at=datetime.now(timezone.utc),
         )
 
         logger.info(

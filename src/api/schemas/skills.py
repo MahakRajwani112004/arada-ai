@@ -441,6 +441,55 @@ class RateSkillResponse(BaseModel):
     total_ratings: int
 
 
+# ==================== File Management Schemas ====================
+
+
+class SkillFileUploadResponse(BaseModel):
+    """Response after uploading a file to a skill."""
+
+    file_id: str = Field(..., description="Unique file identifier")
+    filename: str = Field(..., description="Original filename")
+    file_type: str = Field(..., description="File type: reference or template")
+    mime_type: str = Field(..., description="MIME type of the file")
+    size_bytes: int = Field(..., ge=0, description="File size in bytes")
+    preview_length: int = Field(..., ge=0, description="Length of extracted preview")
+    message: str = Field(..., description="Success message")
+
+
+class SkillFileInfoResponse(BaseModel):
+    """Information about a single skill file."""
+
+    id: str = Field(..., description="Unique file identifier")
+    name: str = Field(..., description="Original filename")
+    file_type: str = Field(..., description="File type: reference or template")
+    mime_type: str = Field(..., description="MIME type of the file")
+    size_bytes: int = Field(..., ge=0, description="File size in bytes")
+    uploaded_at: str = Field(..., description="Upload timestamp (ISO format)")
+
+
+class SkillFilesListResponse(BaseModel):
+    """Response listing all files attached to a skill."""
+
+    files: List[SkillFileInfoResponse] = Field(default_factory=list)
+    total: int = Field(..., ge=0, description="Total number of files")
+
+
+class SkillFileDownloadResponse(BaseModel):
+    """Response with a presigned download URL for a skill file."""
+
+    download_url: str = Field(..., description="Presigned URL for file download")
+    filename: str = Field(..., description="Original filename")
+    expires_in_seconds: int = Field(..., description="URL expiration time in seconds")
+
+
+class SupportedFileTypesResponse(BaseModel):
+    """Response listing supported file types for skill uploads."""
+
+    extensions: List[str] = Field(..., description="List of supported file extensions")
+    categories: Dict[str, List[str]] = Field(..., description="Extensions grouped by category")
+    max_size_mb: float = Field(..., description="Maximum file size in megabytes")
+
+
 # ==================== Stats Schemas ====================
 
 

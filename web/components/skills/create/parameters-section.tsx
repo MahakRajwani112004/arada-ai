@@ -116,22 +116,26 @@ export function ParametersSection({
     setOptionsInput("");
   };
 
+  const formId = isAdding ? 'new' : editingId;
+
   const renderForm = (isNew: boolean) => (
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
-          <label className="mb-1 block text-sm font-medium">
+          <label htmlFor={`param-name-${formId}`} className="mb-1 block text-sm font-medium">
             Parameter Name <span className="text-destructive">*</span>
           </label>
           <Input
+            id={`param-name-${formId}`}
             placeholder="e.g., jurisdiction"
             value={draft.name || ""}
             onChange={(e) => setDraft({ ...draft, name: e.target.value })}
             autoFocus={isNew}
+            aria-required="true"
           />
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium">Type</label>
+          <label htmlFor={`param-type-${formId}`} className="mb-1 block text-sm font-medium">Type</label>
           <Select
             value={draft.type || "string"}
             onValueChange={(v) =>
@@ -142,7 +146,7 @@ export function ParametersSection({
               })
             }
           >
-            <SelectTrigger>
+            <SelectTrigger id={`param-type-${formId}`}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -157,8 +161,9 @@ export function ParametersSection({
       </div>
 
       <div>
-        <label className="mb-1 block text-sm font-medium">Description</label>
+        <label htmlFor={`param-desc-${formId}`} className="mb-1 block text-sm font-medium">Description</label>
         <Textarea
+          id={`param-desc-${formId}`}
           placeholder="What does this parameter control?"
           value={draft.description || ""}
           onChange={(e) => setDraft({ ...draft, description: e.target.value })}
@@ -168,10 +173,11 @@ export function ParametersSection({
 
       {draft.type === "select" && (
         <div>
-          <label className="mb-1 block text-sm font-medium">
+          <label htmlFor={`param-options-${formId}`} className="mb-1 block text-sm font-medium">
             Options (comma-separated)
           </label>
           <Input
+            id={`param-options-${formId}`}
             placeholder="e.g., US, UK, EU, Other"
             value={optionsInput}
             onChange={(e) => setOptionsInput(e.target.value)}
@@ -181,7 +187,7 @@ export function ParametersSection({
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
-          <label className="mb-1 block text-sm font-medium">Default Value</label>
+          <label htmlFor={`param-default-${formId}`} className="mb-1 block text-sm font-medium">Default Value</label>
           {draft.type === "boolean" ? (
             <Select
               value={String(draft.default_value ?? "")}
@@ -192,7 +198,7 @@ export function ParametersSection({
                 })
               }
             >
-              <SelectTrigger>
+              <SelectTrigger id={`param-default-${formId}`}>
                 <SelectValue placeholder="No default" />
               </SelectTrigger>
               <SelectContent>
@@ -206,7 +212,7 @@ export function ParametersSection({
               value={String(draft.default_value ?? "")}
               onValueChange={(v) => setDraft({ ...draft, default_value: v || undefined })}
             >
-              <SelectTrigger>
+              <SelectTrigger id={`param-default-${formId}`}>
                 <SelectValue placeholder="No default" />
               </SelectTrigger>
               <SelectContent>
@@ -224,6 +230,7 @@ export function ParametersSection({
             </Select>
           ) : (
             <Input
+              id={`param-default-${formId}`}
               type={draft.type === "number" ? "number" : "text"}
               placeholder="Optional default"
               value={draft.default_value as string ?? ""}
@@ -237,8 +244,9 @@ export function ParametersSection({
           )}
         </div>
         <div className="flex items-end">
-          <label className="flex items-center gap-2">
+          <label htmlFor={`param-required-${formId}`} className="flex items-center gap-2">
             <Checkbox
+              id={`param-required-${formId}`}
               checked={draft.required || false}
               onCheckedChange={(checked) =>
                 setDraft({ ...draft, required: !!checked })
@@ -333,6 +341,7 @@ export function ParametersSection({
                     size="icon"
                     className="h-8 w-8"
                     onClick={() => handleEdit(param)}
+                    aria-label={`Edit parameter ${param.name}`}
                   >
                     <Edit2 className="h-4 w-4" />
                   </Button>
@@ -342,6 +351,7 @@ export function ParametersSection({
                     size="icon"
                     className="h-8 w-8 text-destructive hover:text-destructive"
                     onClick={() => handleDelete(param.id)}
+                    aria-label={`Delete parameter ${param.name}`}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>

@@ -114,6 +114,8 @@ export function TerminologyList({ items, onChange }: TerminologyListProps) {
                   placeholder="Term"
                   value={draft.term || ""}
                   onChange={(e) => setDraft({ ...draft, term: e.target.value })}
+                  aria-label="Term"
+                  aria-required="true"
                 />
                 <Textarea
                   placeholder="Definition"
@@ -122,11 +124,14 @@ export function TerminologyList({ items, onChange }: TerminologyListProps) {
                     setDraft({ ...draft, definition: e.target.value })
                   }
                   rows={2}
+                  aria-label="Definition"
+                  aria-required="true"
                 />
                 <Input
                   placeholder="Aliases (comma-separated)"
                   value={draft.aliases?.join(", ") || ""}
                   onChange={(e) => handleAliasesChange(e.target.value)}
+                  aria-label="Aliases (comma-separated)"
                 />
                 <div className="flex justify-end gap-2">
                   <Button
@@ -134,6 +139,7 @@ export function TerminologyList({ items, onChange }: TerminologyListProps) {
                     variant="ghost"
                     size="sm"
                     onClick={handleCancel}
+                    aria-label="Cancel editing"
                   >
                     <X className="h-4 w-4" />
                   </Button>
@@ -142,6 +148,7 @@ export function TerminologyList({ items, onChange }: TerminologyListProps) {
                     size="sm"
                     onClick={handleSaveEdit}
                     disabled={!draft.term?.trim() || !draft.definition?.trim()}
+                    aria-label="Save changes"
                   >
                     <Check className="h-4 w-4" />
                   </Button>
@@ -167,6 +174,7 @@ export function TerminologyList({ items, onChange }: TerminologyListProps) {
                     size="icon"
                     className="h-8 w-8"
                     onClick={() => handleEdit(item)}
+                    aria-label={`Edit term ${item.term}`}
                   >
                     <Edit2 className="h-4 w-4" />
                   </Button>
@@ -176,6 +184,7 @@ export function TerminologyList({ items, onChange }: TerminologyListProps) {
                     size="icon"
                     className="h-8 w-8 text-destructive hover:text-destructive"
                     onClick={() => handleDelete(item.id)}
+                    aria-label={`Delete term ${item.term}`}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -193,6 +202,8 @@ export function TerminologyList({ items, onChange }: TerminologyListProps) {
                 value={draft.term || ""}
                 onChange={(e) => setDraft({ ...draft, term: e.target.value })}
                 autoFocus
+                aria-label="Term"
+                aria-required="true"
               />
               <Textarea
                 placeholder="Definition"
@@ -201,11 +212,14 @@ export function TerminologyList({ items, onChange }: TerminologyListProps) {
                   setDraft({ ...draft, definition: e.target.value })
                 }
                 rows={2}
+                aria-label="Definition"
+                aria-required="true"
               />
               <Input
                 placeholder="Aliases (comma-separated, optional)"
                 value={draft.aliases?.join(", ") || ""}
                 onChange={(e) => handleAliasesChange(e.target.value)}
+                aria-label="Aliases (comma-separated)"
               />
               <div className="flex justify-end gap-2">
                 <Button

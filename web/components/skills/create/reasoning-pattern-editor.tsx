@@ -99,7 +99,7 @@ export function ReasoningPatternEditor({
 
   const renderStepEditor = () => (
     <div className="space-y-2">
-      <label className="text-sm font-medium">Steps</label>
+      <span className="text-sm font-medium" id="steps-label">Steps</span>
       {(draft.steps || []).map((step, idx) => (
         <div key={idx} className="flex items-center gap-2">
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium">
@@ -109,6 +109,7 @@ export function ReasoningPatternEditor({
             placeholder={`Step ${idx + 1}`}
             value={step}
             onChange={(e) => handleStepChange(idx, e.target.value)}
+            aria-label={`Step ${idx + 1}`}
           />
           <Button
             type="button"
@@ -117,6 +118,7 @@ export function ReasoningPatternEditor({
             className="h-8 w-8 shrink-0"
             onClick={() => handleRemoveStep(idx)}
             disabled={(draft.steps || []).length <= 1}
+            aria-label={`Remove step ${idx + 1}`}
           >
             <X className="h-4 w-4" />
           </Button>
@@ -167,6 +169,8 @@ export function ReasoningPatternEditor({
                   placeholder="Pattern name"
                   value={draft.name || ""}
                   onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                  aria-label="Pattern name"
+                  aria-required="true"
                 />
                 <Textarea
                   placeholder="Description (optional)"
@@ -175,6 +179,7 @@ export function ReasoningPatternEditor({
                     setDraft({ ...draft, description: e.target.value })
                   }
                   rows={2}
+                  aria-label="Description"
                 />
                 {renderStepEditor()}
                 <div className="flex justify-end gap-2">
@@ -183,6 +188,7 @@ export function ReasoningPatternEditor({
                     variant="ghost"
                     size="sm"
                     onClick={handleCancel}
+                    aria-label="Cancel editing"
                   >
                     <X className="h-4 w-4" />
                   </Button>
@@ -194,6 +200,7 @@ export function ReasoningPatternEditor({
                       !draft.name?.trim() ||
                       !draft.steps?.some((s) => s.trim())
                     }
+                    aria-label="Save changes"
                   >
                     <Check className="h-4 w-4" />
                   </Button>
@@ -229,6 +236,7 @@ export function ReasoningPatternEditor({
                     size="icon"
                     className="h-8 w-8"
                     onClick={() => handleEdit(pattern)}
+                    aria-label={`Edit pattern ${pattern.name}`}
                   >
                     <Edit2 className="h-4 w-4" />
                   </Button>
@@ -238,6 +246,7 @@ export function ReasoningPatternEditor({
                     size="icon"
                     className="h-8 w-8 text-destructive hover:text-destructive"
                     onClick={() => handleDelete(pattern.id)}
+                    aria-label={`Delete pattern ${pattern.name}`}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -255,6 +264,8 @@ export function ReasoningPatternEditor({
                 value={draft.name || ""}
                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
                 autoFocus
+                aria-label="Pattern name"
+                aria-required="true"
               />
               <Textarea
                 placeholder="Description (optional)"
@@ -263,6 +274,7 @@ export function ReasoningPatternEditor({
                   setDraft({ ...draft, description: e.target.value })
                 }
                 rows={2}
+                aria-label="Description"
               />
               {renderStepEditor()}
               <div className="flex justify-end gap-2">

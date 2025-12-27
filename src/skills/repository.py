@@ -4,8 +4,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select, func, or_, and_
+from sqlalchemy import select, func, or_, and_, case
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from src.config.logging import get_logger
 from src.storage.models import SkillModel, SkillVersionModel, SkillExecutionModel
@@ -35,6 +36,26 @@ class SkillRepository:
         """
         self._session = session
         self._user_id = user_id
+
+    @staticmethod
+    def _escape_like_pattern(search: str) -> str:
+        """Escape special characters in LIKE patterns to prevent injection.
+
+        Escapes %, _, and \ characters that have special meaning in SQL LIKE.
+
+        Args:
+            search: User-provided search string
+
+        Returns:
+            Escaped string safe for LIKE patterns
+        """
+        # Escape backslash first, then other special chars
+        return (
+            search
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
 
     async def create(
         self,
@@ -104,12 +125,17 @@ class SkillRepository:
         """
         query = select(SkillModel).where(SkillModel.id == skill_id)
 
-        # If user_id is set, filter by user or public skills
+        # If user_id is set, filter by user or published public skills
+        # Draft skills are only visible to their owner
         if self._user_id:
             query = query.where(
                 or_(
                     SkillModel.user_id == self._user_id,
-                    SkillModel.is_public == True,
+                    # Public skills must be published to be visible to others
+                    and_(
+                        SkillModel.is_public == True,
+                        SkillModel.status == SkillStatus.PUBLISHED.value,
+                    ),
                 )
             )
 
@@ -121,29 +147,51 @@ class SkillRepository:
 
         return self._to_skill(db_model)
 
-    async def list(
+    async def exists(self, skill_id: str) -> bool:
+        """Check if a skill exists (regardless of ownership).
+
+        Args:
+            skill_id: Skill ID
+
+        Returns:
+            True if skill exists, False otherwise
+        """
+        query = select(SkillModel.id).where(SkillModel.id == skill_id)
+        result = await self._session.execute(query)
+        return result.scalar_one_or_none() is not None
+
+    async def is_owner(self, skill_id: str) -> bool:
+        """Check if current user owns the skill.
+
+        Args:
+            skill_id: Skill ID
+
+        Returns:
+            True if user owns the skill, False otherwise
+        """
+        if not self._user_id:
+            return False
+
+        query = select(SkillModel.id).where(
+            and_(
+                SkillModel.id == skill_id,
+                SkillModel.user_id == self._user_id,
+            )
+        )
+        result = await self._session.execute(query)
+        return result.scalar_one_or_none() is not None
+
+    def _build_list_query(
         self,
         category: Optional[SkillCategory] = None,
         tags: Optional[List[str]] = None,
         status: Optional[SkillStatus] = None,
         search: Optional[str] = None,
         include_public: bool = True,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> List[Skill]:
-        """List skills with optional filtering.
+    ):
+        """Build the base query for listing skills.
 
-        Args:
-            category: Filter by category
-            tags: Filter by tags (any match)
-            status: Filter by status
-            search: Search in name/description
-            include_public: Include public skills from marketplace
-            limit: Maximum results
-            offset: Pagination offset
-
-        Returns:
-            List of skills
+        Returns a query that can be used for both listing and counting.
         """
         query = select(SkillModel)
 
@@ -171,15 +219,83 @@ class SkillRepository:
         if tags:
             query = query.where(SkillModel.tags.overlap(tags))
 
-        # Search filter
+        # Search filter (escape special LIKE characters to prevent injection)
         if search:
-            search_pattern = f"%{search}%"
+            escaped_search = self._escape_like_pattern(search)
+            search_pattern = f"%{escaped_search}%"
             query = query.where(
                 or_(
-                    SkillModel.name.ilike(search_pattern),
-                    SkillModel.description.ilike(search_pattern),
+                    SkillModel.name.ilike(search_pattern, escape="\\"),
+                    SkillModel.description.ilike(search_pattern, escape="\\"),
                 )
             )
+
+        return query
+
+    async def count(
+        self,
+        category: Optional[SkillCategory] = None,
+        tags: Optional[List[str]] = None,
+        status: Optional[SkillStatus] = None,
+        search: Optional[str] = None,
+        include_public: bool = True,
+    ) -> int:
+        """Count skills matching the given filters.
+
+        Args:
+            category: Filter by category
+            tags: Filter by tags (any match)
+            status: Filter by status
+            search: Search in name/description
+            include_public: Include public skills from marketplace
+
+        Returns:
+            Total count of matching skills
+        """
+        base_query = self._build_list_query(
+            category=category,
+            tags=tags,
+            status=status,
+            search=search,
+            include_public=include_public,
+        )
+
+        # Convert to count query
+        count_query = select(func.count()).select_from(base_query.subquery())
+        result = await self._session.execute(count_query)
+        return result.scalar() or 0
+
+    async def list(
+        self,
+        category: Optional[SkillCategory] = None,
+        tags: Optional[List[str]] = None,
+        status: Optional[SkillStatus] = None,
+        search: Optional[str] = None,
+        include_public: bool = True,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[Skill]:
+        """List skills with optional filtering.
+
+        Args:
+            category: Filter by category
+            tags: Filter by tags (any match)
+            status: Filter by status
+            search: Search in name/description
+            include_public: Include public skills from marketplace
+            limit: Maximum results
+            offset: Pagination offset
+
+        Returns:
+            List of skills
+        """
+        query = self._build_list_query(
+            category=category,
+            tags=tags,
+            status=status,
+            search=search,
+            include_public=include_public,
+        )
 
         # Order by updated_at descending
         query = query.order_by(SkillModel.updated_at.desc())
@@ -433,6 +549,128 @@ class SkillRepository:
 
         return self._to_skill(db_model)
 
+    async def add_file_atomically(
+        self,
+        skill_id: str,
+        skill_file: "SkillFile",
+    ) -> Optional[Skill]:
+        """Add a file to a skill atomically using row-level locking.
+
+        This prevents TOCTOU race conditions by locking the row during the update.
+
+        Args:
+            skill_id: Skill ID
+            skill_file: SkillFile object to add
+
+        Returns:
+            Updated Skill if successful, None if not found or not owned
+        """
+        from src.skills.models import SkillFile
+
+        if not self._user_id:
+            raise ValueError("user_id is required for adding files")
+
+        # Use SELECT ... FOR UPDATE to lock the row
+        query = (
+            select(SkillModel)
+            .where(
+                and_(
+                    SkillModel.id == skill_id,
+                    SkillModel.user_id == self._user_id,
+                )
+            )
+            .with_for_update()
+        )
+
+        result = await self._session.execute(query)
+        db_model = result.scalar_one_or_none()
+
+        if db_model is None:
+            return None
+
+        # Update the definition with the new file
+        definition = SkillDefinition.from_dict(db_model.definition_json)
+        definition.resources.files.append(skill_file)
+        db_model.definition_json = definition.to_dict()
+        db_model.updated_at = datetime.now(timezone.utc)
+
+        await self._session.commit()
+        await self._session.refresh(db_model)
+
+        logger.info(
+            "skill_file_added_atomically",
+            skill_id=skill_id,
+            file_id=skill_file.id,
+        )
+
+        return self._to_skill(db_model)
+
+    async def remove_file_atomically(
+        self,
+        skill_id: str,
+        file_id: str,
+    ) -> tuple[Optional[Skill], Optional[str]]:
+        """Remove a file from a skill atomically using row-level locking.
+
+        Args:
+            skill_id: Skill ID
+            file_id: File ID to remove
+
+        Returns:
+            Tuple of (Updated Skill, storage_url) if successful,
+            (None, None) if not found or not owned
+        """
+        if not self._user_id:
+            raise ValueError("user_id is required for removing files")
+
+        # Use SELECT ... FOR UPDATE to lock the row
+        query = (
+            select(SkillModel)
+            .where(
+                and_(
+                    SkillModel.id == skill_id,
+                    SkillModel.user_id == self._user_id,
+                )
+            )
+            .with_for_update()
+        )
+
+        result = await self._session.execute(query)
+        db_model = result.scalar_one_or_none()
+
+        if db_model is None:
+            return None, None
+
+        # Find and remove the file
+        definition = SkillDefinition.from_dict(db_model.definition_json)
+        storage_url = None
+        updated_files = []
+
+        for f in definition.resources.files:
+            if f.id == file_id:
+                storage_url = f.storage_url
+            else:
+                updated_files.append(f)
+
+        if storage_url is None:
+            # File not found
+            return None, None
+
+        definition.resources.files = updated_files
+        db_model.definition_json = definition.to_dict()
+        db_model.updated_at = datetime.now(timezone.utc)
+
+        await self._session.commit()
+        await self._session.refresh(db_model)
+
+        logger.info(
+            "skill_file_removed_atomically",
+            skill_id=skill_id,
+            file_id=file_id,
+        )
+
+        return self._to_skill(db_model), storage_url
+
     async def record_execution(
         self,
         skill_id: str,
@@ -474,42 +712,29 @@ class SkillRepository:
     async def get_stats(self, skill_id: str) -> Dict[str, Any]:
         """Get execution statistics for a skill.
 
+        Uses a single query to fetch all stats efficiently.
+
         Args:
             skill_id: Skill ID
 
         Returns:
             Stats dict with execution counts, success rate, avg duration
         """
-        # Total executions
-        total_query = select(func.count()).where(
-            SkillExecutionModel.skill_id == skill_id
-        )
-        total_result = await self._session.execute(total_query)
-        total_count = total_result.scalar() or 0
+        # Single query for all stats using conditional aggregation
+        query = select(
+            func.count().label("total"),
+            func.sum(
+                case((SkillExecutionModel.success == True, 1), else_=0)
+            ).label("success_count"),
+            func.avg(SkillExecutionModel.duration_ms).label("avg_duration"),
+        ).where(SkillExecutionModel.skill_id == skill_id)
 
-        if total_count == 0:
-            return {
-                "total_executions": 0,
-                "success_rate": 0.0,
-                "avg_duration_ms": 0.0,
-            }
+        result = await self._session.execute(query)
+        row = result.one()
 
-        # Success count
-        success_query = select(func.count()).where(
-            and_(
-                SkillExecutionModel.skill_id == skill_id,
-                SkillExecutionModel.success == True,
-            )
-        )
-        success_result = await self._session.execute(success_query)
-        success_count = success_result.scalar() or 0
-
-        # Average duration
-        avg_query = select(func.avg(SkillExecutionModel.duration_ms)).where(
-            SkillExecutionModel.skill_id == skill_id
-        )
-        avg_result = await self._session.execute(avg_query)
-        avg_duration = avg_result.scalar() or 0.0
+        total_count = row.total or 0
+        success_count = row.success_count or 0
+        avg_duration = row.avg_duration or 0.0
 
         return {
             "total_executions": total_count,

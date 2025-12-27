@@ -293,6 +293,7 @@ export function ResourcesSection({
                     size="icon"
                     onClick={() => handleDeleteFile(file.id)}
                     disabled={deleteFile.isPending}
+                    aria-label={`Delete file ${file.name}`}
                   >
                     {deleteFile.isPending ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -346,6 +347,7 @@ export function ResourcesSection({
                       size="icon"
                       className="h-7 w-7"
                       onClick={() => setEditingSnippet(snippet)}
+                      aria-label={`Edit snippet ${snippet.description || snippet.language}`}
                     >
                       <Code className="h-3 w-3" />
                     </Button>
@@ -354,6 +356,7 @@ export function ResourcesSection({
                       size="icon"
                       className="h-7 w-7"
                       onClick={() => handleDeleteSnippet(snippet.id)}
+                      aria-label={`Delete snippet ${snippet.description || snippet.language}`}
                     >
                       <X className="h-3 w-3 text-destructive" />
                     </Button>
