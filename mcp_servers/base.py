@@ -553,3 +553,6 @@ class BaseMCPServer(ABC):
 
         self.logger.info(f"Starting MCP server on {host}:{port}")
         uvicorn.run(self.app, host=host, port=port)
+
+
+# Trigger rebuild: 2025-12-27
