@@ -576,3 +576,142 @@ class KnowledgeDocumentModel(Base):
     def __repr__(self) -> str:
         """String representation."""
         return f"<KnowledgeDocumentModel(id={self.id!r}, filename={self.filename!r}, status={self.status!r})>"
+
+class SkillModel(Base):
+    """SQLAlchemy model for skills table.
+    Skills are domain expertise packages that enhance agent capabilities.
+    They contain terminology, reasoning patterns, examples, templates,
+    and prompt enhancements that get injected into agent prompts.
+    """
+    __tablename__ = "skills"
+    # Primary key
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    # Owner - each user owns their own skills
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Basic info
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    category: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    tags: Mapped[List[str]] = mapped_column(ARRAY(String), nullable=False, default=[])
+
+    # Full skill definition as JSONB
+    definition_json: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+    # Versioning
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    # Status: draft, published, archived
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="draft", index=True
+    )
+
+    # Marketplace
+    is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    marketplace_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    rating_avg: Mapped[Optional[float]] = mapped_column(
+        Integer, nullable=True
+    )  # Stored as int * 10 for precision
+    rating_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    install_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Metadata
+    created_by: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<SkillModel(id={self.id!r}, name={self.name!r}, category={self.category!r})>"
+
+class SkillVersionModel(Base):
+    """SQLAlchemy model for skill version history.
+    Tracks changes to skill definitions over time for rollback capability.
+    """
+
+    __tablename__ = "skill_versions"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Reference to skill
+    skill_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("skills.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Version number
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Full skill definition at this version
+    definition_json: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+    # Change description
+    changelog: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Timestamp
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<SkillVersionModel(skill_id={self.skill_id!r}, version={self.version})>"
+
+class SkillExecutionModel(Base):
+
+    """SQLAlchemy model for skill execution tracking.
+    Tracks when skills are used by agents for analytics and A/B testing.
+    """
+    __tablename__ = "skill_executions"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # References
+    skill_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("skills.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    agent_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Execution details
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    duration_ms: Mapped[float] = mapped_column(Integer, nullable=False)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Context
+    task_preview: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # First 500 chars of input
+ 
+    # Timestamp
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+ 
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<SkillExecutionModel(skill_id={self.skill_id!r}, success={self.success})>"

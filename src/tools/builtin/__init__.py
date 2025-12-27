@@ -1,10 +1,13 @@
 """Builtin tools."""
 from .calculator import CalculatorTool
 from .datetime_tool import DateTimeTool
+from .document_generator import DocumentGeneratorTool, TemplateFillerTool
 
 __all__ = [
     "CalculatorTool",
     "DateTimeTool",
+    "DocumentGeneratorTool",
+    "TemplateFillerTool",
 ]
 
 
@@ -15,3 +18,5 @@ def register_builtin_tools():
     registry = get_registry()
     registry.register(CalculatorTool())
     registry.register(DateTimeTool())
+    registry.register(DocumentGeneratorTool())
+    registry.register(TemplateFillerTool())

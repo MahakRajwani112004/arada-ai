@@ -10,6 +10,7 @@ from .llm_config import LLMConfig
 from .orchestrator_config import OrchestratorConfig
 from .persona import AgentExample, AgentGoal, AgentInstructions, AgentRole
 from .safety_config import GovernanceConfig, SafetyConfig
+from .skill_config import SkillConfig
 from .tool_config import ToolConfig
 
 
@@ -54,6 +55,10 @@ class AgentConfig(BaseModel):
     tools: List[ToolConfig] = Field(
         default_factory=list,
         description="Tool configurations",
+    )
+    skills: List[SkillConfig] = Field(
+        default_factory=list,
+        description="Skill configurations for domain expertise",
     )
 
     # For RouterAgent

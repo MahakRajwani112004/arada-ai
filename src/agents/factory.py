@@ -1,5 +1,5 @@
 """Agent Factory - creates agents from configuration."""
-from typing import Dict, Type
+from typing import Dict, List, Optional, Type
 
 from src.agents.base import BaseAgent
 from src.agents.types.full_agent import FullAgent
@@ -11,6 +11,7 @@ from src.agents.types.simple_agent import SimpleAgent
 from src.agents.types.tool_agent import ToolAgent
 from src.models.agent_config import AgentConfig
 from src.models.enums import AgentType
+from src.skills.models import Skill
 
 
 class AgentFactory:
@@ -21,6 +22,10 @@ class AgentFactory:
         config = AgentConfig(...)
         agent = AgentFactory.create(config)
         response = await agent.execute(context)
+
+        # With skills:
+        skills = [skill1, skill2]
+        agent = AgentFactory.create(config, skills=skills)
     """
 
     _agent_classes: Dict[AgentType, Type[BaseAgent]] = {
@@ -34,12 +39,17 @@ class AgentFactory:
     }
 
     @classmethod
-    def create(cls, config: AgentConfig) -> BaseAgent:
+    def create(
+        cls,
+        config: AgentConfig,
+        skills: Optional[List[Skill]] = None,
+    ) -> BaseAgent:
         """
         Create an agent instance from configuration.
 
         Args:
             config: Agent configuration
+            skills: Optional list of skills to inject into the agent
 
         Returns:
             Agent instance of the appropriate type
@@ -60,7 +70,15 @@ class AgentFactory:
                 f"Supported types: {supported}"
             )
 
-        return agent_class(config)
+        # Try to create with skills, fall back to without for agents not yet updated
+        try:
+            return agent_class(config, skills=skills)
+        except TypeError:
+            # Agent class doesn't accept skills yet
+            agent = agent_class(config)
+            if skills:
+                agent.set_skills(skills)
+            return agent
 
     @classmethod
     def register_type(

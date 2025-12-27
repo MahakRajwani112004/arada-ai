@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bot, Plug, Settings, ChevronRight, Workflow, Activity, Shield } from "lucide-react";
+import { Bot, Plug, Settings, ChevronRight, Workflow, Activity, Shield, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserMenu } from "./user-menu";
 import { useAuth } from "@/lib/auth";
@@ -19,6 +19,11 @@ const navItems: NavItem[] = [
     label: "Agents",
     href: "/agents",
     icon: <Bot className="h-4 w-4" />,
+  },
+  {
+    label: "Skills",
+    href: "/skills",
+    icon: <Sparkles className="h-4 w-4" />,
   },
   {
     label: "Workflows",
