@@ -1,40 +1,50 @@
 # MagOneAI Local Development Docker Compose
-# For local development without SSL/Traefik
+# Builds from local code - No Traefik
 #
 # Usage:
-#   docker-compose -f docker-compose.local.yml up -d
+#   docker compose -f deploy/docker-compose.local.yml up --build
 #
-# This exposes services on localhost ports:
+# Services accessible at:
 #   - API: http://localhost:8000
 #   - Web: http://localhost:3000
 #   - Temporal UI: http://localhost:8080
+#   - PostgreSQL: localhost:5432
+#   - Redis: localhost:6379
+#   - Qdrant: localhost:6333 (gRPC: 6334)
+#   - MinIO: http://localhost:9000 (console: http://localhost:9001, user: magure, pass: magure_minio_secret)
+#   - Vault: http://localhost:8200 (token: dev-root-token)
+#   - Prometheus: http://localhost:9090
+#   - Grafana: http://localhost:3002 (admin/magure_admin)
+#   - Loki: http://localhost:3100
 
 services:
   # ============================================
-  # PostgreSQL - Primary Database
+  # Infrastructure Services
   # ============================================
+
+  # PostgreSQL - Primary Database
   postgres:
     image: postgres:16-alpine
     container_name: magone-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: magone
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-dev_password}
-      POSTGRES_DB: magone_db
+      POSTGRES_USER: ${POSTGRES_USER:-magure}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-magure_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-magure_db}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    networks:
+      - magure-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U magone -d magone_db"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-magure} -d ${POSTGRES_DB:-magure_db}"]
+      interval: 5s
       timeout: 5s
       retries: 5
 
-  # ============================================
   # Redis - Caching & Sessions
-  # ============================================
   redis:
     image: redis:7-alpine
     container_name: magone-redis
@@ -43,15 +53,15 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - magure-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 5
 
-  # ============================================
   # Qdrant - Vector Database for RAG
-  # ============================================
   qdrant:
     image: qdrant/qdrant:latest
     container_name: magone-qdrant
@@ -61,10 +71,12 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    networks:
+      - magure-network
 
-  # ============================================
   # Temporal Server - Workflow Orchestration
-  # ============================================
   temporal:
     image: temporalio/auto-setup:latest
     container_name: magone-temporal
@@ -75,15 +87,18 @@ services:
     environment:
       - DB=postgres12
       - DB_PORT=5432
-      - POSTGRES_USER=magone
-      - POSTGRES_PWD=${DB_PASSWORD:-dev_password}
+      - POSTGRES_USER=${POSTGRES_USER:-magure}
+      - POSTGRES_PWD=${POSTGRES_PASSWORD:-magure_dev_password}
       - POSTGRES_SEEDS=postgres
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development.yaml
     ports:
       - "7233:7233"
+    volumes:
+      - ./temporal-config:/etc/temporal/config/dynamicconfig
+    networks:
+      - magure-network
 
-  # ============================================
   # Temporal UI - Workflow Monitoring
-  # ============================================
   temporal-ui:
     image: temporalio/ui:latest
     container_name: magone-temporal-ui
@@ -92,15 +107,162 @@ services:
       - temporal
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000,http://localhost:8000
     ports:
       - "8080:8080"
+    networks:
+      - magure-network
+
+  # HashiCorp Vault - Secrets Management
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: magone-vault
+    restart: unless-stopped
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_TOKEN:-dev-root-token}
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+      VAULT_ADDR: "http://127.0.0.1:8200"
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - magure-network
+    healthcheck:
+      test: ["CMD", "sh", "-c", "vault status || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # MinIO - Object Storage for Documents (S3-compatible)
+  minio:
+    image: minio/minio:latest
+    container_name: magone-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-magure}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-magure_minio_secret}
+    volumes:
+      - minio_data:/data
+    networks:
+      - magure-network
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   # ============================================
-  # MagOneAI API - FastAPI Backend
+  # Application Services
   # ============================================
+
+  # API Server - FastAPI Backend
   api:
-    image: ${DOCKER_REGISTRY:-magureme}/magoneai-api:${IMAGE_TAG:-v1}
+    build:
+      context: ..
+      dockerfile: Dockerfile
     container_name: magone-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      temporal:
+        condition: service_started
+      minio:
+        condition: service_healthy
+    environment:
+      # Application
+      APP_ENV: development
+      APP_DEBUG: "true"
+      APP_NAME: magure-ai-platform
+      SECRET_KEY: ${SECRET_KEY:-dev_secret_key_change_in_production}
+      FRONTEND_URL: http://localhost:3000
+      # Database
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-magure}:${POSTGRES_PASSWORD:-magure_dev_password}@postgres:5432/${POSTGRES_DB:-magure_db}
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      # Secrets encryption
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-dev_encryption_key_32_chars_long!}
+      # Qdrant
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      # Temporal
+      TEMPORAL_HOST: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: agent-tasks
+      # Vault
+      VAULT_PROVIDER: hashicorp
+      VAULT_URL: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN:-dev-root-token}
+      # CORS
+      CORS_ORIGINS: '["http://localhost:3000", "http://localhost:8000"]'
+      CORS_ALLOW_CREDENTIALS: "true"
+      # LLM Keys
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Rate Limiting
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-false}
+      RATE_LIMIT_WORKFLOW: ${RATE_LIMIT_WORKFLOW:-10/minute}
+      RATE_LIMIT_AGENTS: ${RATE_LIMIT_AGENTS:-20/minute}
+      RATE_LIMIT_DEFAULT: ${RATE_LIMIT_DEFAULT:-100/minute}
+      # MCP Server URLs
+      MCP_GOOGLE_CALENDAR_URL: http://mcp-google-calendar:8001/mcp
+      MCP_GOOGLE_GMAIL_URL: http://mcp-google-gmail:8002/mcp
+      MCP_OUTLOOK_CALENDAR_URL: http://mcp-outlook-calendar:8000/mcp
+      MCP_OUTLOOK_EMAIL_URL: http://mcp-outlook-email:8000/mcp
+      # Google OAuth
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      OAUTH_REDIRECT_URI: http://localhost:8000/api/v1/oauth/google/callback
+      # Microsoft OAuth
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
+      MICROSOFT_OAUTH_REDIRECT_URI: http://localhost:8000/api/v1/oauth/microsoft/callback
+      # MinIO / Object Storage
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-magure}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-magure_minio_secret}
+      MINIO_BUCKET: knowledge-documents
+      MINIO_USE_SSL: "false"
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      LOG_FORMAT: json
+      # Monitoring
+      MONITORING_ENABLED: "true"
+      ANALYTICS_ENABLED: "true"
+      LOKI_ENABLED: "true"
+      LOKI_URL: http://loki:3100
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../src:/app/src:ro
+    networks:
+      - magure-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+  # Temporal Worker
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile.worker
+    container_name: magone-worker
     restart: unless-stopped
     depends_on:
       postgres:
@@ -109,112 +271,130 @@ services:
         condition: service_healthy
       temporal:
         condition: service_started
+      api:
+        condition: service_healthy
     environment:
+      # Application
       APP_ENV: development
-      DATABASE_URL: postgresql+asyncpg://magone:${DB_PASSWORD:-dev_password}@postgres:5432/magone_db
-      TEMPORAL_HOST: temporal:7233
+      APP_DEBUG: "true"
+      SECRET_KEY: ${SECRET_KEY:-dev_secret_key_change_in_production}
+      # Database
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-magure}:${POSTGRES_PASSWORD:-magure_dev_password}@postgres:5432/${POSTGRES_DB:-magure_db}
+      # Redis
       REDIS_URL: redis://redis:6379/0
+      # Secrets encryption
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-dev_encryption_key_32_chars_long!}
+      # Qdrant
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
+      # Temporal
+      TEMPORAL_HOST: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: agent-tasks
+      # Vault
+      VAULT_PROVIDER: hashicorp
+      VAULT_URL: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN:-dev-root-token}
+      # LLM Keys
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      SECRET_KEY: ${SECRET_KEY:-dev_secret_key_change_in_production}
-      SECRETS_ENCRYPTION_KEY: "${SECRETS_ENCRYPTION_KEY:-xnw_ATnA7FfKOHUuVwmUbbybTOnPJzT_T3k0Gg6EIKY=}"
-      # CORS - allow web UI
-      CORS_ORIGINS: '["http://localhost:3001", "http://localhost:3000", "http://localhost:8000", "http://34.56.192.190:3001", "http://34.56.192.190:8000"]'
-      # MCP Server URLs (Docker service names)
-      MCP_GOOGLE_CALENDAR_URL: http://mcp-google-calendar:8000/mcp
-      MCP_GOOGLE_GMAIL_URL: http://mcp-google-gmail:8000/mcp
+      # MCP Server URLs
+      MCP_GOOGLE_CALENDAR_URL: http://mcp-google-calendar:8001/mcp
+      MCP_GOOGLE_GMAIL_URL: http://mcp-google-gmail:8002/mcp
       MCP_OUTLOOK_CALENDAR_URL: http://mcp-outlook-calendar:8000/mcp
       MCP_OUTLOOK_EMAIL_URL: http://mcp-outlook-email:8000/mcp
-      # Google OAuth for MCP servers
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      # Microsoft OAuth for MCP servers
-      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
-      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
-      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
-      MICROSOFT_OAUTH_REDIRECT_URI: http://localhost:8000/api/v1/oauth/microsoft/callback
-      FRONTEND_URL: http://localhost:3001
-    ports:
-      - "8000:8000"
+      # Monitoring
+      MONITORING_ENABLED: "true"
+      ANALYTICS_ENABLED: "true"
+      LOKI_ENABLED: "true"
+      LOKI_URL: http://loki:3100
+    volumes:
+      - ../src:/app/src:ro
+      - ../workers:/app/workers:ro
+    networks:
+      - magure-network
 
-  # ============================================
-  # MagOneAI Worker - Temporal Workflow Worker
-  # ============================================
-  worker:
-    image: ${DOCKER_REGISTRY:-magureme}/magoneai-worker:${IMAGE_TAG:-v1}
-    container_name: magone-worker
-    restart: unless-stopped
-    depends_on:
-      - api
-    environment:
-      DATABASE_URL: postgresql+asyncpg://magone:${DB_PASSWORD:-dev_password}@postgres:5432/magone_db
-      TEMPORAL_HOST: temporal:7233
-      REDIS_URL: redis://redis:6379/0
-      QDRANT_HOST: qdrant
-      QDRANT_PORT: 6333
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      SECRET_KEY: ${SECRET_KEY:-dev_secret_key_change_in_production}
-      SECRETS_ENCRYPTION_KEY: "${SECRETS_ENCRYPTION_KEY:-xnw_ATnA7FfKOHUuVwmUbbybTOnPJzT_T3k0Gg6EIKY=}"
-
-  # ============================================
-  # MagOneAI Web - Next.js Frontend
-  # ============================================
+  # Web UI (Next.js)
   web:
-    image: ${DOCKER_REGISTRY:-magureme}/magoneai-web:${IMAGE_TAG:-v1}
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
     container_name: magone-web
     restart: unless-stopped
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     environment:
-      # Note: NEXT_PUBLIC_* vars are build-time only. Rebuild image with correct API_URL
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://34.56.192.190:8000}
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      NODE_ENV: development
     ports:
-      - "3001:3000"
+      - "3000:3000"
+    networks:
+      - magure-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
 
   # ============================================
-  # MCP Server - Google Calendar
+  # MCP Servers
   # ============================================
+
+  # Google Calendar MCP Server
   mcp-google-calendar:
     build:
       context: ../mcp_servers
       dockerfile: google-calendar/Dockerfile
-    container_name: magone-mcp-calendar
+    container_name: magone-mcp-google-calendar
     restart: unless-stopped
     environment:
+      PORT: 8001
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      VAULT_URL: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN:-dev-root-token}
+    depends_on:
+      vault:
+        condition: service_healthy
+    networks:
+      - magure-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
 
-  # ============================================
-  # MCP Server - Google Gmail
-  # ============================================
+  # Google Gmail MCP Server
   mcp-google-gmail:
     build:
       context: ../mcp_servers
       dockerfile: google-gmail/Dockerfile
-    container_name: magone-mcp-gmail
+    container_name: magone-mcp-google-gmail
     restart: unless-stopped
     environment:
+      PORT: 8002
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      VAULT_URL: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN:-dev-root-token}
+    depends_on:
+      vault:
+        condition: service_healthy
+    networks:
+      - magure-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
 
-  # ============================================
-  # MCP Server - Outlook Calendar
-  # ============================================
+  # Outlook Calendar MCP Server
   mcp-outlook-calendar:
     build:
       context: ../mcp_servers
@@ -225,6 +405,8 @@ services:
       MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
       MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
       MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
+    networks:
+      - magure-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -232,9 +414,7 @@ services:
       retries: 3
       start_period: 10s
 
-  # ============================================
-  # MCP Server - Outlook Email
-  # ============================================
+  # Outlook Email MCP Server
   mcp-outlook-email:
     build:
       context: ../mcp_servers
@@ -245,6 +425,8 @@ services:
       MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
       MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
       MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
+    networks:
+      - magure-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -252,11 +434,93 @@ services:
       retries: 3
       start_period: 10s
 
-networks:
-  default:
-    name: magone-network
+  # ============================================
+  # Monitoring Services
+  # ============================================
 
+  # Prometheus - Metrics Collection
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: magone-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    networks:
+      - magure-network
+
+  # Grafana - Dashboards & Visualization
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: magone-grafana
+    restart: unless-stopped
+    ports:
+      - "3002:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-magure_admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3002
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      - magure-network
+
+  # Loki - Log Aggregation
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: magone-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - magure-network
+
+  # Promtail - Collects Docker Container Logs
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: magone-promtail
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/promtail/promtail-docker.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - magure-network
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  magure-network:
+    driver: bridge
+
+# ============================================
+# Volumes
+# ============================================
 volumes:
   postgres_data:
   redis_data:
   qdrant_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:

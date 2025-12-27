@@ -287,7 +287,7 @@ export function CanvasExecutionPanel({
       <Tabs
         value={activeTab}
         onValueChange={(v) => setActiveTab(v as "workflow" | "agent")}
-        className="flex-1 flex flex-col overflow-hidden"
+        className="flex-1 flex flex-col min-h-0"
       >
         <div className="px-3 pt-2 shrink-0">
           <TabsList className="w-full grid grid-cols-2">
@@ -302,9 +302,9 @@ export function CanvasExecutionPanel({
           </TabsList>
         </div>
 
-        <TabsContent value="workflow" className="flex-1 flex flex-col overflow-hidden m-0 p-0">
+        <TabsContent value="workflow" className="flex-1 flex flex-col min-h-0 m-0 p-0 data-[state=inactive]:hidden">
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-3">
+          <div className="flex-1 overflow-y-auto p-3 min-h-0">
             {workflowMessages.length === 0 ? (
               renderEmptyState()
             ) : (
@@ -327,9 +327,9 @@ export function CanvasExecutionPanel({
           </div>
         </TabsContent>
 
-        <TabsContent value="agent" className="flex-1 flex flex-col overflow-hidden m-0 p-0">
+        <TabsContent value="agent" className="flex-1 flex flex-col min-h-0 m-0 p-0 data-[state=inactive]:hidden">
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-3">
+          <div className="flex-1 overflow-y-auto p-3 min-h-0">
             {agentMessages.length === 0 ? (
               renderEmptyState()
             ) : (

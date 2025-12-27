@@ -42,6 +42,11 @@ with workflow.unsafe.imports_passed_through():
         check_input_safety,
         check_output_safety,
     )
+    from src.activities.simple_agent_activity import (
+        SimpleAgentInput,
+        SimpleAgentOutput,
+        execute_simple_agent,
+    )
     from src.activities.tool_activity import (
         GetToolDefinitionsInput,
         GetToolDefinitionsOutput,
@@ -299,13 +304,24 @@ class AgentWorkflow:
         self, input: AgentWorkflowInput
     ) -> AgentWorkflowOutput:
         """Handle SimpleAgent - pattern matching only."""
-        # SimpleAgent doesn't use LLM, returns default
+        # Execute SimpleAgent via activity to properly run pattern matching
+        result: SimpleAgentOutput = await workflow.execute_activity(
+            execute_simple_agent,
+            SimpleAgentInput(
+                agent_id=input.agent_id,
+                user_input=input.user_input,
+                user_id=input.user_id,
+            ),
+            start_to_close_timeout=timedelta(seconds=30),
+        )
+
         return AgentWorkflowOutput(
-            content=f"SimpleAgent response for: {input.user_input[:50]}...",
+            content=result.content,
             agent_id=input.agent_id,
             agent_type=input.agent_type,
-            success=True,
-            metadata={"match_type": "workflow_default"},
+            success=result.success,
+            error=result.error,
+            metadata=result.metadata,
         )
 
     async def _handle_llm(
@@ -1071,6 +1087,34 @@ Call agents as tools to delegate tasks. Synthesize their results into a coherent
                 # AGENT STEP - Execute single agent
                 # ============================================================
                 if step_type == "agent":
+                    # Check if agent_id is set (not a draft step)
+                    agent_id = step.get("agent_id")
+                    if not agent_id:
+                        step_name = step.get("name") or step.get("id")
+                        suggested = step.get("suggested_agent")
+                        if suggested:
+                            error_msg = (
+                                f"Step '{step_name}' has a suggested agent but no actual agent assigned. "
+                                f"Please create the agent first."
+                            )
+                        else:
+                            error_msg = f"Step '{step_name}' has no agent_id configured."
+
+                        return AgentWorkflowOutput(
+                            content=f"Workflow failed at step '{step['id']}': {error_msg}",
+                            agent_id=input.agent_id,
+                            agent_type=input.agent_type,
+                            success=False,
+                            error=error_msg,
+                            metadata={
+                                "mode": "workflow",
+                                "workflow_id": definition.get("id"),
+                                "steps_executed": steps_executed,
+                                "step_results": step_results,
+                                "failed_step": step["id"],
+                            },
+                        )
+
                     resolved_input = self._resolve_template(
                         step.get("input", "${user_input}"),
                         step_results,
@@ -1080,7 +1124,7 @@ Call agents as tools to delegate tasks. Synthesize their results into a coherent
                     result: AgentToolExecutionOutput = await workflow.execute_activity(
                         execute_agent_as_tool,
                         AgentToolExecutionInput(
-                            agent_id=step["agent_id"],
+                            agent_id=agent_id,
                             query=resolved_input,
                             user_id=input.user_id,
                             context={},
@@ -1404,6 +1448,7 @@ Call agents as tools to delegate tasks. Synthesize their results into a coherent
 
         Supports:
         - ${user_input} - original user input
+        - ${previous} - output from the most recently executed step
         - ${steps.step_id.output} - output from a previous step
         - ${steps.step_id.field} - specific field from step result
         - ${context.key} - context variable
@@ -1411,6 +1456,16 @@ Call agents as tools to delegate tasks. Synthesize their results into a coherent
 
         Security: Limits path depth and validates path components.
         """
+        result = template
+
+        # Handle ${previous} - output from the most recently executed step
+        if "${previous}" in result and step_results:
+            # Get the last executed step's output
+            last_step_id = list(step_results.keys())[-1]
+            last_result = step_results.get(last_step_id, {})
+            previous_output = last_result.get("output", "") if isinstance(last_result, dict) else str(last_result)
+            result = result.replace("${previous}", str(previous_output) if previous_output else "")
+
         def replace_match(match: re.Match) -> str:
             path = match.group(1)
             # Limit path length to prevent abuse
@@ -1418,7 +1473,7 @@ Call agents as tools to delegate tasks. Synthesize their results into a coherent
                 return ""
             return self._get_path_value(path, step_results, context)
 
-        return re.sub(r'\$\{([^}]+)\}', replace_match, template)
+        return re.sub(r'\$\{([^}]+)\}', replace_match, result)
 
     def _get_path_value(
         self,

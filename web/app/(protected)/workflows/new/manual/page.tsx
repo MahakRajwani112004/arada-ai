@@ -105,7 +105,7 @@ export default function ManualWorkflowPage() {
     <>
       <Header />
       <PageContainer>
-        <div className="mx-auto max-w-3xl">
+        <div className="max-w-3xl">
           <Link
             href="/workflows/new"
             className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"

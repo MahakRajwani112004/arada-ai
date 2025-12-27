@@ -118,14 +118,14 @@ export function WorkflowCanvas({
         elementsSelectable={true}
         panOnDrag={true}
         zoomOnScroll={true}
-        className="bg-background"
+        className="workflow-canvas-bg"
       >
         {/* Background pattern */}
         <Background
           variant={BackgroundVariant.Dots}
-          gap={20}
+          gap={24}
           size={1}
-          color="hsl(var(--muted-foreground) / 0.2)"
+          color="hsl(var(--muted-foreground) / 0.15)"
         />
 
         {/* Zoom controls */}
@@ -150,7 +150,7 @@ export function WorkflowCanvas({
         </Panel>
 
         {/* Info panel */}
-        <Panel position="top-left" className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Panel position="top-left" className="flex items-center gap-2 text-xs text-muted-foreground bg-card px-3 py-1.5 rounded-md border border-border">
           <Layers className="h-4 w-4" />
           <span>{definition.steps.length} steps</span>
         </Panel>
@@ -161,17 +161,21 @@ export function WorkflowCanvas({
           nodeColor={(node) => {
             switch (node.type) {
               case "trigger":
-                return "hsl(var(--primary))";
+                return "#22c55e";
               case "agent":
-                return "hsl(270, 60%, 60%)";
+                return "#a855f7";
+              case "conditional":
+                return "#3b82f6";
+              case "parallel":
+                return "#a855f7";
               case "end":
-                return "hsl(var(--muted-foreground))";
+                return "#94a3b8";
               default:
-                return "hsl(var(--muted))";
+                return "#64748b";
             }
           }}
-          className="!bg-card !border-border"
-          maskColor="hsl(var(--background) / 0.8)"
+          className="!bg-card !border-border !rounded-md"
+          maskColor="hsl(var(--background) / 0.7)"
         />
       </ReactFlow>
     </div>

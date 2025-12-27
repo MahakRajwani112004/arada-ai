@@ -22,6 +22,7 @@ from src.api.schemas.workflows import (
     WorkflowTrigger,
 )
 from src.config.logging import get_logger
+from src.utils.hallucination_detector import check_workflow_hallucination_risk
 from src.llm import LLMClient, LLMMessage
 from src.mcp.models import MCPServerInstance
 from src.models.agent_config import AgentConfig
@@ -973,6 +974,28 @@ class WorkflowGenerator:
                 suggested_mcps=len(mcps_suggested),
             )
 
+            # Check for hallucination risks
+            connected_mcp_templates = [m.template for m in (existing_mcps or [])]
+            hallucination_warnings = check_workflow_hallucination_risk(
+                steps=[s.model_dump() for s in workflow.steps],
+                connected_mcps=connected_mcp_templates,
+            )
+
+            # Combine AI warnings with hallucination warnings
+            all_warnings = data.get("warnings", [])
+            for hw in hallucination_warnings:
+                warning_msg = f"[{hw.severity.upper()}] {hw.message}"
+                if hw.suggestion:
+                    warning_msg += f" Suggestion: {hw.suggestion}"
+                all_warnings.append(warning_msg)
+
+            if hallucination_warnings:
+                logger.warning(
+                    "hallucination_risk_detected",
+                    workflow_id=workflow.id,
+                    warnings_count=len(hallucination_warnings),
+                )
+
             return GenerateWorkflowResponse(
                 workflow=workflow,
                 agents_to_create=agents_to_create,
@@ -980,7 +1003,7 @@ class WorkflowGenerator:
                 mcps_suggested=mcps_suggested,
                 existing_mcps_used=data.get("existing_mcps_used", []),
                 explanation=data.get("explanation", "Workflow generated from prompt."),
-                warnings=data.get("warnings", []),
+                warnings=all_warnings,
                 estimated_complexity=data.get("estimated_complexity", "moderate"),
             )
         except Exception as e:
@@ -1149,12 +1172,34 @@ class WorkflowGenerator:
             trigger_type=trigger_type.value,
         )
 
+        # Check for hallucination risks in step suggestions
+        hallucination_warnings = []
+        for step_sugg in step_suggestions:
+            if step_sugg.suggestion:
+                from src.utils.hallucination_detector import check_agent_hallucination_risk
+                step_warnings = check_agent_hallucination_risk(
+                    agent_name=step_sugg.suggestion.name,
+                    agent_goal=step_sugg.suggestion.goal,
+                    enabled_tools=step_sugg.suggestion.suggested_tools,
+                    connected_mcps=step_sugg.suggestion.required_mcps or existing_mcp_templates,
+                    step_id=step_sugg.id,
+                )
+                hallucination_warnings.extend(step_warnings)
+
+        # Combine AI warnings with hallucination warnings
+        all_warnings = data.get("warnings", [])
+        for hw in hallucination_warnings:
+            warning_msg = f"[{hw.severity.upper()}] {hw.message}"
+            if hw.suggestion:
+                warning_msg += f" Suggestion: {hw.suggestion}"
+            all_warnings.append(warning_msg)
+
         return GenerateSkeletonResponse(
             skeleton=skeleton,
             step_suggestions=step_suggestions,
             mcp_dependencies=mcp_dependencies,
             explanation=data.get("explanation", ""),
-            warnings=data.get("warnings", []),
+            warnings=all_warnings,
         )
 
     async def apply(
@@ -1226,11 +1271,26 @@ class WorkflowGenerator:
         """Parse workflow data into schema."""
         steps = []
         for step_data in data.get("steps", []):
+            # Parse suggested_agent if present
+            suggested_agent = None
+            if "suggested_agent" in step_data and step_data["suggested_agent"]:
+                agent_data = step_data["suggested_agent"]
+                suggested_agent = SuggestedAgent(
+                    name=agent_data.get("name", ""),
+                    description=agent_data.get("description"),
+                    goal=agent_data.get("goal", ""),
+                    model=agent_data.get("model"),
+                    required_mcps=agent_data.get("required_mcps", []),
+                    suggested_tools=agent_data.get("suggested_tools", []),
+                )
+
             steps.append(
                 WorkflowStepSchema(
                     id=step_data.get("id", ""),
                     type=step_data.get("type", "agent"),
+                    name=step_data.get("name"),
                     agent_id=step_data.get("agent_id"),
+                    suggested_agent=suggested_agent,
                     input=step_data.get("input", "${user_input}"),
                     timeout=step_data.get("timeout", 120),
                     retries=step_data.get("retries", 0),

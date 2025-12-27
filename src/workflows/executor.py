@@ -224,11 +224,11 @@ class WorkflowExecutor:
         if step.type == StepType.AGENT:
             return await self._execute_agent_step(step, user_input, user_id, session_id)
         elif step.type == StepType.PARALLEL:
-            return await self._execute_parallel_step(step, user_input, session_id)
+            return await self._execute_parallel_step(step, user_input, user_id, session_id)
         elif step.type == StepType.CONDITIONAL:
             return await self._execute_conditional_step(step, workflow)
         elif step.type == StepType.LOOP:
-            return await self._execute_loop_step(step, user_input, session_id)
+            return await self._execute_loop_step(step, user_input, user_id, session_id)
         else:
             return {"success": False, "error": f"Unknown step type: {step.type}"}
 
@@ -240,6 +240,20 @@ class WorkflowExecutor:
         session_id: Optional[str],
     ) -> Dict[str, Any]:
         """Execute an agent step."""
+        # Check if agent_id is set (not a draft step with only suggested_agent)
+        if not step.agent_id:
+            step_name = step.name or step.id
+            if step.suggested_agent:
+                return {
+                    "success": False,
+                    "error": f"Step '{step_name}' has a suggested agent but no actual agent assigned. "
+                    f"Please create the agent first or assign an existing agent.",
+                }
+            return {
+                "success": False,
+                "error": f"Step '{step_name}' has no agent_id configured.",
+            }
+
         # Resolve input template
         input_text = self._resolve_template(step.input or "${user_input}", user_input)
 
@@ -248,7 +262,7 @@ class WorkflowExecutor:
         if not agent_config:
             return {
                 "success": False,
-                "error": f"Agent '{step.agent_id}' not found",
+                "error": f"Agent '{step.agent_id}' not found. It may have been deleted.",
             }
 
         # Execute agent via Temporal
@@ -315,6 +329,7 @@ class WorkflowExecutor:
         self,
         step: WorkflowStep,
         user_input: str,
+        user_id: str,
         session_id: Optional[str],
     ) -> Dict[str, Any]:
         """Execute a parallel step with multiple branches."""
@@ -333,7 +348,7 @@ class WorkflowExecutor:
                 timeout=branch.timeout,
             )
             tasks.append(
-                self._execute_agent_step(branch_step, user_input, session_id)
+                self._execute_agent_step(branch_step, user_input, user_id, session_id)
             )
 
         # Execute all branches concurrently
@@ -414,6 +429,7 @@ class WorkflowExecutor:
         self,
         step: WorkflowStep,
         user_input: str,
+        user_id: str,
         session_id: Optional[str],
     ) -> Dict[str, Any]:
         """Execute a loop step that iterates until a condition is met."""
@@ -436,7 +452,7 @@ class WorkflowExecutor:
                     timeout=inner_step.timeout,
                 )
                 result = await self._execute_agent_step(
-                    inner_workflow_step, user_input, session_id
+                    inner_workflow_step, user_input, user_id, session_id
                 )
                 if not result.get("success"):
                     return result
@@ -455,11 +471,18 @@ class WorkflowExecutor:
         }
 
     def _resolve_template(self, template: str, user_input: str) -> str:
-        """Resolve template variables like ${user_input} and ${steps.X.output}."""
+        """Resolve template variables like ${user_input}, ${previous}, and ${steps.X.output}."""
         result = template
 
         # Replace ${user_input}
         result = result.replace("${user_input}", user_input)
+
+        # Replace ${previous} - output from the most recently executed step
+        if "${previous}" in result and self._step_results:
+            # Get the last executed step's output
+            last_step_id = list(self._step_results.keys())[-1]
+            previous_output = self._step_results[last_step_id].get("output", "")
+            result = result.replace("${previous}", str(previous_output) if previous_output else "")
 
         # Replace ${context.X}
         for key, value in self._context.items():

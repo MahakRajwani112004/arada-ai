@@ -18,6 +18,12 @@ interface ConversionContext {
   baseWebhookUrl?: string;
 }
 
+// Canvas layout stored in workflow.definition.context
+export interface CanvasLayout {
+  positions: Record<string, { x: number; y: number }>;
+  savedAt?: string;
+}
+
 /**
  * Convert a WorkflowDefinition to ReactFlow nodes and edges
  */
@@ -90,8 +96,30 @@ export function workflowToCanvas(
     edges.push(createEdge("trigger", "end"));
   }
 
-  // 4. Apply auto-layout
-  const layoutedNodes = applyAutoLayout(nodes, edges);
+  // 4. Apply saved positions or auto-layout
+  const savedLayout = definition.context?.canvas_layout as CanvasLayout | undefined;
+
+  let layoutedNodes: CanvasNode[];
+  if (savedLayout?.positions && Object.keys(savedLayout.positions).length > 0) {
+    // Use saved positions
+    layoutedNodes = nodes.map((node) => {
+      const savedPosition = savedLayout.positions[node.id];
+      if (savedPosition) {
+        return { ...node, position: savedPosition };
+      }
+      return node;
+    });
+    // Apply auto-layout only for nodes without saved positions
+    const nodesWithoutPosition = layoutedNodes.filter(
+      (n) => !savedLayout.positions[n.id]
+    );
+    if (nodesWithoutPosition.length > 0) {
+      layoutedNodes = applyAutoLayout(layoutedNodes, edges);
+    }
+  } else {
+    // No saved layout - use auto-layout
+    layoutedNodes = applyAutoLayout(nodes, edges);
+  }
 
   return { nodes: layoutedNodes, edges };
 }
@@ -131,8 +159,18 @@ function createAgentNode(
   index: number,
   context: ConversionContext = {}
 ): CanvasNode {
-  // Find the agent if it exists
-  const agent = context.agents?.find((a) => a.id === step.agent_id);
+  // Find the agent if it exists by ID
+  let agent = context.agents?.find((a) => a.id === step.agent_id);
+
+  // If no agent by ID but we have a suggested_agent, check if an agent with matching name exists
+  // This handles the case where agent was created but workflow wasn't saved with agent_id
+  if (!agent && step.suggested_agent?.name) {
+    const expectedAgentId = step.suggested_agent.name
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-]/g, "");
+    agent = context.agents?.find((a) => a.id === expectedAgentId);
+  }
 
   // Determine node status
   const status = determineNodeStatus(step, agent);
@@ -145,11 +183,13 @@ function createAgentNode(
     stepId: step.id,
     name: stepName,
     role: step.input || undefined,
-    agentId: step.agent_id,
+    // Use found agent's ID (even if it was found by name match)
+    agentId: agent?.id || step.agent_id,
     agentName: agent?.name,
     agentGoal: agent?.description || step.suggested_agent?.goal,
     status,
-    suggestedAgent: step.suggested_agent,
+    // Clear suggestedAgent if we found an existing agent
+    suggestedAgent: agent ? undefined : step.suggested_agent,
     requiredMcps: step.suggested_agent?.required_mcps,
     requiredTools: step.suggested_agent?.suggested_tools,
   };
@@ -276,18 +316,18 @@ function determineNodeStatus(
   step: WorkflowStep,
   agent?: Agent
 ): NodeStatus {
-  // No agent assigned
+  // If we found an agent (by ID or by name match), it's ready
+  if (agent) {
+    return "ready";
+  }
+
+  // No agent assigned and no agent found
   if (!step.agent_id) {
     return "draft";
   }
 
-  // Agent doesn't exist
-  if (!agent) {
-    return "error";
-  }
-
-  // Agent exists - ready to go
-  return "ready";
+  // Agent ID is set but agent doesn't exist (deleted?)
+  return "error";
 }
 
 /**

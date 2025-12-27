@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCreateAgent, useUpdateAgent } from "@/lib/hooks/use-agents";
+import { getAgent } from "@/lib/api/agents";
 import type { AgentDetail, AgentCreate } from "@/types/agent";
 import {
   AgentFormFields,
@@ -180,11 +181,26 @@ export function AgentForm({
         }
       }, 1500);
     } else {
-      await createAgent.mutateAsync(agent);
-      setShowSuccess(true);
-      setShowConfetti(true);
-      setTimeout(() => setShowConfetti(false), 4000);
-      setTimeout(() => router.push("/agents"), 2000);
+      try {
+        await createAgent.mutateAsync(agent);
+        setShowSuccess(true);
+        setShowConfetti(true);
+        setTimeout(() => setShowConfetti(false), 4000);
+        setTimeout(() => router.push("/agents"), 2000);
+      } catch (error) {
+        // Check if error is due to agent already existing (409 Conflict)
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (errorMessage.includes("already exists")) {
+          // Agent already exists - treat as success and redirect
+          try {
+            await getAgent(agentId);
+            setShowSuccess(true);
+            setTimeout(() => router.push("/agents"), 2000);
+          } catch (fetchError) {
+            console.error("Failed to fetch existing agent:", fetchError);
+          }
+        }
+      }
     }
   };
 

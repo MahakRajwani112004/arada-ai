@@ -44,7 +44,6 @@ function LabeledEdgeComponent({
     targetPosition,
   });
 
-  // Focus input when editing starts
   useEffect(() => {
     if (isEditing && inputRef.current) {
       inputRef.current.focus();
@@ -102,8 +101,8 @@ function LabeledEdgeComponent({
         markerEnd={markerEnd}
         style={{
           ...style,
-          strokeWidth: selected ? 3 : 2,
-          stroke: selected ? "hsl(var(--primary))" : style.stroke,
+          strokeWidth: selected ? 2.5 : 1.5,
+          stroke: selected ? "hsl(var(--primary))" : "hsl(var(--muted-foreground) / 0.4)",
         }}
       />
       <EdgeLabelRenderer>
@@ -122,28 +121,28 @@ function LabeledEdgeComponent({
               onChange={(e) => setLabelValue(e.target.value)}
               onKeyDown={handleKeyDown}
               onBlur={handleBlur}
-              className="px-2 py-1 text-xs rounded border border-primary bg-background shadow-lg focus:outline-none focus:ring-2 focus:ring-primary/50 min-w-[80px]"
+              className="px-2 py-1 text-xs rounded border border-primary bg-background shadow-sm focus:outline-none focus:ring-1 focus:ring-primary min-w-[60px]"
               placeholder="Label..."
             />
           ) : (
             <div
               onDoubleClick={handleDoubleClick}
               className={`
-                group flex items-center gap-1 px-2 py-1 rounded text-xs cursor-pointer transition-all
+                group flex items-center gap-1 px-2 py-0.5 rounded text-xs cursor-pointer transition-colors
                 ${hasLabel
-                  ? "bg-card border border-border shadow-sm hover:border-primary/50"
-                  : "bg-transparent hover:bg-muted/50"
+                  ? "bg-card border border-border hover:border-muted-foreground"
+                  : "bg-transparent hover:bg-muted"
                 }
-                ${selected ? "ring-2 ring-primary/30" : ""}
+                ${selected ? "ring-1 ring-primary" : ""}
               `}
-              title="Double-click to edit label"
+              title="Double-click to edit"
             >
               {hasLabel ? (
-                <span className="font-medium text-foreground">{label}</span>
+                <span className="text-muted-foreground">{label}</span>
               ) : (
-                <span className="text-muted-foreground opacity-0 group-hover:opacity-100 flex items-center gap-1">
-                  <Pencil className="h-3 w-3" />
-                  <span>Add label</span>
+                <span className="text-muted-foreground/50 opacity-0 group-hover:opacity-100 flex items-center gap-1">
+                  <Pencil className="h-2.5 w-2.5" />
+                  <span>Label</span>
                 </span>
               )}
             </div>

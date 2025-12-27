@@ -370,7 +370,7 @@ services:
 
   # Google Calendar MCP Server
   mcp-google-calendar:
-    image: magureme/magoneai-mcp-google-calendar:v3
+    image: ${DOCKER_REGISTRY:-magureme}/magoneai-mcp-google-calendar:${IMAGE_TAG:-latest}
     container_name: magure-mcp-google-calendar
     environment:
       PORT: 8001
@@ -383,11 +383,17 @@ services:
         condition: service_healthy
     networks:
       - magure-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
   # Google Gmail MCP Server
   mcp-google-gmail:
-    image: magureme/magoneai-mcp-google-gmail:v3
+    image: ${DOCKER_REGISTRY:-magureme}/magoneai-mcp-google-gmail:${IMAGE_TAG:-latest}
     container_name: magure-mcp-google-gmail
     environment:
       PORT: 8002
@@ -400,6 +406,12 @@ services:
         condition: service_healthy
     networks:
       - magure-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
   # ============================================

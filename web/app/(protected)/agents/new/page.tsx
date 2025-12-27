@@ -15,7 +15,7 @@ export default function NewAgentPage() {
         <Button variant="ghost" size="icon" onClick={() => router.back()}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h1 className="text-xl font-semibold">Create Agent</h1>
+        <h1 className="text-2xl font-semibold">Create Agent</h1>
       </div>
       <AgentForm />
     </PageContainer>

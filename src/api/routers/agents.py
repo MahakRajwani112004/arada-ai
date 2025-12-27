@@ -1,10 +1,12 @@
 """Agent API routes."""
 import json
 import re
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.config.logging import get_logger
+from src.utils.hallucination_detector import check_agent_hallucination_risk
 
 logger = get_logger(__name__)
 
@@ -309,6 +311,30 @@ async def create_agent(
     config = _to_agent_config(request)
     await repository.save(config)
 
+    # Check for hallucination risks
+    enabled_tools = [t.tool_id for t in request.tools] if request.tools else []
+    hallucination_warnings = check_agent_hallucination_risk(
+        agent_name=config.name,
+        agent_goal=request.goal.objective if request.goal else "",
+        agent_description=config.description,
+        enabled_tools=enabled_tools,
+        connected_mcps=[],  # TODO: Get connected MCPs for this user
+    )
+
+    warnings: List[str] = []
+    for hw in hallucination_warnings:
+        warning_msg = f"[{hw.severity.upper()}] {hw.message}"
+        if hw.suggestion:
+            warning_msg += f" Suggestion: {hw.suggestion}"
+        warnings.append(warning_msg)
+
+    if warnings:
+        logger.warning(
+            "agent_hallucination_risk",
+            agent_id=config.id,
+            warnings_count=len(warnings),
+        )
+
     logger.info(
         "agent_created",
         agent_id=config.id,
@@ -322,6 +348,7 @@ async def create_agent(
         name=config.name,
         description=config.description,
         agent_type=config.agent_type,
+        warnings=warnings,
     )
 
 

@@ -12,21 +12,21 @@ function EndNodeComponent({ selected }: EndNodeProps) {
   return (
     <div
       className={`
-        relative rounded-lg border-2 bg-card px-4 py-2.5 shadow-sm transition-all min-w-[120px]
-        ${selected ? "border-primary ring-2 ring-primary/20" : "border-border"}
+        workflow-node min-w-[100px] node-accent-muted transition-shadow
+        ${selected ? "workflow-node-selected" : ""}
       `}
     >
       {/* Input handle */}
       <Handle
         type="target"
         position={Position.Top}
-        className="!h-4 !w-4 !border-2 !border-background !bg-primary hover:!bg-primary/80 hover:!scale-125 transition-all !-top-2"
+        className="workflow-handle !-top-1.5"
       />
 
       {/* Content */}
-      <div className="flex items-center justify-center gap-2">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted">
-          <Flag className="h-4 w-4 text-muted-foreground" />
+      <div className="p-2.5 flex items-center justify-center gap-2">
+        <div className="node-icon h-7 w-7 node-icon-muted">
+          <Flag className="h-3.5 w-3.5" />
         </div>
         <span className="text-sm font-medium text-muted-foreground">End</span>
       </div>
