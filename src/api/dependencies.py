@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.auth.dependencies import CurrentUser
 from src.mcp import MCPManager, get_mcp_manager as _get_mcp_manager
 from src.mcp.repository import MCPServerRepository
+from src.skills.repository import SkillRepository
 from src.storage import PostgresAgentRepository, get_session
 from src.storage.workflow_repository import WorkflowRepository
 
@@ -51,3 +52,12 @@ async def get_mcp_repository(
 def get_mcp_manager() -> MCPManager:
     """Get the MCP manager singleton."""
     return _get_mcp_manager()
+
+
+async def get_skill_repository(
+    session: AsyncSession = Depends(get_session),
+    current_user: CurrentUser = None,
+) -> AsyncGenerator[SkillRepository, None]:
+    """Get skill repository with database session, scoped to current user."""
+    user_id = current_user.id if current_user else None
+    yield SkillRepository(session, user_id=user_id)

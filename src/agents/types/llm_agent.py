@@ -1,10 +1,11 @@
 """LLMAgent - Uses LLM for generating responses."""
-from typing import List
+from typing import List, Optional
 
 from src.agents.base import BaseAgent
 from src.llm import LLMClient, LLMMessage
 from src.models.agent_config import AgentConfig
 from src.models.responses import AgentContext, AgentResponse, Message
+from src.skills.models import Skill
 
 
 class LLMAgent(BaseAgent):
@@ -19,9 +20,9 @@ class LLMAgent(BaseAgent):
     - General purpose chat
     """
 
-    def __init__(self, config: AgentConfig):
-        """Initialize LLMAgent."""
-        super().__init__(config)
+    def __init__(self, config: AgentConfig, skills: Optional[List[Skill]] = None):
+        """Initialize LLMAgent with optional skills."""
+        super().__init__(config, skills=skills)
         if not config.llm_config:
             raise ValueError("LLMAgent requires llm_config")
         self._provider = LLMClient.get_provider(config.llm_config)

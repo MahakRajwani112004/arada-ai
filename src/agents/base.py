@@ -3,12 +3,13 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from src.config.logging import get_logger
 from src.config.settings import get_settings
 from src.models.agent_config import AgentConfig
 from src.models.responses import AgentContext, AgentResponse
+from src.skills.models import Skill
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -23,11 +24,23 @@ class BaseAgent(ABC):
     The config determines behavior, not the class.
     """
 
-    def __init__(self, config: AgentConfig):
-        """Initialize agent with configuration."""
+    def __init__(self, config: AgentConfig, skills: Optional[List[Skill]] = None):
+        """Initialize agent with configuration and optional skills.
+
+        Args:
+            config: Agent configuration
+            skills: List of loaded Skill objects to inject into prompts
+        """
         self.config = config
         self.id = config.id
         self.name = config.name
+        self._skills: List[Skill] = skills or []
+
+        # Map skill_id -> parameters from config
+        self._skill_parameters: Dict[str, Dict[str, Any]] = {}
+        for skill_config in config.skills:
+            if skill_config.enabled:
+                self._skill_parameters[skill_config.skill_id] = skill_config.parameters
 
     async def execute(self, context: AgentContext) -> AgentResponse:
         """
@@ -65,7 +78,7 @@ class BaseAgent(ABC):
             latency_ms = int((time.perf_counter() - start_time) * 1000)
 
             # Get agent type from config
-            agent_type = self.config.type.value if hasattr(self.config.type, "value") else str(self.config.type)
+            agent_type = self.config.agent_type.value if hasattr(self.config.agent_type, "value") else str(self.config.agent_type)
 
             # Extract correlation IDs from context
             user_id = context.user_id
@@ -252,7 +265,30 @@ class BaseAgent(ABC):
         # Note: Tools are provided via native function calling, not in system prompt
         # The LLM receives tool definitions through the API's tool/function calling feature
 
+        # Skills section - inject domain expertise
+        if self._skills:
+            parts.append("\n## DOMAIN EXPERTISE")
+            for skill in self._skills:
+                params = self._skill_parameters.get(skill.id, {})
+                skill_context = skill.build_context_injection(params)
+                parts.append(skill_context)
+                parts.append("")  # Separator between skills
+
         return "\n".join(parts)
+
+    def set_skills(self, skills: List[Skill]) -> None:
+        """Set skills for this agent (for async loading after init).
+
+        Args:
+            skills: List of loaded Skill objects
+        """
+        self._skills = skills
+
+    def get_enabled_skills(self) -> List[str]:
+        """Get list of enabled skill IDs from config."""
+        return [
+            skill.skill_id for skill in self.config.skills if skill.enabled
+        ]
 
     def get_enabled_tools(self) -> List[str]:
         """Get list of enabled tool IDs."""
