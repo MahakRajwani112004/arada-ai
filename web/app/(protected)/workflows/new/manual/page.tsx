@@ -107,11 +107,11 @@ export default function ManualWorkflowPage() {
       <PageContainer>
         <div className="max-w-3xl">
           <Link
-            href="/workflows/new"
+            href="/workflows"
             className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"
           >
             <ArrowLeft className="h-4 w-4" />
-            Back to Options
+            Back to Workflows
           </Link>
 
           <div className="mb-8">
