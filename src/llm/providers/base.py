@@ -71,6 +71,7 @@ class BaseLLMProvider(ABC):
         max_tokens: Optional[int] = None,
         stop_sequences: Optional[List[str]] = None,
         tools: Optional[List[ToolDefinition]] = None,
+        tool_choice: Optional[str] = None,  # "auto", "required", "none", or specific tool name
         *,
         # Required for user-level analytics
         user_id: str,
@@ -110,7 +111,7 @@ class BaseLLMProvider(ABC):
         try:
             # Call the actual implementation
             response = await self._complete_impl(
-                messages, temperature, max_tokens, stop_sequences, tools
+                messages, temperature, max_tokens, stop_sequences, tools, tool_choice
             )
             return response
 
@@ -274,12 +275,17 @@ class BaseLLMProvider(ABC):
         max_tokens: Optional[int] = None,
         stop_sequences: Optional[List[str]] = None,
         tools: Optional[List[ToolDefinition]] = None,
+        tool_choice: Optional[str] = None,
     ) -> LLMResponse:
         """
         Actual implementation of completion.
 
         Subclasses implement this method instead of complete().
         The complete() method wraps this with instrumentation.
+
+        Args:
+            tool_choice: Tool calling mode - "auto" (default), "required" (force tool call),
+                        "none" (no tool calls), or a specific tool name to force that tool.
         """
         pass
 

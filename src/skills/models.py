@@ -518,9 +518,15 @@ class Skill:
         template_files = self.definition.resources.get_template_files()
         if template_files:
             sections.append("### Document Templates")
+            sections.append("Use the fill_docx_template tool to generate documents from these templates.")
+            sections.append("The tool preserves all formatting, headers, footers, and styles.")
+            sections.append("")
             for file in template_files:
                 sections.append(f"**Template: {file.name}**")
-                sections.append("Use this template as the base for generating documents:")
+                sections.append(f"- Storage Key: `{file.storage_url}`")
+                sections.append(f"- To use: `fill_docx_template(template_storage_key=\"{file.storage_url}\", values={{...}}, output_filename=\"...\")`")
+                sections.append("")
+                sections.append("Template preview (placeholders shown in {{UPPERCASE}}):")
                 sections.append(file.content_preview)
                 sections.append("")
 

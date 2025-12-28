@@ -38,6 +38,7 @@ class LLMCompletionInput:
     max_tokens: int = 1024
     stop_sequences: Optional[List[str]] = None
     tools: Optional[List[ToolDefinitionInput]] = None  # Tools for function calling
+    tool_choice: Optional[str] = None  # "auto", "required", "none", or specific tool name
     agent_id: Optional[str] = None  # Optional correlation
     request_id: Optional[str] = None  # Optional correlation
     workflow_id: Optional[str] = None  # Optional correlation
@@ -113,6 +114,7 @@ async def llm_completion(input: LLMCompletionInput) -> LLMCompletionOutput:
         messages=messages,
         stop_sequences=input.stop_sequences,
         tools=tools,
+        tool_choice=input.tool_choice,
         user_id=input.user_id,
         agent_id=input.agent_id,
         request_id=input.request_id,

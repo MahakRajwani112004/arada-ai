@@ -17,6 +17,11 @@ MAX_RESULT_SIZE = 50000  # Maximum characters per step result
 VALID_PATH_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")  # Valid path components
 
 with workflow.unsafe.imports_passed_through():
+    from src.activities.action_validator_activity import (
+        ActionValidatorInput,
+        ActionValidatorOutput,
+        validate_action,
+    )
     from src.activities.agent_tool_activity import (
         AgentToolExecutionInput,
         AgentToolExecutionOutput,
@@ -110,6 +115,16 @@ class AgentWorkflowInput:
     # Workflow definition (for WORKFLOW mode)
     # JSON structure: {"id": "...", "steps": [...], "entry_step": "..."}
     workflow_definition: Optional[Dict[str, Any]] = None
+
+    # Action Validator settings (enabled by default for ToolAgent/FullAgent)
+    # Validates that tools are called when expected and retries with forced tool_choice
+    enable_action_validator: bool = True
+    validator_model: str = "gpt-4o-mini"  # Fast/cheap model for validation
+    validator_provider: str = "openai"
+    max_validation_retries: int = 1  # Number of retry attempts with forced tool_choice
+
+    # Agent description for validator context (extracted from config)
+    agent_description: str = ""
 
 
 @dataclass
@@ -432,7 +447,7 @@ class AgentWorkflow:
     async def _handle_tool(
         self, input: AgentWorkflowInput
     ) -> AgentWorkflowOutput:
-        """Handle ToolAgent - LLM + native tool calling loop."""
+        """Handle ToolAgent - LLM + native tool calling loop with action validation."""
         import json
 
         if not input.llm_provider or not input.llm_model:
@@ -441,6 +456,7 @@ class AgentWorkflow:
         MAX_TOOL_ITERATIONS = 10
         tool_calls_made = []
         iterations = 0
+        validation_retries = 0
 
         # Get tool definitions for enabled tools
         tool_defs_result: GetToolDefinitionsOutput = await workflow.execute_activity(
@@ -456,12 +472,21 @@ class AgentWorkflow:
         # Build set of resolved enabled tools (values in tool_name_map are resolved names)
         resolved_enabled_tools = set(tool_name_map.values())
 
+        # Build simple tool info for validator
+        available_tools_info = [
+            {"name": d.name, "description": d.description}
+            for d in tool_defs_result.definitions
+        ]
+
         workflow.logger.info(f"Tool definitions loaded: {[t.name for t in tools]}")
         workflow.logger.info(f"Resolved enabled tools: {resolved_enabled_tools}")
 
         messages: List[Dict[str, Any]] = [{"role": "system", "content": input.system_prompt}]
         messages.extend(input.conversation_history)
         messages.append({"role": "user", "content": input.user_input})
+
+        # Track current tool_choice mode (None = auto, can switch to "required" after validation)
+        current_tool_choice: Optional[str] = None
 
         while iterations < MAX_TOOL_ITERATIONS:
             iterations += 1
@@ -477,25 +502,88 @@ class AgentWorkflow:
                     temperature=input.llm_temperature,
                     max_tokens=input.llm_max_tokens,
                     tools=tools if tools else None,
+                    tool_choice=current_tool_choice,
                 ),
                 start_to_close_timeout=timedelta(seconds=120),
             )
 
             # Check for native tool calls
             if not llm_result.tool_calls:
-                # No tool calls, return response
-                return AgentWorkflowOutput(
-                    content=llm_result.content,
-                    agent_id=input.agent_id,
-                    agent_type=input.agent_type,
-                    success=True,
-                    metadata={
-                        "model": llm_result.model,
-                        "usage": llm_result.usage,
-                        "tool_calls": tool_calls_made,
-                        "iterations": iterations,
-                    },
-                )
+                # No tool calls - check if we should validate and retry
+                should_return = True
+
+                # Run action validator if enabled and we have tools available
+                if (input.enable_action_validator
+                    and tools
+                    and validation_retries < input.max_validation_retries):
+
+                    workflow.logger.info(
+                        f"Running action validator (retry {validation_retries + 1}/{input.max_validation_retries})"
+                    )
+
+                    validation_result: ActionValidatorOutput = await workflow.execute_activity(
+                        validate_action,
+                        ActionValidatorInput(
+                            agent_description=input.agent_description or input.system_prompt[:500],
+                            available_tools=available_tools_info,
+                            user_input=input.user_input,
+                            agent_response=llm_result.content,
+                            tool_calls_made=[],
+                            user_id=input.user_id,
+                            validator_model=input.validator_model,
+                            validator_provider=input.validator_provider,
+                        ),
+                        start_to_close_timeout=timedelta(seconds=30),
+                    )
+
+                    workflow.logger.info(
+                        f"Validation result: is_valid={validation_result.is_valid}, "
+                        f"should_retry={validation_result.should_retry_with_tool}, "
+                        f"suggested_tool={validation_result.suggested_tool}, "
+                        f"reason={validation_result.reason}"
+                    )
+
+                    if validation_result.should_retry_with_tool:
+                        validation_retries += 1
+                        should_return = False
+
+                        # Determine tool_choice for retry
+                        if validation_result.suggested_tool:
+                            # Force specific tool
+                            sanitized_suggested = sanitize_tool_name(validation_result.suggested_tool)
+                            if sanitized_suggested in [t.name for t in tools]:
+                                current_tool_choice = sanitized_suggested
+                                workflow.logger.info(f"Retrying with forced tool: {sanitized_suggested}")
+                            else:
+                                # Tool not found, use "required" to force any tool
+                                current_tool_choice = "required"
+                                workflow.logger.info("Retrying with tool_choice=required")
+                        else:
+                            # No specific tool suggested, force any tool
+                            current_tool_choice = "required"
+                            workflow.logger.info("Retrying with tool_choice=required")
+
+                        # Continue the loop for retry
+                        continue
+
+                if should_return:
+                    # Validation passed or disabled, return response
+                    return AgentWorkflowOutput(
+                        content=llm_result.content,
+                        agent_id=input.agent_id,
+                        agent_type=input.agent_type,
+                        success=True,
+                        metadata={
+                            "model": llm_result.model,
+                            "usage": llm_result.usage,
+                            "tool_calls": tool_calls_made,
+                            "iterations": iterations,
+                            "validation_retries": validation_retries,
+                        },
+                    )
+
+            # Reset tool_choice after successful tool call
+            current_tool_choice = None
 
             # Add assistant message with tool calls to conversation
             messages.append({
@@ -562,7 +650,7 @@ class AgentWorkflow:
     async def _handle_full(
         self, input: AgentWorkflowInput
     ) -> AgentWorkflowOutput:
-        """Handle FullAgent - retrieve + LLM + native tool calling loop."""
+        """Handle FullAgent - retrieve + LLM + native tool calling loop with action validation."""
         import json
 
         if not input.llm_provider or not input.llm_model:
@@ -607,14 +695,24 @@ class AgentWorkflow:
         # Build set of resolved enabled tools
         resolved_enabled_tools = set(tool_name_map.values())
 
-        # Step 2: Tool loop with RAG context
+        # Build simple tool info for validator
+        available_tools_info = [
+            {"name": d.name, "description": d.description}
+            for d in tool_defs_result.definitions
+        ]
+
+        # Step 2: Tool loop with RAG context and action validation
         MAX_TOOL_ITERATIONS = 10
         tool_calls_made = []
         iterations = 0
+        validation_retries = 0
 
         messages: List[Dict[str, Any]] = [{"role": "system", "content": augmented_prompt}]
         messages.extend(input.conversation_history)
         messages.append({"role": "user", "content": input.user_input})
+
+        # Track current tool_choice mode
+        current_tool_choice: Optional[str] = None
 
         while iterations < MAX_TOOL_ITERATIONS:
             iterations += 1
@@ -629,25 +727,84 @@ class AgentWorkflow:
                     temperature=input.llm_temperature,
                     max_tokens=input.llm_max_tokens,
                     tools=tools if tools else None,
+                    tool_choice=current_tool_choice,
                 ),
                 start_to_close_timeout=timedelta(seconds=120),
             )
 
             # Check for native tool calls
             if not llm_result.tool_calls:
-                return AgentWorkflowOutput(
-                    content=llm_result.content,
-                    agent_id=input.agent_id,
-                    agent_type=input.agent_type,
-                    success=True,
-                    metadata={
-                        "model": llm_result.model,
-                        "usage": llm_result.usage,
-                        "retrieved_count": retrieval_result.total_found,
-                        "tool_calls": tool_calls_made,
-                        "iterations": iterations,
-                    },
-                )
+                # No tool calls - check if we should validate and retry
+                should_return = True
+
+                # Run action validator if enabled and we have tools available
+                if (input.enable_action_validator
+                    and tools
+                    and validation_retries < input.max_validation_retries):
+
+                    workflow.logger.info(
+                        f"Running action validator (retry {validation_retries + 1}/{input.max_validation_retries})"
+                    )
+
+                    validation_result: ActionValidatorOutput = await workflow.execute_activity(
+                        validate_action,
+                        ActionValidatorInput(
+                            agent_description=input.agent_description or input.system_prompt[:500],
+                            available_tools=available_tools_info,
+                            user_input=input.user_input,
+                            agent_response=llm_result.content,
+                            tool_calls_made=[],
+                            user_id=input.user_id,
+                            validator_model=input.validator_model,
+                            validator_provider=input.validator_provider,
+                        ),
+                        start_to_close_timeout=timedelta(seconds=30),
+                    )
+
+                    workflow.logger.info(
+                        f"Validation result: is_valid={validation_result.is_valid}, "
+                        f"should_retry={validation_result.should_retry_with_tool}, "
+                        f"suggested_tool={validation_result.suggested_tool}, "
+                        f"reason={validation_result.reason}"
+                    )
+
+                    if validation_result.should_retry_with_tool:
+                        validation_retries += 1
+                        should_return = False
+
+                        # Determine tool_choice for retry
+                        if validation_result.suggested_tool:
+                            sanitized_suggested = sanitize_tool_name(validation_result.suggested_tool)
+                            if sanitized_suggested in [t.name for t in tools]:
+                                current_tool_choice = sanitized_suggested
+                                workflow.logger.info(f"Retrying with forced tool: {sanitized_suggested}")
+                            else:
+                                current_tool_choice = "required"
+                                workflow.logger.info("Retrying with tool_choice=required")
+                        else:
+                            current_tool_choice = "required"
+                            workflow.logger.info("Retrying with tool_choice=required")
+
+                        continue
+
+                if should_return:
+                    return AgentWorkflowOutput(
+                        content=llm_result.content,
+                        agent_id=input.agent_id,
+                        agent_type=input.agent_type,
+                        success=True,
+                        metadata={
+                            "model": llm_result.model,
+                            "usage": llm_result.usage,
+                            "retrieved_count": retrieval_result.total_found,
+                            "tool_calls": tool_calls_made,
+                            "iterations": iterations,
+                            "validation_retries": validation_retries,
+                        },
+                    )
+
+            # Reset tool_choice after successful tool call
+            current_tool_choice = None
 
             # Add assistant message with tool calls
             messages.append({
@@ -686,7 +843,7 @@ class AgentWorkflow:
             agent_id=input.agent_id,
             agent_type=input.agent_type,
             success=False,
-            metadata={"tool_calls": tool_calls_made},
+            metadata={"tool_calls": tool_calls_made, "validation_retries": validation_retries},
         )
 
     async def _handle_router(

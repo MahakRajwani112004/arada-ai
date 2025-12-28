@@ -139,11 +139,55 @@ redis-shell: ## Open Redis shell
 # Testing
 # ============================================
 
-test: ## Run tests
-	pytest tests/ -v
+test: ## Run all tests with coverage
+	pytest tests/ -v --cov=src --cov-report=term-missing
+
+test-unit: ## Run unit tests only
+	pytest tests/unit -v --cov=src --cov-report=term-missing
+
+test-integration: ## Run integration tests only
+	pytest tests/integration -v --cov=src --cov-append
+
+test-cov: ## Run tests and open HTML coverage report
+	pytest tests/ --cov=src --cov-report=html && open htmlcov/index.html
+
+test-fast: ## Run tests quickly (stop on first failure)
+	pytest tests/unit -v -x --tb=short
+
+test-parallel: ## Run tests in parallel
+	pytest tests/ -v -n auto --cov=src --cov-report=term-missing
+
+test-api: ## Run API router tests only
+	pytest tests/unit/api -v --cov=src/api --cov-report=term-missing
+
+test-watch: ## Run tests in watch mode (requires pytest-watch)
+	ptw -- -v tests/unit
+
+# ============================================
+# Linting & Formatting
+# ============================================
 
 lint: ## Run linter
-	ruff check src/ workers/
+	ruff check src/ workers/ tests/
+
+lint-fix: ## Run linter with auto-fix
+	ruff check --fix src/ workers/ tests/
 
 format: ## Format code
-	ruff format src/ workers/
+	ruff format src/ workers/ tests/
+
+format-check: ## Check code formatting
+	ruff format --check src/ workers/ tests/
+
+typecheck: ## Run type checker
+	mypy src/ --ignore-missing-imports
+
+# ============================================
+# CI/CD Commands
+# ============================================
+
+ci: lint-fix format test ## Run full CI pipeline locally
+	@echo "All CI checks passed!"
+
+ci-check: format-check lint test ## Run CI checks without fixing
+	@echo "All CI checks passed!"

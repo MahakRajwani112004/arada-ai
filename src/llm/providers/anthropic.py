@@ -96,8 +96,14 @@ class AnthropicProvider(BaseLLMProvider):
         max_tokens: Optional[int] = None,
         stop_sequences: Optional[List[str]] = None,
         tools: Optional[List[ToolDefinition]] = None,
+        tool_choice: Optional[str] = None,
     ) -> LLMResponse:
-        """Generate completion using Claude with optional tool calling."""
+        """Generate completion using Claude with optional tool calling.
+
+        Args:
+            tool_choice: "auto" (default), "required" (force tool call),
+                        "none" (no tool calls), or a specific tool name.
+        """
         system_prompt, formatted_messages = self._format_messages(messages)
 
         kwargs: Dict[str, Any] = {
@@ -115,6 +121,16 @@ class AnthropicProvider(BaseLLMProvider):
 
         if tools:
             kwargs["tools"] = self._format_tools(tools)
+            # Handle tool_choice parameter - Anthropic uses different format
+            if tool_choice == "required":
+                kwargs["tool_choice"] = {"type": "any"}
+            elif tool_choice == "none":
+                # Anthropic doesn't have explicit "none", so we just don't pass tools
+                del kwargs["tools"]
+            elif tool_choice and tool_choice not in ("auto", "required", "none"):
+                # Specific tool name - force that tool to be called
+                kwargs["tool_choice"] = {"type": "tool", "name": tool_choice}
+            # For "auto" or None, Anthropic uses auto by default (no tool_choice needed)
 
         response = await self.client.messages.create(**kwargs)
 

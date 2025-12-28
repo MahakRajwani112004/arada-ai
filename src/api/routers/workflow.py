@@ -1,10 +1,11 @@
 """Workflow execution API routes."""
 import os
 from datetime import timedelta
-from typing import Optional
+from typing import List, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client, WorkflowFailureError
 from temporalio.exceptions import TimeoutError as TemporalTimeoutError
 
@@ -22,7 +23,10 @@ from src.api.schemas.workflow import (
     WorkflowStatusResponse,
 )
 from src.config.logging import get_logger
+from src.skills.models import Skill
+from src.skills.repository import SkillRepository
 from src.storage import BaseAgentRepository
+from src.storage.database import get_session
 from src.storage.workflow_repository import WorkflowRepository
 from src.workflows.agent_workflow import AgentWorkflow, AgentWorkflowInput
 
@@ -53,6 +57,7 @@ async def execute_agent(
     http_request: Request,
     repository: BaseAgentRepository = Depends(get_repository),
     workflow_repo: Optional[WorkflowRepository] = Depends(get_workflow_repository),
+    session: AsyncSession = Depends(get_session),
 ) -> ExecuteAgentResponse:
     """Execute an agent workflow."""
     request_id = getattr(http_request.state, "request_id", None)
@@ -63,7 +68,14 @@ async def execute_agent(
     if not config:
         raise NotFoundError(resource="Agent", identifier=request.agent_id)
 
-    # Build workflow input
+    # Build workflow input with skills loaded from DB
+    system_prompt = await _build_system_prompt_async(config, session)
+
+    # Build agent description for action validator
+    agent_description = config.description or config.name
+    if config.goal and config.goal.objective:
+        agent_description = f"{agent_description}. Goal: {config.goal.objective}"
+
     workflow_input = AgentWorkflowInput(
         agent_id=config.id,
         agent_type=config.agent_type.value,
@@ -74,9 +86,10 @@ async def execute_agent(
             for m in request.conversation_history
         ],
         session_id=request.session_id,
-        system_prompt=_build_system_prompt(config),
+        system_prompt=system_prompt,
         safety_level=config.safety.level.value,
         blocked_topics=config.safety.blocked_topics,
+        agent_description=agent_description,
     )
 
     # Add LLM config if present
@@ -341,8 +354,63 @@ async def get_workflow_status(workflow_id: str) -> WorkflowStatusResponse:
         raise NotFoundError(resource="Workflow", identifier=workflow_id)
 
 
+async def _load_skills_for_agent(config, session: AsyncSession) -> List[Skill]:
+    """Load skills from database for an agent config.
+
+    Args:
+        config: Agent configuration with skills list
+        session: Database session
+
+    Returns:
+        List of loaded Skill objects
+    """
+    if not config.skills:
+        return []
+
+    skills = []
+    skill_repo = SkillRepository(session)
+
+    for skill_config in config.skills:
+        if not skill_config.enabled:
+            continue
+        try:
+            skill = await skill_repo.get(skill_config.skill_id)
+            if skill:
+                skills.append(skill)
+                logger.debug("skill_loaded", skill_id=skill_config.skill_id)
+            else:
+                logger.warning("skill_not_found", skill_id=skill_config.skill_id)
+        except Exception as e:
+            logger.error("skill_load_failed", skill_id=skill_config.skill_id, error=str(e))
+
+    return skills
+
+
+async def _build_system_prompt_async(config, session: AsyncSession) -> str:
+    """Build system prompt from agent config with skills loaded from DB.
+
+    Args:
+        config: Agent configuration
+        session: Database session for loading skills
+
+    Returns:
+        Complete system prompt string
+    """
+    from src.agents.factory import AgentFactory
+
+    # Load skills from database
+    skills = await _load_skills_for_agent(config, session)
+
+    # Create agent with skills
+    agent = AgentFactory.create(config, skills=skills)
+    return agent.build_system_prompt()
+
+
 def _build_system_prompt(config) -> str:
-    """Build system prompt from agent config."""
+    """Build system prompt from agent config (without skills - legacy).
+
+    DEPRECATED: Use _build_system_prompt_async for full skill support.
+    """
     from src.agents.factory import AgentFactory
 
     agent = AgentFactory.create(config)

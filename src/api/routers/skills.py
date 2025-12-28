@@ -175,6 +175,273 @@ async def list_skills(
     )
 
 
+# ==================== Static Routes (must be before /{skill_id}) ====================
+
+
+@router.get("/supported-file-types", response_model=SupportedFileTypesResponse)
+async def get_supported_file_types() -> SupportedFileTypesResponse:
+    """Get list of supported file types for skill uploads."""
+    return SupportedFileTypesResponse(
+        extensions=get_supported_extensions(),
+        categories={
+            "documents": ["pdf", "txt", "md", "docx"],
+            "code": ["py", "js", "ts", "jsx", "tsx", "json", "yaml", "yml", "xml", "html", "css", "sql", "sh", "bash"],
+            "data": ["csv", "tsv"],
+            "config": ["env", "ini", "toml", "conf"],
+        },
+        max_size_mb=get_max_file_size_mb(),
+    )
+
+
+@router.post("/generate", response_model=GenerateSkillResponse)
+async def generate_skill(
+    request: GenerateSkillRequest,
+    current_user: CurrentUser,
+) -> GenerateSkillResponse:
+    """Generate a skill from natural language description.
+
+    This uses AI to create a complete skill definition from a natural language prompt.
+    The generated skill can then be refined or saved directly.
+    """
+    # TODO: Implement skill generation using LLM
+    # For now, return a placeholder response indicating the feature is not yet implemented
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Skill generation is coming soon. Please create skills manually for now.",
+    )
+
+
+@router.post("/generate/refine", response_model=RefineSkillResponse)
+async def refine_skill(
+    request: RefineSkillRequest,
+    current_user: CurrentUser,
+) -> RefineSkillResponse:
+    """Refine a generated skill based on user feedback.
+
+    Takes the current skill definition and user feedback to improve it.
+    """
+    # TODO: Implement skill refinement using LLM
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Skill refinement is coming soon.",
+    )
+
+
+@router.post("/search", response_model=SearchSkillsResponse)
+async def search_skills(
+    request: SearchSkillsRequest,
+    current_user: CurrentUser,
+    skill_repo: SkillRepository = Depends(get_skill_repository),
+) -> SearchSkillsResponse:
+    """Semantic search for skills.
+
+    Uses embeddings and semantic matching to find relevant skills.
+    """
+    # For now, use text-based search from the list method
+    # TODO: Implement semantic search with embeddings
+    skills = await skill_repo.list(
+        category=SkillCategory(request.categories[0].value) if request.categories else None,
+        tags=request.tags if request.tags else None,
+        search=request.query,
+        include_public=request.include_public,
+        limit=request.limit,
+    )
+
+    return SearchSkillsResponse(
+        matches=[
+            SkillMatchSchema(
+                skill=_to_summary(s),
+                relevance_score=0.8,  # Placeholder score
+                match_reason=f"Matched search query: {request.query}",
+            )
+            for s in skills
+        ],
+        query_understanding=f"Searching for skills related to: {request.query}",
+    )
+
+
+@router.post("/recommendations", response_model=RecommendSkillsResponse)
+async def recommend_skills(
+    request: RecommendSkillsRequest,
+    current_user: CurrentUser,
+    skill_repo: SkillRepository = Depends(get_skill_repository),
+) -> RecommendSkillsResponse:
+    """Get skill recommendations for a task.
+
+    Uses AI to analyze the task and recommend relevant skills.
+    """
+    # TODO: Implement AI-based recommendations
+    # For now, return top skills from a basic search
+    skills = await skill_repo.list(
+        search=request.task_description[:50],  # Use first 50 chars as search
+        include_public=True,
+        limit=request.max_skills,
+    )
+
+    return RecommendSkillsResponse(
+        recommendations=[
+            SkillMatchSchema(
+                skill=_to_summary(s),
+                relevance_score=0.7,
+                match_reason="Potential match based on task description",
+            )
+            for s in skills
+        ],
+        reasoning=f"Found {len(skills)} potentially relevant skills for your task.",
+    )
+
+
+@router.post("/preview", response_model=PreviewSkillResponse)
+async def preview_skill(
+    request: PreviewSkillRequest,
+    current_user: CurrentUser,
+) -> PreviewSkillResponse:
+    """Preview a skill without saving.
+
+    Generates the context injection for a skill definition without persisting it.
+    """
+    start_time = time.time()
+
+    # Convert to domain model and build context
+    definition = SkillDefinition.from_dict(request.definition.model_dump())
+
+    # Create a temporary skill to use build_context_injection
+    from src.skills.models import Skill
+
+    temp_skill = Skill(
+        id="preview",
+        tenant_id="preview",
+        name=request.definition.metadata.name,
+        description="Preview skill",
+        category=SkillCategory(request.definition.metadata.category.value),
+        tags=request.definition.metadata.tags,
+        definition=definition,
+    )
+
+    enhanced_prompt = temp_skill.build_context_injection(request.parameters)
+
+    execution_time_ms = (time.time() - start_time) * 1000
+    token_count = len(enhanced_prompt) // 4
+
+    return PreviewSkillResponse(
+        enhanced_prompt=enhanced_prompt,
+        prompt_token_count=token_count,
+        execution_time_ms=execution_time_ms,
+    )
+
+
+@router.get("/marketplace", response_model=MarketplaceListResponse)
+async def browse_marketplace(
+    current_user: CurrentUser,
+    category: Optional[SkillCategoryEnum] = Query(None),
+    tags: Optional[str] = Query(None, description="Comma-separated tags"),
+    search: Optional[str] = Query(None),
+    sort_by: str = Query("popular", description="popular, recent, rating"),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    skill_repo: SkillRepository = Depends(get_skill_repository),
+) -> MarketplaceListResponse:
+    """Browse public skills in the marketplace."""
+    # Parse tags if provided
+    tag_list = [t.strip() for t in tags.split(",")] if tags else None
+
+    # Get public skills only
+    skills = await skill_repo.list(
+        category=SkillCategory(category.value) if category else None,
+        tags=tag_list,
+        status=SkillStatus.PUBLISHED,
+        search=search,
+        include_public=True,
+        limit=limit,
+        offset=offset,
+    )
+
+    # Filter to only public skills
+    public_skills = [s for s in skills if s.is_public]
+
+    # Get unique categories and popular tags
+    categories = list(set(s.category.value for s in public_skills))
+    all_tags = []
+    for s in public_skills:
+        all_tags.extend(s.tags)
+    popular_tags = list(set(all_tags))[:20]  # Top 20 tags
+
+    return MarketplaceListResponse(
+        skills=[
+            MarketplaceSkillSchema(
+                id=s.id,
+                marketplace_id=s.id,  # Use skill ID as marketplace ID for now
+                name=s.name,
+                description=s.description,
+                category=s.category.value,
+                tags=s.tags,
+                version=s.version,
+                rating_avg=s.rating_avg,
+                rating_count=s.rating_count,
+                install_count=s.install_count,
+                author=s.created_by,
+                created_at=s.created_at,
+            )
+            for s in public_skills
+        ],
+        total=len(public_skills),
+        categories=categories,
+        popular_tags=popular_tags,
+    )
+
+
+@router.post("/marketplace/{marketplace_id}/import", response_model=ImportSkillResponse)
+async def import_skill(
+    marketplace_id: str,
+    request: ImportSkillRequest,
+    current_user: CurrentUser,
+    skill_repo: SkillRepository = Depends(get_skill_repository),
+) -> ImportSkillResponse:
+    """Import a skill from the marketplace to your workspace."""
+    # Get the marketplace skill
+    source_skill = await skill_repo.get(marketplace_id)
+    if not source_skill or not source_skill.is_public:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Marketplace skill '{marketplace_id}' not found",
+        )
+
+    # Create a copy for the user
+    imported_skill = await skill_repo.create(
+        name=request.customize_name or source_skill.name,
+        description=source_skill.description,
+        category=source_skill.category,
+        tags=source_skill.tags,
+        definition=source_skill.definition,
+        created_by=current_user.id,
+    )
+
+    return ImportSkillResponse(
+        skill_id=imported_skill.id,
+        original_marketplace_id=marketplace_id,
+        status="imported",
+    )
+
+
+@router.post("/marketplace/{marketplace_id}/rate", response_model=RateSkillResponse)
+async def rate_skill(
+    marketplace_id: str,
+    request: RateSkillRequest,
+    current_user: CurrentUser,
+    skill_repo: SkillRepository = Depends(get_skill_repository),
+) -> RateSkillResponse:
+    """Rate a marketplace skill."""
+    # TODO: Implement rating storage and aggregation
+    # For now, return a placeholder
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Skill rating is coming soon.",
+    )
+
+
+# ==================== Dynamic Routes (/{skill_id}) ====================
+
+
 @router.get("/{skill_id}", response_model=SkillResponse)
 async def get_skill(
     skill_id: str,
@@ -485,125 +752,6 @@ async def delete_file_from_skill(
             )
 
 
-@router.get("/supported-file-types", response_model=SupportedFileTypesResponse)
-async def get_supported_file_types() -> SupportedFileTypesResponse:
-    """Get list of supported file types for skill uploads."""
-    return SupportedFileTypesResponse(
-        extensions=get_supported_extensions(),
-        categories={
-            "documents": ["pdf", "txt", "md", "docx"],
-            "code": ["py", "js", "ts", "jsx", "tsx", "json", "yaml", "yml", "xml", "html", "css", "sql", "sh", "bash"],
-            "data": ["csv", "tsv"],
-            "config": ["env", "ini", "toml", "conf"],
-        },
-        max_size_mb=get_max_file_size_mb(),
-    )
-
-
-# ==================== AI Generation ====================
-
-
-@router.post("/generate", response_model=GenerateSkillResponse)
-async def generate_skill(
-    request: GenerateSkillRequest,
-    current_user: CurrentUser,
-) -> GenerateSkillResponse:
-    """Generate a skill from natural language description.
-
-    This uses AI to create a complete skill definition from a natural language prompt.
-    The generated skill can then be refined or saved directly.
-    """
-    # TODO: Implement skill generation using LLM
-    # For now, return a placeholder response indicating the feature is not yet implemented
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Skill generation is coming soon. Please create skills manually for now.",
-    )
-
-
-@router.post("/generate/refine", response_model=RefineSkillResponse)
-async def refine_skill(
-    request: RefineSkillRequest,
-    current_user: CurrentUser,
-) -> RefineSkillResponse:
-    """Refine a generated skill based on user feedback.
-
-    Takes the current skill definition and user feedback to improve it.
-    """
-    # TODO: Implement skill refinement using LLM
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Skill refinement is coming soon.",
-    )
-
-
-# ==================== Search & Discovery ====================
-
-
-@router.post("/search", response_model=SearchSkillsResponse)
-async def search_skills(
-    request: SearchSkillsRequest,
-    current_user: CurrentUser,
-    skill_repo: SkillRepository = Depends(get_skill_repository),
-) -> SearchSkillsResponse:
-    """Semantic search for skills.
-
-    Uses embeddings and semantic matching to find relevant skills.
-    """
-    # For now, use text-based search from the list method
-    # TODO: Implement semantic search with embeddings
-    skills = await skill_repo.list(
-        category=SkillCategory(request.categories[0].value) if request.categories else None,
-        tags=request.tags if request.tags else None,
-        search=request.query,
-        include_public=request.include_public,
-        limit=request.limit,
-    )
-
-    return SearchSkillsResponse(
-        matches=[
-            SkillMatchSchema(
-                skill=_to_summary(s),
-                relevance_score=0.8,  # Placeholder score
-                match_reason=f"Matched search query: {request.query}",
-            )
-            for s in skills
-        ],
-        query_understanding=f"Searching for skills related to: {request.query}",
-    )
-
-
-@router.post("/recommendations", response_model=RecommendSkillsResponse)
-async def recommend_skills(
-    request: RecommendSkillsRequest,
-    current_user: CurrentUser,
-    skill_repo: SkillRepository = Depends(get_skill_repository),
-) -> RecommendSkillsResponse:
-    """Get skill recommendations for a task.
-
-    Uses AI to analyze the task and recommend relevant skills.
-    """
-    # TODO: Implement AI-based recommendations
-    # For now, return top skills from a basic search
-    skills = await skill_repo.list(
-        search=request.task_description[:50],  # Use first 50 chars as search
-        include_public=True,
-        limit=request.max_skills,
-    )
-
-    return RecommendSkillsResponse(
-        recommendations=[
-            SkillMatchSchema(
-                skill=_to_summary(s),
-                relevance_score=0.7,
-                match_reason="Potential match based on task description",
-            )
-            for s in skills
-        ],
-        reasoning=f"Found {len(skills)} potentially relevant skills for your task.",
-    )
-
-
 # ==================== Testing ====================
 
 
@@ -657,45 +805,6 @@ async def test_skill(
         prompt_token_count=token_count,
         execution_time_ms=execution_time_ms,
         preview_sections=sections,
-    )
-
-
-@router.post("/preview", response_model=PreviewSkillResponse)
-async def preview_skill(
-    request: PreviewSkillRequest,
-    current_user: CurrentUser,
-) -> PreviewSkillResponse:
-    """Preview a skill without saving.
-
-    Generates the context injection for a skill definition without persisting it.
-    """
-    start_time = time.time()
-
-    # Convert to domain model and build context
-    definition = SkillDefinition.from_dict(request.definition.model_dump())
-
-    # Create a temporary skill to use build_context_injection
-    from src.skills.models import Skill
-
-    temp_skill = Skill(
-        id="preview",
-        tenant_id="preview",
-        name=request.definition.metadata.name,
-        description="Preview skill",
-        category=SkillCategory(request.definition.metadata.category.value),
-        tags=request.definition.metadata.tags,
-        definition=definition,
-    )
-
-    enhanced_prompt = temp_skill.build_context_injection(request.parameters)
-
-    execution_time_ms = (time.time() - start_time) * 1000
-    token_count = len(enhanced_prompt) // 4
-
-    return PreviewSkillResponse(
-        enhanced_prompt=enhanced_prompt,
-        prompt_token_count=token_count,
-        execution_time_ms=execution_time_ms,
     )
 
 
@@ -764,67 +873,7 @@ async def rollback_skill_version(
     return _to_response(skill)
 
 
-# ==================== Marketplace ====================
-
-
-@router.get("/marketplace", response_model=MarketplaceListResponse)
-async def browse_marketplace(
-    current_user: CurrentUser,
-    category: Optional[SkillCategoryEnum] = Query(None),
-    tags: Optional[str] = Query(None, description="Comma-separated tags"),
-    search: Optional[str] = Query(None),
-    sort_by: str = Query("popular", description="popular, recent, rating"),
-    limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-    skill_repo: SkillRepository = Depends(get_skill_repository),
-) -> MarketplaceListResponse:
-    """Browse public skills in the marketplace."""
-    # Parse tags if provided
-    tag_list = [t.strip() for t in tags.split(",")] if tags else None
-
-    # Get public skills only
-    skills = await skill_repo.list(
-        category=SkillCategory(category.value) if category else None,
-        tags=tag_list,
-        status=SkillStatus.PUBLISHED,
-        search=search,
-        include_public=True,
-        limit=limit,
-        offset=offset,
-    )
-
-    # Filter to only public skills
-    public_skills = [s for s in skills if s.is_public]
-
-    # Get unique categories and popular tags
-    categories = list(set(s.category.value for s in public_skills))
-    all_tags = []
-    for s in public_skills:
-        all_tags.extend(s.tags)
-    popular_tags = list(set(all_tags))[:20]  # Top 20 tags
-
-    return MarketplaceListResponse(
-        skills=[
-            MarketplaceSkillSchema(
-                id=s.id,
-                marketplace_id=s.id,  # Use skill ID as marketplace ID for now
-                name=s.name,
-                description=s.description,
-                category=s.category.value,
-                tags=s.tags,
-                version=s.version,
-                rating_avg=s.rating_avg,
-                rating_count=s.rating_count,
-                install_count=s.install_count,
-                author=s.created_by,
-                created_at=s.created_at,
-            )
-            for s in public_skills
-        ],
-        total=len(public_skills),
-        categories=categories,
-        popular_tags=popular_tags,
-    )
+# ==================== Publishing ====================
 
 
 @router.post("/{skill_id}/publish", response_model=PublishSkillResponse)
@@ -859,55 +908,6 @@ async def publish_skill(
     return PublishSkillResponse(
         marketplace_id=skill.id,
         status="published",
-    )
-
-
-@router.post("/marketplace/{marketplace_id}/import", response_model=ImportSkillResponse)
-async def import_skill(
-    marketplace_id: str,
-    request: ImportSkillRequest,
-    current_user: CurrentUser,
-    skill_repo: SkillRepository = Depends(get_skill_repository),
-) -> ImportSkillResponse:
-    """Import a skill from the marketplace to your workspace."""
-    # Get the marketplace skill
-    source_skill = await skill_repo.get(marketplace_id)
-    if not source_skill or not source_skill.is_public:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Marketplace skill '{marketplace_id}' not found",
-        )
-
-    # Create a copy for the user
-    imported_skill = await skill_repo.create(
-        name=request.customize_name or source_skill.name,
-        description=source_skill.description,
-        category=source_skill.category,
-        tags=source_skill.tags,
-        definition=source_skill.definition,
-        created_by=current_user.id,
-    )
-
-    return ImportSkillResponse(
-        skill_id=imported_skill.id,
-        original_marketplace_id=marketplace_id,
-        status="imported",
-    )
-
-
-@router.post("/marketplace/{marketplace_id}/rate", response_model=RateSkillResponse)
-async def rate_skill(
-    marketplace_id: str,
-    request: RateSkillRequest,
-    current_user: CurrentUser,
-    skill_repo: SkillRepository = Depends(get_skill_repository),
-) -> RateSkillResponse:
-    """Rate a marketplace skill."""
-    # TODO: Implement rating storage and aggregation
-    # For now, return a placeholder
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Skill rating is coming soon.",
     )
 
 
