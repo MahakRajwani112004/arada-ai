@@ -28,7 +28,7 @@ export interface AgentGoal {
 export interface AgentInstructions {
   steps: string[];
   rules: string[];
-  prohibited_actions: string[];
+  prohibited: string[];  // Must match backend field name
   output_format: string;
 }
 
@@ -150,6 +150,18 @@ export interface WorkflowRequest {
   session_id?: string;
 }
 
+// Tool call result returned in metadata
+export interface ToolCallResult {
+  tool: string;
+  args: Record<string, unknown>;
+  result: {
+    success: boolean;
+    output: unknown;
+    error?: string;
+  };
+}
+
+// Matches backend ExecuteAgentResponse schema
 export interface WorkflowResponse {
   content: string;
   agent_id: string;
@@ -157,10 +169,28 @@ export interface WorkflowResponse {
   success: boolean;
   error: string | null;
   metadata: {
-    tools_used: string[];
-    execution_time_ms: number;
+    model?: string;
+    usage?: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+    };
+    tool_calls?: ToolCallResult[];
+    iterations?: number;
+    validation_retries?: number;
+    finish_reason?: string;
+    loop_detected?: boolean;
+    execution_time_ms?: number;
+    // Orchestrator specific
+    agent_results?: Record<string, unknown>[];
+    mode?: string;
   };
-  workflow_id: string;
+  workflow_id: string | null;
+
+  // Clarification fields - for interactive follow-up questions
+  requires_clarification?: boolean;
+  clarification_question?: string;
+  clarification_options?: string[];
 }
 
 export type WorkflowStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";

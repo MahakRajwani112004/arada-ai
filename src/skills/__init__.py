@@ -17,6 +17,7 @@ from src.skills.models import (
     SkillCategory,
     FileType,
 )
+from src.skills.selector import SkillSelector
 
 __all__ = [
     "Skill",
@@ -34,4 +35,5 @@ __all__ = [
     "SkillPrompts",
     "SkillCategory",
     "FileType",
+    "SkillSelector",
 ]

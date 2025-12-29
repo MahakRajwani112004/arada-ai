@@ -3,13 +3,16 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from src.config.logging import get_logger
 from src.config.settings import get_settings
 from src.models.agent_config import AgentConfig
 from src.models.responses import AgentContext, AgentResponse
 from src.skills.models import Skill
+
+if TYPE_CHECKING:
+    from src.skills.selector import SkillSelector
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -41,6 +44,12 @@ class BaseAgent(ABC):
         for skill_config in config.skills:
             if skill_config.enabled:
                 self._skill_parameters[skill_config.skill_id] = skill_config.parameters
+
+        # Initialize skill selector if we have multiple skills and LLM config
+        self._skill_selector: Optional["SkillSelector"] = None
+        if len(self._skills) > 2 and config.llm_config:
+            from src.skills.selector import SkillSelector
+            self._skill_selector = SkillSelector(config.llm_config)
 
     async def execute(self, context: AgentContext) -> AgentResponse:
         """
@@ -206,8 +215,52 @@ class BaseAgent(ABC):
         """
         pass
 
-    def build_system_prompt(self) -> str:
-        """Build system prompt from config."""
+    async def _select_skills_for_query(
+        self,
+        user_input: str,
+        user_id: Optional[str] = None,
+    ) -> List[Skill]:
+        """
+        Select relevant skills for the given query.
+
+        Uses LLM-based selection when there are more than 2 skills,
+        otherwise returns all skills.
+
+        Args:
+            user_input: The user's query
+            user_id: Optional user ID for tracking
+
+        Returns:
+            List of selected skills
+        """
+        if not self._skills:
+            return []
+
+        # If no selector or few skills, return all
+        if not self._skill_selector or len(self._skills) <= 2:
+            return self._skills
+
+        return await self._skill_selector.select(
+            query=user_input,
+            available_skills=self._skills,
+            max_skills=2,
+            user_id=user_id,
+        )
+
+    def build_system_prompt(
+        self,
+        selected_skills: Optional[List[Skill]] = None,
+    ) -> str:
+        """
+        Build system prompt from config.
+
+        Args:
+            selected_skills: Optional list of skills to inject. If None,
+                           injects all skills (legacy behavior).
+
+        Returns:
+            Complete system prompt string
+        """
         parts = []
 
         # Current date/time context
@@ -274,9 +327,11 @@ class BaseAgent(ABC):
         # The LLM receives tool definitions through the API's tool/function calling feature
 
         # Skills section - inject domain expertise
-        if self._skills:
+        # Use selected_skills if provided, otherwise fall back to all skills
+        skills_to_inject = selected_skills if selected_skills is not None else self._skills
+        if skills_to_inject:
             parts.append("\n## DOMAIN EXPERTISE")
-            for skill in self._skills:
+            for skill in skills_to_inject:
                 params = self._skill_parameters.get(skill.id, {})
                 skill_context = skill.build_context_injection(params)
                 parts.append(skill_context)

@@ -16,13 +16,13 @@ interface ExecutionTimelineProps {
 
 function getStepStatusIcon(status: StepExecutionStatus) {
   switch (status) {
-    case "COMPLETED":
+    case "completed":
       return <Check className="h-4 w-4 text-green-400" />;
-    case "FAILED":
+    case "failed":
       return <X className="h-4 w-4 text-red-400" />;
-    case "RUNNING":
+    case "running":
       return <Loader2 className="h-4 w-4 text-blue-400 animate-spin" />;
-    case "PENDING":
+    case "pending":
     default:
       return <Clock className="h-4 w-4 text-muted-foreground" />;
   }
@@ -50,17 +50,17 @@ function StepItem({ step, isLast }: { step: StepResult; isLast: boolean }) {
         <CollapsibleTrigger className="w-full">
           <div
             className={`flex items-center gap-3 rounded-lg p-3 transition-colors hover:bg-secondary/50 ${
-              step.status === "RUNNING" ? "bg-blue-500/5" : ""
+              step.status === "running" ? "bg-blue-500/5" : ""
             }`}
           >
             {/* Status icon */}
             <div
               className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-                step.status === "COMPLETED"
+                step.status === "completed"
                   ? "bg-green-500/20"
-                  : step.status === "FAILED"
+                  : step.status === "failed"
                   ? "bg-red-500/20"
-                  : step.status === "RUNNING"
+                  : step.status === "running"
                   ? "bg-blue-500/20"
                   : "bg-secondary"
               }`}
@@ -72,7 +72,7 @@ function StepItem({ step, isLast }: { step: StepResult; isLast: boolean }) {
             <div className="flex-1 min-w-0 text-left">
               <div className="flex items-center gap-2">
                 <span className="font-medium truncate">{step.step_id}</span>
-                {step.status === "RUNNING" && (
+                {step.status === "running" && (
                   <span className="text-xs text-blue-400">(running)</span>
                 )}
               </div>

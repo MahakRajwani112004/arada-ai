@@ -65,6 +65,15 @@ class ToolConfigSchema(BaseModel):
     requires_confirmation: bool = False
 
 
+class SkillConfigSchema(BaseModel):
+    """API schema for skill config."""
+
+    skill_id: str
+    enabled: bool = True
+    parameters: Dict[str, Any] = {}
+    priority: int = 0
+
+
 class SafetyConfigSchema(BaseModel):
     """API schema for safety config."""
 
@@ -107,6 +116,7 @@ class CreateAgentRequest(BaseModel):
     llm_config: Optional[LLMConfigSchema] = None
     knowledge_base: Optional[KnowledgeBaseConfigSchema] = None
     tools: List[ToolConfigSchema] = []
+    skills: List[SkillConfigSchema] = []
     routing_table: Optional[Dict[str, str]] = None
     orchestrator_config: Optional[OrchestratorConfigSchema] = None
     safety: SafetyConfigSchema = Field(default_factory=SafetyConfigSchema)
@@ -143,6 +153,7 @@ class AgentDetailResponse(BaseModel):
     llm_config: Optional[LLMConfigSchema] = None
     knowledge_base: Optional[KnowledgeBaseConfigSchema] = None
     tools: List[ToolConfigSchema] = []
+    skills: List[SkillConfigSchema] = []
     routing_table: Optional[Dict[str, str]] = None
     orchestrator_config: Optional[OrchestratorConfigSchema] = None
     safety: SafetyConfigSchema

@@ -147,6 +147,37 @@ class SkillRepository:
 
         return self._to_skill(db_model)
 
+    async def get_many(self, skill_ids: List[str]) -> List[Skill]:
+        """Get multiple skills by their IDs in a single query.
+
+        Args:
+            skill_ids: List of skill IDs to fetch
+
+        Returns:
+            List of Skills found (may be fewer than requested if some not found)
+        """
+        if not skill_ids:
+            return []
+
+        query = select(SkillModel).where(SkillModel.id.in_(skill_ids))
+
+        # If user_id is set, filter by user or published public skills
+        if self._user_id:
+            query = query.where(
+                or_(
+                    SkillModel.user_id == self._user_id,
+                    and_(
+                        SkillModel.is_public == True,
+                        SkillModel.status == SkillStatus.PUBLISHED.value,
+                    ),
+                )
+            )
+
+        result = await self._session.execute(query)
+        db_models = result.scalars().all()
+
+        return [self._to_skill(m) for m in db_models]
+
     async def exists(self, skill_id: str) -> bool:
         """Check if a skill exists (regardless of ownership).
 
@@ -378,6 +409,10 @@ class SkillRepository:
                 changelog=changelog or f"Version {db_model.version}",
             )
             self._session.add(version_model)
+
+            # Preserve existing files - they are managed separately via upload/delete endpoints
+            existing_definition = SkillDefinition.from_dict(db_model.definition_json)
+            definition.resources.files = existing_definition.resources.files
 
             # Update definition and bump version
             definition.metadata.id = skill_id

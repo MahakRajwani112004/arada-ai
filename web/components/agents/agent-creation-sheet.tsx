@@ -160,7 +160,7 @@ export function AgentCreationSheet({
           formData.rules.length > 0
             ? formData.rules
             : ["Be helpful and accurate"],
-        prohibited_actions: [],
+        prohibited: [],
         output_format: "Natural language response",
       },
       examples: formData.examples,

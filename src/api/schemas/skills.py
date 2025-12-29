@@ -444,15 +444,23 @@ class RateSkillResponse(BaseModel):
 # ==================== File Management Schemas ====================
 
 
+class SkillFileUploadResponseFile(BaseModel):
+    """File details in upload response - matches frontend SkillFile type."""
+
+    id: str = Field(..., description="Unique file identifier")
+    name: str = Field(..., description="Original filename")
+    file_type: str = Field(..., description="File type: reference or template")
+    mime_type: str = Field(..., description="MIME type of the file")
+    storage_url: str = Field("", description="Storage URL (empty for security)")
+    content_preview: str = Field("", description="Content preview")
+    size_bytes: int = Field(..., ge=0, description="File size in bytes")
+    uploaded_at: str = Field(..., description="Upload timestamp (ISO format)")
+
+
 class SkillFileUploadResponse(BaseModel):
     """Response after uploading a file to a skill."""
 
-    file_id: str = Field(..., description="Unique file identifier")
-    filename: str = Field(..., description="Original filename")
-    file_type: str = Field(..., description="File type: reference or template")
-    mime_type: str = Field(..., description="MIME type of the file")
-    size_bytes: int = Field(..., ge=0, description="File size in bytes")
-    preview_length: int = Field(..., ge=0, description="Length of extracted preview")
+    file: SkillFileUploadResponseFile = Field(..., description="Uploaded file details")
     message: str = Field(..., description="Success message")
 
 
@@ -480,6 +488,7 @@ class SkillFileDownloadResponse(BaseModel):
     download_url: str = Field(..., description="Presigned URL for file download")
     filename: str = Field(..., description="Original filename")
     expires_in_seconds: int = Field(..., description="URL expiration time in seconds")
+    expires_at: str = Field(..., description="URL expiration timestamp (ISO format)")
 
 
 class SupportedFileTypesResponse(BaseModel):

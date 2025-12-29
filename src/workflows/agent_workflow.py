@@ -1,4 +1,5 @@
 """Agent Workflow - Main Temporal workflow for all agent types."""
+import asyncio
 import json
 import re
 from dataclasses import dataclass, field
@@ -134,6 +135,11 @@ class AgentWorkflowInput:
     # Max consecutive calls to same agent (prevents loops)
     orchestrator_max_same_agent_calls: int = 3
 
+    # Fanout settings (for fanout mode)
+    fanout_classifier_model: str = "gpt-4o-mini"  # Fast model for agent selection
+    fanout_classifier_provider: str = "openai"
+    fanout_synthesis_prompt: Optional[str] = None  # Custom synthesis instructions
+
     # Workflow definition (for WORKFLOW mode)
     # JSON structure: {"id": "...", "steps": [...], "entry_step": "..."}
     workflow_definition: Optional[Dict[str, Any]] = None
@@ -159,6 +165,11 @@ class AgentWorkflowOutput:
     success: bool
     error: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # Clarification fields - for interactive follow-up questions
+    requires_clarification: bool = False
+    clarification_question: Optional[str] = None
+    clarification_options: Optional[List[str]] = None
 
 
 # =============================================================================
@@ -296,6 +307,11 @@ class AgentWorkflow:
 
             # Route to appropriate handler
             agent_type = AgentType(input.agent_type)
+            workflow.logger.info(
+                f"Routing to handler: agent_type={agent_type}, "
+                f"orchestrator_mode={input.orchestrator_mode}, "
+                f"available_agents={len(input.orchestrator_available_agents)}"
+            )
 
             if agent_type == AgentType.SIMPLE:
                 result = await self._handle_simple(input)
@@ -1083,6 +1099,9 @@ Respond with ONLY the category name, nothing else."""
         elif mode == "hybrid":
             # Hybrid: check routing rules first, fallback to LLM
             return await self._execute_hybrid_orchestration(input)
+        elif mode == "fanout":
+            # Fanout: classify, parallel execute, synthesize
+            return await self._execute_fanout_orchestration(input)
         else:
             # Default: LLM-driven orchestration
             return await self._execute_llm_driven_orchestration(input)
@@ -1524,6 +1543,492 @@ Available agents:
                 "iterations": iterations,
             },
         )
+
+    # =========================================================================
+    # FANOUT MODE - Classify, parallel execute, synthesize
+    # =========================================================================
+
+    async def _execute_fanout_orchestration(
+        self, input: AgentWorkflowInput
+    ) -> AgentWorkflowOutput:
+        """Execute fanout orchestration: classify → parallel execute → synthesize.
+
+        This mode:
+        1. Uses a fast classifier to determine which agents are relevant
+        2. Executes only relevant agents in parallel
+        3. Synthesizes results if multiple agents responded (skips if only one)
+        """
+        if not input.orchestrator_available_agents:
+            raise ValueError("Fanout mode requires orchestrator_available_agents")
+
+        # Build agent info for classification
+        agent_info = []
+        for agent in input.orchestrator_available_agents:
+            agent_id = agent.get("agent_id", "unknown")
+            description = agent.get("description", "No description")
+            agent_info.append({"id": agent_id, "description": description})
+
+        workflow.logger.info(
+            f"Fanout orchestration started with {len(agent_info)} available agents"
+        )
+
+        # Step 1: Classify which agents are relevant and get tailored queries
+        classification_result = await self._fanout_classify_agents(
+            input=input,
+            agent_info=agent_info,
+        )
+
+        # Check if clarification is needed
+        if classification_result.get("needs_clarification"):
+            workflow.logger.info("Returning clarification request to user")
+            return AgentWorkflowOutput(
+                content=classification_result["clarification_question"],
+                agent_id=input.agent_id,
+                agent_type=input.agent_type,
+                success=True,
+                requires_clarification=True,
+                clarification_question=classification_result["clarification_question"],
+                clarification_options=classification_result.get("clarification_options"),
+                metadata={
+                    "mode": "fanout",
+                    "reason": "clarification_needed",
+                },
+            )
+
+        # Extract selections from classification result
+        agent_selections = classification_result.get("selections", [])
+
+        if not agent_selections:
+            workflow.logger.warning("No agents selected by classifier")
+            return AgentWorkflowOutput(
+                content="I don't have information about that topic.",
+                agent_id=input.agent_id,
+                agent_type=input.agent_type,
+                success=True,
+                metadata={
+                    "mode": "fanout",
+                    "selected_agents": [],
+                    "reason": "No relevant agents found",
+                },
+            )
+
+        # Extract agent IDs for logging/metadata
+        selected_agent_ids = [s["agent_id"] for s in agent_selections]
+        workflow.logger.info(
+            f"Classifier selected agents with tailored queries: {agent_selections}"
+        )
+
+        # Step 2: Execute selected agents in parallel with tailored queries
+        agent_results = await self._fanout_execute_agents(
+            input=input,
+            agent_selections=agent_selections,
+        )
+
+        successful_results = [r for r in agent_results if r.get("success")]
+        workflow.logger.info(
+            f"Fanout execution complete: {len(successful_results)}/{len(agent_results)} successful"
+        )
+
+        # Step 3: Determine response based on number of successful results
+        if len(successful_results) == 0:
+            # No successful responses
+            return AgentWorkflowOutput(
+                content="I wasn't able to find relevant information to answer your question.",
+                agent_id=input.agent_id,
+                agent_type=input.agent_type,
+                success=False,
+                error="All agents failed",
+                metadata={
+                    "mode": "fanout",
+                    "selected_agents": selected_agent_ids,
+                    "agent_selections": agent_selections,
+                    "agent_results": agent_results,
+                },
+            )
+        elif len(successful_results) == 1:
+            # Single response - return directly without synthesis
+            result = successful_results[0]
+            return AgentWorkflowOutput(
+                content=result.get("content", ""),
+                agent_id=input.agent_id,
+                agent_type=input.agent_type,
+                success=True,
+                metadata={
+                    "mode": "fanout",
+                    "selected_agents": selected_agent_ids,
+                    "agent_selections": agent_selections,
+                    "responding_agent": result.get("agent_id"),
+                    "synthesis_skipped": True,
+                },
+            )
+        else:
+            # Multiple responses - synthesize
+            synthesized = await self._fanout_synthesize_results(
+                input=input,
+                agent_results=successful_results,
+            )
+            return AgentWorkflowOutput(
+                content=synthesized,
+                agent_id=input.agent_id,
+                agent_type=input.agent_type,
+                success=True,
+                metadata={
+                    "mode": "fanout",
+                    "selected_agents": selected_agent_ids,
+                    "agent_selections": agent_selections,
+                    "agent_results": agent_results,
+                    "synthesized": True,
+                },
+            )
+
+    async def _fanout_classify_agents(
+        self,
+        input: AgentWorkflowInput,
+        agent_info: List[Dict[str, str]],
+    ) -> Dict[str, Any]:
+        """
+        Classify which agents are relevant and generate tailored queries for each.
+        Also detects if clarification is needed for ambiguous queries.
+
+        Returns a dict:
+        {
+            "selections": [{"agent_id": "...", "query": "tailored query"}, ...],
+            "needs_clarification": bool,
+            "clarification_question": Optional[str],
+            "clarification_options": Optional[List[str]]
+        }
+        """
+        # Build agent list for prompt
+        agent_list = "\n".join([
+            f"- {a['id']}: {a['description']}"
+            for a in agent_info
+        ])
+
+        classification_prompt = f"""You are an intelligent agent router. Given a user query, you must:
+1. Determine which agents are relevant to answer the query
+2. Generate a TAILORED query for each selected agent
+3. Detect if the query is too vague and needs clarification
+
+Available agents:
+{agent_list}
+
+RULES FOR AGENT SELECTION:
+- Select agents that can contribute to answering the query
+- For general queries about "products", "company", "what do you offer", select ALL agents
+- For queries mentioning company names like "Magure", "Magure's", or asking about "your products", select ALL agents
+- For specific queries mentioning a product name, select only that product's agent
+- For cross-cutting queries (like "pricing", "features", "comparison"), select ALL agents
+- Be INCLUSIVE - when in doubt, include the agent and proceed
+- PREFER making a best-effort attempt over asking for clarification
+
+RULES FOR QUERY TAILORING:
+- Rewrite the query to be specific to each agent's domain
+- Include the product/domain name in the tailored query
+- Make queries that will match well against knowledge base content
+
+RULES FOR CLARIFICATION (use sparingly):
+- Only ask for clarification when the query is COMPLETELY VAGUE (e.g., "help", "hi", "I need something")
+- DO NOT ask for clarification for general queries like "tell me about products" or "pricing" - just fan out to all agents
+- DO NOT ask for clarification just because you're uncertain - make a best-effort attempt
+- When clarification IS needed, provide helpful options
+
+OUTPUT FORMAT (strict JSON):
+{{
+  "selections": [
+    {{"agent_id": "agent-id-here", "query": "tailored query for this agent"}},
+    ...
+  ],
+  "needs_clarification": false
+}}
+
+ONLY when clarification is absolutely needed (query is completely vague):
+{{
+  "selections": [],
+  "needs_clarification": true,
+  "clarification_question": "What would you like to know?",
+  "clarification_options": ["Product Information", "Pricing", "Technical Support", "Other"]
+}}
+
+EXAMPLES:
+
+User query: "tell me about your products"
+Output: {{
+  "selections": [
+    {{"agent_id": "magoneai-expert", "query": "What is MagoneAI? Describe its features, capabilities, and use cases."}},
+    {{"agent_id": "maglabs-expert", "query": "What is MagLabs? Describe its features, capabilities, and use cases."}},
+    {{"agent_id": "magvisioniq-expert", "query": "What is MagVisionIQ? Describe its features, capabilities, and use cases."}}
+  ],
+  "needs_clarification": false
+}}
+
+User query: "tell me about pricing"
+Output: {{
+  "selections": [
+    {{"agent_id": "magoneai-expert", "query": "What are MagoneAI pricing plans, tiers, and costs?"}},
+    {{"agent_id": "maglabs-expert", "query": "What are MagLabs pricing plans, tiers, and costs?"}},
+    {{"agent_id": "magvisioniq-expert", "query": "What are MagVisionIQ pricing plans, tiers, and costs?"}}
+  ],
+  "needs_clarification": false
+}}
+
+User query: "help" or "hi" or "I need something"
+Output: {{
+  "selections": [],
+  "needs_clarification": true,
+  "clarification_question": "I'd be happy to help! What would you like to know about?",
+  "clarification_options": ["Product Information", "Pricing & Plans", "Technical Support", "Something Else"]
+}}
+
+Now process this query:
+
+User query: {input.user_input}
+
+Output:"""
+
+        messages = [
+            {"role": "user", "content": classification_prompt},
+        ]
+
+        llm_result: LLMCompletionOutput = await workflow.execute_activity(
+            llm_completion,
+            LLMCompletionInput(
+                provider=input.fanout_classifier_provider,
+                model=input.fanout_classifier_model,
+                messages=messages,
+                user_id=input.user_id,
+                temperature=0.0,
+                max_tokens=500,
+            ),
+            start_to_close_timeout=timedelta(seconds=30),
+        )
+
+        # Parse JSON response
+        response = llm_result.content.strip()
+
+        try:
+            # Try to parse as JSON
+            # Handle potential markdown code blocks
+            if response.startswith("```"):
+                response = response.split("```")[1]
+                if response.startswith("json"):
+                    response = response[4:]
+                response = response.strip()
+
+            parsed = json.loads(response)
+
+            # Check if clarification is needed
+            needs_clarification = parsed.get("needs_clarification", False)
+            if needs_clarification:
+                workflow.logger.info("Classifier detected ambiguous query - needs clarification")
+                return {
+                    "selections": [],
+                    "needs_clarification": True,
+                    "clarification_question": parsed.get("clarification_question", "Could you please clarify your question?"),
+                    "clarification_options": parsed.get("clarification_options"),
+                }
+
+            # Process selections
+            selections = parsed.get("selections", [])
+
+            # Validate agent IDs exist
+            available_ids = {a["id"] for a in agent_info}
+            valid_selections = []
+
+            for sel in selections:
+                agent_id = sel.get("agent_id", "")
+                query = sel.get("query", input.user_input)
+
+                if agent_id in available_ids:
+                    valid_selections.append({
+                        "agent_id": agent_id,
+                        "query": query,
+                    })
+            return {
+                "selections": valid_selections,
+                "needs_clarification": False,
+                "clarification_question": None,
+                "clarification_options": None,
+            }
+
+        except json.JSONDecodeError as e:
+            workflow.logger.error(f"Failed to parse classifier JSON: {e}")
+            # Fallback: try to extract agent IDs and use original query
+            available_ids = {a["id"] for a in agent_info}
+            fallback_selections = []
+
+            for agent_id in available_ids:
+                if agent_id in response:
+                    fallback_selections.append({
+                        "agent_id": agent_id,
+                        "query": input.user_input,
+                    })
+
+            return {
+                "selections": fallback_selections,
+                "needs_clarification": False,
+                "clarification_question": None,
+                "clarification_options": None,
+            }
+
+    async def _fanout_execute_agents(
+        self,
+        input: AgentWorkflowInput,
+        agent_selections: List[Dict[str, str]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Execute multiple agents in parallel with tailored queries.
+
+        Args:
+            input: Workflow input
+            agent_selections: List of {"agent_id": "...", "query": "tailored query"}
+        """
+        # Create tasks for parallel execution
+        tasks = []
+
+        for selection in agent_selections:
+            agent_id = selection["agent_id"]
+            tailored_query = selection["query"]
+
+            workflow.logger.info(
+                f"Executing agent {agent_id} with query: {tailored_query[:100]}..."
+            )
+
+            task = workflow.execute_activity(
+                execute_agent_as_tool,
+                AgentToolExecutionInput(
+                    agent_id=agent_id,
+                    query=tailored_query,
+                    user_id=input.user_id,
+                    context={
+                        "conversation_history": input.conversation_history,
+                        "original_query": input.user_input,
+                    },
+                    current_depth=0,
+                    max_depth=input.orchestrator_max_depth,
+                ),
+                start_to_close_timeout=timedelta(seconds=300),
+            )
+            tasks.append((agent_id, task))
+
+        # Execute all tasks in parallel
+        results = []
+        gathered = await asyncio.gather(
+            *[t[1] for t in tasks],
+            return_exceptions=True,
+        )
+
+        for i, result in enumerate(gathered):
+            agent_id = tasks[i][0]
+
+            if isinstance(result, Exception):
+                workflow.logger.error(f"Agent {agent_id} failed: {result}")
+                results.append({
+                    "agent_id": agent_id,
+                    "success": False,
+                    "error": str(result),
+                    "content": "",
+                })
+            else:
+                results.append({
+                    "agent_id": agent_id,
+                    "success": result.success,
+                    "content": result.content,
+                    "error": result.error,
+                    "metadata": result.metadata,
+                })
+
+        return results
+
+    async def _fanout_synthesize_results(
+        self,
+        input: AgentWorkflowInput,
+        agent_results: List[Dict[str, Any]],
+    ) -> str:
+        """Synthesize multiple agent responses into a unified answer."""
+        # Filter out unhelpful responses before synthesis
+        unhelpful_phrases = [
+            "i don't have that information",
+            "i don't have information",
+            "no information available",
+            "not available in",
+            "cannot find",
+        ]
+
+        useful_results = []
+        for r in agent_results:
+            content = r.get('content', '').strip()
+            content_lower = content.lower()
+
+            # Skip empty or very short responses
+            if len(content) < 50:
+                continue
+
+            # Skip responses that are just "I don't know" variants
+            is_unhelpful = any(phrase in content_lower for phrase in unhelpful_phrases)
+            if is_unhelpful and len(content) < 100:
+                continue
+
+            useful_results.append(r)
+
+        workflow.logger.info(
+            f"Synthesis: {len(useful_results)}/{len(agent_results)} useful responses"
+        )
+
+        # Build responses section from useful results only
+        responses_text = "\n\n".join([
+            f"### {r['agent_id']}:\n{r['content']}"
+            for r in useful_results
+        ])
+
+        # Use custom synthesis prompt if provided, otherwise use default
+        if input.fanout_synthesis_prompt:
+            synthesis_instruction = input.fanout_synthesis_prompt
+        else:
+            synthesis_instruction = """Combine the agent responses into a single, coherent, human-friendly answer.
+
+RULES:
+- Write naturally as if you're a knowledgeable person having a conversation
+- Integrate information from all agents seamlessly - don't mention "agents" or "sources"
+- Present information confidently - focus on what you DO know
+- NEVER use phrases like:
+  - "not readily available in the current context"
+  - "based on the information provided"
+  - "according to my sources"
+  - "I don't have information about X"
+  - "the context doesn't include"
+- If some information is missing, simply don't mention it - focus on what you can share
+- Use a warm, helpful, professional tone
+- Structure the response clearly with paragraphs or bullet points when appropriate
+- If an agent returned "I don't have that information", ignore that response entirely"""
+
+        synthesis_prompt = f"""{synthesis_instruction}
+
+User question: {input.user_input}
+
+Agent responses:
+{responses_text}
+
+Synthesized answer:"""
+
+        messages = [
+            {"role": "user", "content": synthesis_prompt},
+        ]
+
+        # Use the main LLM for synthesis (higher quality)
+        llm_result: LLMCompletionOutput = await workflow.execute_activity(
+            llm_completion,
+            LLMCompletionInput(
+                provider=input.llm_provider or "openai",
+                model=input.llm_model or "gpt-4o",
+                messages=messages,
+                user_id=input.user_id,
+                temperature=input.llm_temperature,
+                max_tokens=input.llm_max_tokens,
+            ),
+            start_to_close_timeout=timedelta(seconds=60),
+        )
+
+        return llm_result.content
 
     # =========================================================================
     # WORKFLOW MODE - Execute predefined workflow definition

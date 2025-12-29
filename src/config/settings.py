@@ -27,7 +27,7 @@ class Settings(BaseSettings):
         description="Allowed CORS origins. Set via CORS_ORIGINS env var as comma-separated list.",
     )
     cors_allow_credentials: bool = True
-    cors_allow_methods: List[str] = Field(default=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+    cors_allow_methods: List[str] = Field(default=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
     cors_allow_headers: List[str] = Field(default=["Authorization", "Content-Type", "X-Request-ID"])
 
     # Rate Limiting

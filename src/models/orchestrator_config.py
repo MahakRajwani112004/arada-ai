@@ -10,6 +10,7 @@ from src.models.routing_rules import RoutingRules
 class OrchestratorMode(str, Enum):
     """How the orchestrator decides which agents to run."""
 
+    FANOUT = "fanout"  # Classify, run relevant agents in parallel, synthesize
     LLM_DRIVEN = "llm_driven"  # LLM decides at runtime
     WORKFLOW = "workflow"  # Follow predefined workflow
     HYBRID = "hybrid"  # LLM can deviate from workflow

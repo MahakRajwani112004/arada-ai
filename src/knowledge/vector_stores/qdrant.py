@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, PointStruct, VectorParams
 
 
 @dataclass
@@ -123,4 +123,31 @@ class QdrantStore:
     async def delete_collection(self, collection_name: str) -> bool:
         """Delete a collection."""
         await self.client.delete_collection(collection_name=collection_name)
+        return True
+
+    async def delete_by_document_id(
+        self,
+        collection_name: str,
+        document_id: str,
+    ) -> bool:
+        """Delete all vectors associated with a document.
+
+        Args:
+            collection_name: Name of the collection
+            document_id: Document ID to filter by (stored in payload.document_id)
+
+        Returns:
+            True if deletion was successful
+        """
+        await self.client.delete(
+            collection_name=collection_name,
+            points_selector=Filter(
+                must=[
+                    FieldCondition(
+                        key="document_id",
+                        match=MatchValue(value=document_id),
+                    )
+                ]
+            ),
+        )
         return True

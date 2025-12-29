@@ -48,9 +48,9 @@ interface ResourcesSectionProps {
   mode: "create" | "edit";
 }
 
-const FILE_TYPE_LABELS: Record<FileType, string> = {
-  reference: "Reference Document",
-  template: "Template",
+const FILE_TYPE_CONFIG: Record<FileType, { label: string; variant: "default" | "secondary" | "outline" }> = {
+  reference: { label: "Reference", variant: "secondary" },
+  template: { label: "Template", variant: "default" },
 };
 
 const LANGUAGE_OPTIONS = [
@@ -191,8 +191,11 @@ export function ResourcesSection({
         <Alert>
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            File uploads will be available after saving the skill. You can add
-            code snippets now.
+            <p className="font-medium">File uploads available after saving</p>
+            <p className="mt-1 text-muted-foreground">
+              Save your skill first, then add reference documents (PDFs, guides) or
+              document templates (NDAs, contracts, certificates) that the AI can fill out.
+            </p>
           </AlertDescription>
         </Alert>
       )}
@@ -200,20 +203,51 @@ export function ResourcesSection({
       {/* File Upload Section (only in edit mode) */}
       {mode === "edit" && skillId && (
         <div>
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-4">
             <Label className="text-sm font-medium">Files</Label>
-            <Select
-              value={selectedFileType}
-              onValueChange={(v) => setSelectedFileType(v as FileType)}
+            <p className="mt-1 text-sm text-muted-foreground">
+              Upload documents for the AI to reference or templates it can fill out.
+            </p>
+          </div>
+
+          {/* File Type Selection */}
+          <div className="mb-4 grid gap-3 sm:grid-cols-2">
+            <Card
+              className={`cursor-pointer p-4 transition-colors ${
+                selectedFileType === "reference"
+                  ? "border-primary bg-primary/5"
+                  : "hover:border-muted-foreground/50"
+              }`}
+              onClick={() => setSelectedFileType("reference")}
             >
-              <SelectTrigger className="w-48">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="reference">Reference Document</SelectItem>
-                <SelectItem value="template">Template</SelectItem>
-              </SelectContent>
-            </Select>
+              <div className="flex items-start gap-3">
+                <FileText className="mt-0.5 h-5 w-5 text-blue-500" />
+                <div>
+                  <p className="font-medium">Reference Document</p>
+                  <p className="text-xs text-muted-foreground">
+                    PDFs, guides, manuals - knowledge the AI will use as context
+                  </p>
+                </div>
+              </div>
+            </Card>
+            <Card
+              className={`cursor-pointer p-4 transition-colors ${
+                selectedFileType === "template"
+                  ? "border-primary bg-primary/5"
+                  : "hover:border-muted-foreground/50"
+              }`}
+              onClick={() => setSelectedFileType("template")}
+            >
+              <div className="flex items-start gap-3">
+                <File className="mt-0.5 h-5 w-5 text-green-500" />
+                <div>
+                  <p className="font-medium">Document Template</p>
+                  <p className="text-xs text-muted-foreground">
+                    NDAs, contracts, certificates - documents the AI will fill out
+                  </p>
+                </div>
+              </div>
+            </Card>
           </div>
 
           {/* Drag & Drop Zone */}
@@ -279,8 +313,11 @@ export function ResourcesSection({
                     <div>
                       <p className="text-sm font-medium">{file.name}</p>
                       <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-xs">
-                          {FILE_TYPE_LABELS[file.file_type]}
+                        <Badge
+                          variant={FILE_TYPE_CONFIG[file.file_type].variant}
+                          className={`text-xs ${file.file_type === "template" ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100" : ""}`}
+                        >
+                          {FILE_TYPE_CONFIG[file.file_type].label}
                         </Badge>
                         <span className="text-xs text-muted-foreground">
                           {(file.size_bytes / 1024).toFixed(1)} KB

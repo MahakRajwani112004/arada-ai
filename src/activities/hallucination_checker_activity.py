@@ -56,7 +56,7 @@ class HallucinationCheckerOutput:
     reason: str = ""
 
 
-HALLUCINATION_CHECKER_PROMPT = """You are a hallucination detection assistant. Your job is to verify that an AI agent's response is grounded in the provided context.
+HALLUCINATION_CHECKER_PROMPT = """You are a hallucination detection assistant. Your job is to catch factual errors where an AI agent's response CONTRADICTS the provided context.
 
 You will be given:
 1. The agent's response
@@ -65,16 +65,18 @@ You will be given:
 4. Original user query
 
 Your task is to:
-1. Identify all factual claims in the agent's response
-2. Check if each claim is supported by the provided context or tool results
-3. Flag any claims that are NOT grounded in the evidence
+1. Identify factual claims in the agent's response
+2. Check if any claim DIRECTLY CONTRADICTS the provided context or tool results
+3. Only flag claims that are demonstrably WRONG based on the evidence
 
-IMPORTANT RULES:
+CRITICAL RULES:
+- ONLY flag claims that CONTRADICT the context (e.g., context says "price is $10" but response says "$20")
+- DO NOT flag claims that are simply MISSING from the context - the LLM may have valid knowledge beyond what was retrieved
+- DO NOT flag additional information the LLM provides that doesn't conflict with context
 - Generic greetings, transitions, and formatting are NOT claims to check
-- Focus on factual assertions (names, dates, numbers, specific details)
 - Claims based on common knowledge are acceptable
-- Be conservative - only flag clear hallucinations
-- If no context provided, assume response may be valid (LLM knowledge)
+- Be very conservative - only flag clear, direct contradictions
+- When in doubt, mark as grounded
 
 Respond in this exact JSON format:
 {

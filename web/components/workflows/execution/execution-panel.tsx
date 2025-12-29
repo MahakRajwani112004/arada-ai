@@ -56,10 +56,14 @@ export function ExecutionPanel({
     execution?.status === "FAILED" ||
     execution?.status === "CANCELLED";
 
-  // Calculate progress
-  const totalSteps = execution?.step_results?.length ?? 0;
-  const completedSteps =
-    execution?.step_results?.filter((s) => s.status === "COMPLETED").length ?? 0;
+  // Calculate progress - step_results is a Record<string, StepResult>, not an array
+  const stepResultsValues = execution?.step_results
+    ? Object.values(execution.step_results)
+    : [];
+  const totalSteps = stepResultsValues.length;
+  const completedSteps = stepResultsValues.filter(
+    (s) => s.status === "completed"
+  ).length;
   const progressPercent = totalSteps > 0 ? (completedSteps / totalSteps) * 100 : 0;
 
   // Auto-close polling if not needed
@@ -120,10 +124,10 @@ export function ExecutionPanel({
               )}
 
               {/* Timeline */}
-              {execution.step_results && execution.step_results.length > 0 && (
+              {stepResultsValues.length > 0 && (
                 <div className="border rounded-lg p-4">
                   <ExecutionTimeline
-                    steps={execution.step_results}
+                    steps={stepResultsValues}
                     currentStepIndex={completedSteps}
                   />
                 </div>

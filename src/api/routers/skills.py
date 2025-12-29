@@ -1,11 +1,12 @@
 """Skills API routes for CRUD, generation, testing, and marketplace."""
 
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
-from src.api.dependencies import get_skill_repository
+from src.api.dependencies import get_skill_repository, get_authenticated_skill_repository
 from src.skills.file_service import (
     FileUploadResult,
     get_supported_extensions,
@@ -42,6 +43,7 @@ from src.api.schemas.skills import (
     SkillFileInfoResponse,
     SkillFilesListResponse,
     SkillFileUploadResponse,
+    SkillFileUploadResponseFile,
     SkillListResponse,
     SkillMatchSchema,
     SkillResponse,
@@ -539,10 +541,9 @@ MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
 @router.post("/{skill_id}/files", response_model=SkillFileUploadResponse)
 async def upload_file_to_skill(
     skill_id: str,
-    current_user: CurrentUser,
     file: UploadFile = File(...),
     file_type: str = Query("reference", description="File type: 'reference' or 'template'"),
-    skill_repo: SkillRepository = Depends(get_skill_repository),
+    skill_repo: SkillRepository = Depends(get_authenticated_skill_repository),
 ) -> SkillFileUploadResponse:
     """Upload a file to a skill.
 
@@ -626,12 +627,16 @@ async def upload_file_to_skill(
         )
 
     return SkillFileUploadResponse(
-        file_id=result.skill_file.id,
-        filename=result.skill_file.name,
-        file_type=result.skill_file.file_type.value,
-        mime_type=result.skill_file.mime_type,
-        size_bytes=result.skill_file.size_bytes,
-        preview_length=len(result.skill_file.content_preview),
+        file=SkillFileUploadResponseFile(
+            id=result.skill_file.id,
+            name=result.skill_file.name,
+            file_type=result.skill_file.file_type.value,
+            mime_type=result.skill_file.mime_type,
+            storage_url="",  # Don't expose storage URL to client
+            content_preview=result.skill_file.content_preview[:500] if result.skill_file.content_preview else "",
+            size_bytes=result.skill_file.size_bytes,
+            uploaded_at=result.skill_file.uploaded_at.isoformat(),
+        ),
         message="File uploaded successfully",
     )
 
@@ -698,10 +703,14 @@ async def get_file_download(
     # Get presigned URL
     download_url = await get_file_download_url(target_file.storage_url)
 
+    expires_in_seconds = 3600
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in_seconds)
+
     return SkillFileDownloadResponse(
         download_url=download_url,
         filename=target_file.name,
-        expires_in_seconds=3600,
+        expires_in_seconds=expires_in_seconds,
+        expires_at=expires_at.isoformat(),
     )
 
 
@@ -709,8 +718,7 @@ async def get_file_download(
 async def delete_file_from_skill(
     skill_id: str,
     file_id: str,
-    current_user: CurrentUser,
-    skill_repo: SkillRepository = Depends(get_skill_repository),
+    skill_repo: SkillRepository = Depends(get_authenticated_skill_repository),
 ):
     """Delete a file from a skill."""
     # Remove file from skill atomically first (this validates ownership too)

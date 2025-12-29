@@ -407,7 +407,11 @@ class TestFileUpload:
     async def test_upload_file_not_owner(
         self, client: AsyncClient, override_skill_repo
     ):
-        """Test uploading file without ownership."""
+        """Test uploading file without ownership.
+
+        Note: Returns 404 (not 403) because user-scoped repository doesn't
+        expose skills from other users - more secure (no information leakage).
+        """
         override_skill_repo.exists.return_value = True
         override_skill_repo.is_owner.return_value = False
 
@@ -417,7 +421,8 @@ class TestFileUpload:
             params={"file_type": "reference"},
         )
 
-        assert response.status_code == 403
+        # Returns 404 because skill is not visible to non-owner
+        assert response.status_code == 404
 
     @pytest.mark.asyncio
     async def test_upload_unsupported_file_type(
@@ -514,14 +519,19 @@ class TestDeleteFile:
     async def test_delete_file_not_owner(
         self, client: AsyncClient, override_skill_repo
     ):
-        """Test deleting file without ownership."""
+        """Test deleting file without ownership.
+
+        Note: Returns 404 (not 403) because user-scoped repository doesn't
+        expose skills from other users - more secure (no information leakage).
+        """
         override_skill_repo.remove_file_atomically.return_value = (None, None)
         override_skill_repo.exists.return_value = True
         override_skill_repo.is_owner.return_value = False
 
         response = await client.delete("/api/v1/skills/skill-123/files/file-1")
 
-        assert response.status_code == 403
+        # Returns 404 because skill is not visible to non-owner
+        assert response.status_code == 404
 
 
 class TestSupportedFileTypes:

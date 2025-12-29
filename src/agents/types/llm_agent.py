@@ -27,12 +27,16 @@ class LLMAgent(BaseAgent):
             raise ValueError("LLMAgent requires llm_config")
         self._provider = LLMClient.get_provider(config.llm_config)
 
-    def _build_messages(self, context: AgentContext) -> List[LLMMessage]:
+    def _build_messages(
+        self,
+        context: AgentContext,
+        selected_skills: List = None,
+    ) -> List[LLMMessage]:
         """Build LLM messages from context."""
         messages = []
 
-        # Add system prompt
-        system_prompt = self.build_system_prompt()
+        # Add system prompt with selected skills
+        system_prompt = self.build_system_prompt(selected_skills=selected_skills)
         messages.append(LLMMessage(role="system", content=system_prompt))
 
         # Add conversation history
@@ -46,7 +50,13 @@ class LLMAgent(BaseAgent):
 
     async def _execute_impl(self, context: AgentContext) -> AgentResponse:
         """Execute LLM completion."""
-        messages = self._build_messages(context)
+        # Select relevant skills for this query
+        selected_skills = await self._select_skills_for_query(
+            context.user_input,
+            user_id=context.user_id,
+        )
+
+        messages = self._build_messages(context, selected_skills=selected_skills)
 
         response = await self._provider.complete(
             messages,

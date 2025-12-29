@@ -106,7 +106,8 @@ export interface CopyWorkflowRequest {
 
 export type ExecutionStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
 
-export type StepExecutionStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "SKIPPED";
+// Status values match backend (lowercase)
+export type StepExecutionStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
 export interface StepResult {
   step_id: string;
@@ -116,14 +117,8 @@ export interface StepResult {
   duration_ms?: number;
 }
 
-// Legacy alias for backwards compatibility
-export interface StepExecutionResult {
-  step_id: string;
-  status: "completed" | "failed" | "skipped";
-  output?: string;
-  error?: string;
-  duration_ms?: number;
-}
+// Alias for backwards compatibility (same as StepResult)
+export type StepExecutionResult = StepResult;
 
 export interface ConversationMessage {
   role: "user" | "assistant";
@@ -159,7 +154,7 @@ export interface WorkflowExecution {
   output_data?: Record<string, unknown>;
   error?: string;
   steps_executed: string[];
-  step_results: StepResult[];
+  step_results: Record<string, StepResult>;  // Backend returns dict keyed by step_id
   triggered_by?: string;
 }
 

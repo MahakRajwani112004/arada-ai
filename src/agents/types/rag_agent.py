@@ -57,12 +57,13 @@ class RAGAgent(BaseAgent):
         self,
         context: AgentContext,
         retrieved_docs: List[str],
+        selected_skills: List = None,
     ) -> List[LLMMessage]:
         """Build LLM messages with retrieved context."""
         messages = []
 
-        # Build enhanced system prompt with context
-        system_prompt = self.build_system_prompt()
+        # Build enhanced system prompt with context and selected skills
+        system_prompt = self.build_system_prompt(selected_skills=selected_skills)
 
         if retrieved_docs:
             context_str = "\n\n".join([
@@ -86,6 +87,12 @@ class RAGAgent(BaseAgent):
         """Execute RAG: retrieve then generate."""
         await self._ensure_kb_initialized()
 
+        # Select relevant skills for this query
+        selected_skills = await self._select_skills_for_query(
+            context.user_input,
+            user_id=context.user_id,
+        )
+
         # Retrieve relevant documents
         retrieval_result = await self._kb.search(context.user_input)
 
@@ -93,8 +100,10 @@ class RAGAgent(BaseAgent):
             doc.content for doc in retrieval_result.documents
         ]
 
-        # Build messages with context
-        messages = self._build_messages_with_context(context, retrieved_docs)
+        # Build messages with context and selected skills
+        messages = self._build_messages_with_context(
+            context, retrieved_docs, selected_skills=selected_skills
+        )
 
         # Generate response
         response = await self._provider.complete(

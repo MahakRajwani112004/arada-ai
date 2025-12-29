@@ -283,7 +283,7 @@ class MCPServerRepository:
             try:
                 oauth_data = await secrets_manager.retrieve(db_model.oauth_token_ref)
                 logger.info("oauth_data_retrieved", keys=list(oauth_data.keys()) if oauth_data else [])
-                if "refresh_token" in oauth_data:
+                if oauth_data and "refresh_token" in oauth_data:
                     # Add as GOOGLE_REFRESH_TOKEN for Google services
                     credentials["GOOGLE_REFRESH_TOKEN"] = oauth_data["refresh_token"]
                     logger.info("refresh_token_added_to_credentials")

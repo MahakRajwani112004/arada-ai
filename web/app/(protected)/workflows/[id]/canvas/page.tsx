@@ -457,12 +457,12 @@ function CanvasEditor() {
         instructions: generatedConfig.instructions ? {
           steps: generatedConfig.instructions.steps || [],
           rules: generatedConfig.instructions.rules || [],
-          prohibited_actions: (generatedConfig.instructions as { prohibited?: string[] }).prohibited || [],
+          prohibited: generatedConfig.instructions.prohibited || [],
           output_format: generatedConfig.instructions.output_format || "",
         } : {
           steps: [],
           rules: [],
-          prohibited_actions: [],
+          prohibited: [],
           output_format: "",
         },
         examples: generatedConfig.examples || [],
@@ -586,7 +586,7 @@ function CanvasEditor() {
         instructions: {
           steps: ["Analyze the input", "Execute the task", "Return results"],
           rules: ["Be accurate", "Be concise"],
-          prohibited_actions: [],
+          prohibited: [],
           output_format: "Natural language response",
         },
         examples: [],

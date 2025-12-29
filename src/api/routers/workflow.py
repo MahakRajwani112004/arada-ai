@@ -1,5 +1,7 @@
 """Workflow execution API routes."""
+import asyncio
 import os
+import time
 from datetime import timedelta
 from typing import List, Optional
 from uuid import uuid4
@@ -38,15 +40,19 @@ TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
 TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "agent-tasks")
 WORKFLOW_TIMEOUT_SECONDS = int(os.getenv("WORKFLOW_TIMEOUT_SECONDS", "600"))  # 10 minutes default
 
-# Temporal client (lazy initialization)
-_temporal_client = None
+# Temporal client (lazy initialization with lock to prevent race conditions)
+_temporal_client: Optional[Client] = None
+_temporal_client_lock = asyncio.Lock()
 
 
 async def get_temporal_client() -> Client:
-    """Get or create Temporal client."""
+    """Get or create Temporal client with proper locking."""
     global _temporal_client
     if _temporal_client is None:
-        _temporal_client = await Client.connect(TEMPORAL_HOST)
+        async with _temporal_client_lock:
+            # Double-check after acquiring lock
+            if _temporal_client is None:
+                _temporal_client = await Client.connect(TEMPORAL_HOST)
     return _temporal_client
 
 
@@ -173,6 +179,7 @@ async def execute_agent(
     try:
         client = await get_temporal_client()
 
+        start_time = time.perf_counter()
         result = await client.execute_workflow(
             AgentWorkflow.run,
             workflow_input,
@@ -180,11 +187,13 @@ async def execute_agent(
             task_queue=TASK_QUEUE,
             execution_timeout=timedelta(seconds=WORKFLOW_TIMEOUT_SECONDS),
         )
+        execution_time_ms = int((time.perf_counter() - start_time) * 1000)
 
         logger.info(
             "workflow_execution_completed",
             workflow_id=workflow_id,
             success=result.success,
+            execution_time_ms=execution_time_ms,
             request_id=request_id,
         )
 
@@ -209,14 +218,22 @@ async def execute_agent(
                     error=str(e),
                 )
 
+        # Add execution time to metadata
+        response_metadata = dict(result.metadata) if result.metadata else {}
+        response_metadata["execution_time_ms"] = execution_time_ms
+
         return ExecuteAgentResponse(
             content=result.content,
             agent_id=result.agent_id,
             agent_type=result.agent_type,
             success=result.success,
             error=result.error,
-            metadata=result.metadata,
+            metadata=response_metadata,
             workflow_id=workflow_id,
+            # Clarification fields - defined on AgentWorkflowOutput dataclass
+            requires_clarification=result.requires_clarification,
+            clarification_question=result.clarification_question,
+            clarification_options=result.clarification_options,
         )
 
     except TemporalTimeoutError:
@@ -331,6 +348,10 @@ async def get_workflow_status(workflow_id: str) -> WorkflowStatusResponse:
                 error=workflow_result.error,
                 metadata=workflow_result.metadata,
                 workflow_id=workflow_id,
+                # Clarification fields - defined on AgentWorkflowOutput dataclass
+                requires_clarification=workflow_result.requires_clarification,
+                clarification_question=workflow_result.clarification_question,
+                clarification_options=workflow_result.clarification_options,
             )
 
         return WorkflowStatusResponse(
@@ -357,6 +378,8 @@ async def get_workflow_status(workflow_id: str) -> WorkflowStatusResponse:
 async def _load_skills_for_agent(config, session: AsyncSession) -> List[Skill]:
     """Load skills from database for an agent config.
 
+    Uses batch fetching to avoid N+1 query problem.
+
     Args:
         config: Agent configuration with skills list
         session: Database session
@@ -367,23 +390,34 @@ async def _load_skills_for_agent(config, session: AsyncSession) -> List[Skill]:
     if not config.skills:
         return []
 
-    skills = []
+    # Collect enabled skill IDs
+    skill_ids = [
+        skill_config.skill_id
+        for skill_config in config.skills
+        if skill_config.enabled
+    ]
+
+    if not skill_ids:
+        return []
+
     skill_repo = SkillRepository(session)
 
-    for skill_config in config.skills:
-        if not skill_config.enabled:
-            continue
-        try:
-            skill = await skill_repo.get(skill_config.skill_id)
-            if skill:
-                skills.append(skill)
-                logger.debug("skill_loaded", skill_id=skill_config.skill_id)
-            else:
-                logger.warning("skill_not_found", skill_id=skill_config.skill_id)
-        except Exception as e:
-            logger.error("skill_load_failed", skill_id=skill_config.skill_id, error=str(e))
+    try:
+        # Batch fetch all skills in a single query
+        skills = await skill_repo.get_many(skill_ids)
 
-    return skills
+        # Log any missing skills
+        found_ids = {s.id for s in skills}
+        for skill_id in skill_ids:
+            if skill_id not in found_ids:
+                logger.warning("skill_not_found", skill_id=skill_id)
+
+        logger.debug("skills_loaded", count=len(skills), requested=len(skill_ids))
+        return skills
+
+    except Exception as e:
+        logger.error("skills_batch_load_failed", skill_ids=skill_ids, error=str(e))
+        return []
 
 
 async def _build_system_prompt_async(config, session: AsyncSession) -> str:

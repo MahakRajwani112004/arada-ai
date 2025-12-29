@@ -996,6 +996,28 @@ class WorkflowGenerator:
                     warnings_count=len(hallucination_warnings),
                 )
 
+            # Calculate execution readiness
+            existing_agent_ids = set(data.get("existing_agents_used", []))
+            agents_to_create_ids = {a.id for a in agents_to_create}
+
+            ready_steps = []
+            blocked_steps = []
+
+            for step in workflow.steps:
+                if step.agent_id:
+                    if step.agent_id in existing_agent_ids:
+                        ready_steps.append(step.id)
+                    elif step.agent_id in agents_to_create_ids:
+                        blocked_steps.append(step.id)
+                    else:
+                        # Agent ID specified but not found - blocked
+                        blocked_steps.append(step.id)
+                else:
+                    # No agent_id - this might be a parallel/conditional step
+                    ready_steps.append(step.id)
+
+            can_execute = len(blocked_steps) == 0
+
             return GenerateWorkflowResponse(
                 workflow=workflow,
                 agents_to_create=agents_to_create,
@@ -1005,6 +1027,9 @@ class WorkflowGenerator:
                 explanation=data.get("explanation", "Workflow generated from prompt."),
                 warnings=all_warnings,
                 estimated_complexity=data.get("estimated_complexity", "moderate"),
+                ready_steps=ready_steps,
+                blocked_steps=blocked_steps,
+                can_execute=can_execute,
             )
         except Exception as e:
             logger.error("workflow_generation_parse_error", error=str(e), data=str(data)[:500])

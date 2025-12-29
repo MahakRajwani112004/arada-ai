@@ -26,6 +26,7 @@ from src.api.schemas.agent import (
     LLMConfigSchema,
     OrchestratorConfigSchema,
     SafetyConfigSchema,
+    SkillConfigSchema,
     ToolConfigSchema,
 )
 from src.auth.dependencies import CurrentUser
@@ -37,6 +38,7 @@ from src.models.orchestrator_config import AgentReference, OrchestratorConfig, O
 from src.models.persona import AgentExample, AgentGoal, AgentInstructions, AgentRole
 from src.models.safety_config import GovernanceConfig, SafetyConfig
 from src.models.tool_config import ToolConfig
+from src.models.skill_config import SkillConfig
 from src.api.dependencies import get_user_repository
 from src.storage import BaseAgentRepository
 from src.llm.client import LLMClient, LLMMessage
@@ -279,6 +281,15 @@ def _to_agent_config(request: CreateAgentRequest) -> AgentConfig:
             )
             for t in request.tools
         ],
+        skills=[
+            SkillConfig(
+                skill_id=s.skill_id,
+                enabled=s.enabled,
+                parameters=s.parameters,
+                priority=s.priority,
+            )
+            for s in request.skills
+        ],
         routing_table=request.routing_table,
         orchestrator_config=orchestrator_config,
         safety=SafetyConfig(
@@ -464,6 +475,15 @@ def _config_to_detail_response(config: AgentConfig) -> AgentDetailResponse:
                 requires_confirmation=t.requires_confirmation,
             )
             for t in (config.tools or [])
+        ],
+        skills=[
+            SkillConfigSchema(
+                skill_id=s.skill_id,
+                enabled=s.enabled,
+                parameters=s.parameters or {},
+                priority=s.priority or 0,
+            )
+            for s in (config.skills or [])
         ],
         routing_table=config.routing_table,
         orchestrator_config=orchestrator_config,

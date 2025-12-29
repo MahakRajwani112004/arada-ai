@@ -1,5 +1,6 @@
 """API router for knowledge base management."""
 import os
+import re
 import tempfile
 from datetime import datetime, timezone
 from typing import List
@@ -26,6 +27,7 @@ from src.config.logging import get_logger
 from src.knowledge.chunker import SUPPORTED_TYPES, get_file_type, process_document
 from src.knowledge.knowledge_base import Document, KnowledgeBase
 from src.models.knowledge_config import KnowledgeBaseConfig
+from src.knowledge.vector_stores.qdrant import QdrantStore
 from src.storage.database import get_session
 from src.storage.knowledge_repository import KnowledgeRepository
 from src.storage.object_storage import get_storage
@@ -35,6 +37,49 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/knowledge-bases", tags=["knowledge-bases"])
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+def sanitize_filename(filename: str) -> str:
+    """Sanitize filename to prevent path traversal attacks.
+
+    Removes path separators, null bytes, and special characters.
+
+    Args:
+        filename: Original filename from user input
+
+    Returns:
+        Sanitized filename safe for storage paths
+    """
+    if not filename:
+        return "unnamed_file"
+
+    # Get base name (removes any path components like ../ or /)
+    base = os.path.basename(filename)
+
+    # Remove null bytes
+    base = base.replace("\x00", "")
+
+    # Replace path separators that might have survived
+    base = base.replace("/", "_").replace("\\", "_")
+
+    # Keep only safe characters (alphanumeric, underscore, hyphen, dot)
+    base = re.sub(r"[^a-zA-Z0-9._-]", "_", base)
+
+    # Collapse multiple underscores
+    base = re.sub(r"_+", "_", base)
+
+    # Remove leading dots (prevent hidden files)
+    base = base.lstrip(".")
+
+    # Ensure we have something left
+    if not base:
+        base = "unnamed_file"
+
+    # Limit length
+    if len(base) > 200:
+        base = base[:200]
+
+    return base
 
 # Content type mapping for uploads
 CONTENT_TYPES = {
@@ -317,7 +362,8 @@ async def upload_document(
     # Upload to MinIO
     storage = get_storage()
     file_id = uuid4().hex[:12]
-    storage_key = f"{kb_id}/{file_id}_{file.filename}"
+    safe_filename = sanitize_filename(file.filename or "unknown")
+    storage_key = f"{kb_id}/{file_id}_{safe_filename}"
 
     await storage.upload(
         key=storage_key,
@@ -370,6 +416,7 @@ async def upload_document(
 @router.post("/{kb_id}/documents/batch", response_model=BatchUploadResponse)
 async def upload_documents_batch(
     kb_id: str,
+    current_user: CurrentUser,
     files: List[UploadFile] = File(...),
     repo: KnowledgeRepository = Depends(get_repository),
 ) -> BatchUploadResponse:
@@ -408,7 +455,8 @@ async def upload_documents_batch(
             # Upload to MinIO
             storage = get_storage()
             file_id = uuid4().hex[:12]
-            storage_key = f"{kb_id}/{file_id}_{file.filename}"
+            safe_filename = sanitize_filename(file.filename or "unknown")
+            storage_key = f"{kb_id}/{file_id}_{safe_filename}"
 
             await storage.upload(
                 key=storage_key,
@@ -459,6 +507,7 @@ async def upload_documents_batch(
 async def delete_document(
     kb_id: str,
     doc_id: str,
+    current_user: CurrentUser,
     repo: KnowledgeRepository = Depends(get_repository),
 ) -> None:
     """Delete a document from a knowledge base."""
@@ -470,6 +519,9 @@ async def delete_document(
             detail=f"Document not found: {doc_id}",
         )
 
+    # Get the knowledge base to find collection name
+    kb = await repo.get_knowledge_base(kb_id)
+
     # Delete from MinIO
     if doc.file_path:
         storage = get_storage()
@@ -478,7 +530,19 @@ async def delete_document(
         except Exception as e:
             logger.warning("failed_to_delete_minio_object", key=doc.file_path, error=str(e))
 
-    # TODO: Delete vectors from Qdrant (requires storing point IDs)
+    # Delete vectors from Qdrant
+    if kb and kb.config and kb.config.collection_name:
+        try:
+            qdrant = QdrantStore()
+            await qdrant.connect()
+            await qdrant.delete_by_document_id(
+                collection_name=kb.config.collection_name,
+                document_id=doc_id,
+            )
+            await qdrant.close()
+            logger.info("vectors_deleted", doc_id=doc_id, collection=kb.config.collection_name)
+        except Exception as e:
+            logger.warning("failed_to_delete_vectors", doc_id=doc_id, error=str(e))
 
     # Delete from database
     await repo.delete_document(doc_id)
