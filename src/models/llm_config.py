@@ -16,10 +16,10 @@ class LLMConfig(BaseModel):
         description="Model identifier",
     )
     temperature: float = Field(
-        default=0.7,
+        default=0.0,
         ge=0.0,
         le=2.0,
-        description="Sampling temperature",
+        description="Sampling temperature (0.0 for deterministic)",
     )
     max_tokens: int = Field(
         default=4096,

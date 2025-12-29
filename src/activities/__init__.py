@@ -1,4 +1,17 @@
 """Temporal Activities package."""
+from .hallucination_checker_activity import (
+    HallucinationCheckerInput,
+    HallucinationCheckerOutput,
+    check_hallucination,
+)
+from .input_sanitizer_activity import (
+    SanitizeInputInput,
+    SanitizeInputOutput,
+    SanitizeToolResultInput,
+    SanitizeToolResultOutput,
+    sanitize_input,
+    sanitize_tool_result,
+)
 from .knowledge_activity import (
     RetrieveInput,
     RetrieveOutput,
@@ -9,6 +22,11 @@ from .llm_activity import (
     LLMCompletionInput,
     LLMCompletionOutput,
     llm_completion,
+)
+from .loop_detector_activity import (
+    LoopDetectorInput,
+    LoopDetectorOutput,
+    detect_loop,
 )
 from .safety_activity import (
     SafetyCheckInput,
@@ -39,4 +57,19 @@ __all__ = [
     "get_tool_definitions",
     "ToolExecutionInput",
     "ToolExecutionOutput",
+    # Loop detection
+    "detect_loop",
+    "LoopDetectorInput",
+    "LoopDetectorOutput",
+    # Hallucination checking
+    "check_hallucination",
+    "HallucinationCheckerInput",
+    "HallucinationCheckerOutput",
+    # Input/output sanitization
+    "sanitize_input",
+    "sanitize_tool_result",
+    "SanitizeInputInput",
+    "SanitizeInputOutput",
+    "SanitizeToolResultInput",
+    "SanitizeToolResultOutput",
 ]

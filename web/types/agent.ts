@@ -47,6 +47,13 @@ export interface ToolReference {
   tool_id: string;
 }
 
+export interface SkillConfig {
+  skill_id: string;
+  enabled: boolean;
+  parameters: Record<string, unknown>;
+  priority: number;
+}
+
 export interface KnowledgeBaseConfig {
   collection_name: string;
   embedding_model?: string;
@@ -75,6 +82,7 @@ export interface AgentCreate {
   llm_config: LLMConfig;
   knowledge_base?: KnowledgeBaseConfig;
   tools: ToolReference[];
+  skills?: SkillConfig[];
   safety: SafetyConfig;
   // RouterAgent specific
   router_config?: RouterConfig;
@@ -108,6 +116,7 @@ export interface AgentDetail {
   llm_config: LLMConfig | null;
   knowledge_base: KnowledgeBaseConfig | null;
   tools: ToolReference[];
+  skills?: SkillConfig[];
   routing_table: Record<string, string> | null;
   orchestrator_config: OrchestratorConfig | null;
   safety: SafetyConfig;

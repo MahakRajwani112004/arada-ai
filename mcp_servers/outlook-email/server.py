@@ -3,14 +3,16 @@
 Provides MCP tools for Outlook Email via Microsoft Graph API:
 - list_emails: List recent emails
 - get_email: Get full email content
-- send_email: Send an email
+- send_email: Send an email (with optional attachments)
 - search_emails: Search emails
 
 Credentials passed via HTTP header:
 - X-Microsoft-Refresh-Token: OAuth refresh token
 """
+import base64
 import os
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import httpx
 from dotenv import load_dotenv
@@ -115,6 +117,44 @@ class OutlookEmailServer(BaseMCPServer):
             if response.status_code == 204 or response.status_code == 202:
                 return {}
             return response.json()
+
+    async def _download_file(self, url: str) -> tuple[bytes, str, str]:
+        """Download a file from URL and return (content, filename, content_type).
+
+        Supports:
+        - MinIO/S3 presigned URLs
+        - Direct file URLs
+        """
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+
+            content = response.content
+
+            # Try to get filename from Content-Disposition header
+            content_disposition = response.headers.get("content-disposition", "")
+            filename = None
+            if "filename=" in content_disposition:
+                # Extract filename from header
+                parts = content_disposition.split("filename=")
+                if len(parts) > 1:
+                    filename = parts[1].strip('"\'').split(";")[0]
+
+            # Fall back to URL path
+            if not filename:
+                path = urlparse(url).path
+                filename = os.path.basename(path) or "attachment"
+                # Remove query string artifacts if any
+                if "?" in filename:
+                    filename = filename.split("?")[0]
+
+            # Get content type
+            content_type = response.headers.get(
+                "content-type",
+                "application/octet-stream"
+            ).split(";")[0]  # Remove charset etc.
+
+            return content, filename, content_type
 
     @tool(
         name="list_emails",
@@ -288,7 +328,7 @@ class OutlookEmailServer(BaseMCPServer):
 
     @tool(
         name="send_email",
-        description="Send an email",
+        description="Send an email with optional file attachments. Attachments can be provided as URLs (e.g., MinIO/S3 presigned URLs) which will be downloaded and attached.",
         input_schema={
             "type": "object",
             "properties": {
@@ -321,6 +361,15 @@ class OutlookEmailServer(BaseMCPServer):
                     "description": "Save a copy to Sent Items",
                     "default": True,
                 },
+                "attachment_urls": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of file URLs to download and attach (e.g., MinIO presigned URLs). Max 3MB per attachment.",
+                },
+                "attachment_filename": {
+                    "type": "string",
+                    "description": "Optional custom filename for the first attachment (overrides auto-detected name)",
+                },
             },
             "required": ["to", "subject", "body"],
         },
@@ -342,8 +391,10 @@ class OutlookEmailServer(BaseMCPServer):
         is_html: bool = False,
         importance: str = "normal",
         save_to_sent: bool = True,
+        attachment_urls: Optional[List[str]] = None,
+        attachment_filename: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Send an email."""
+        """Send an email with optional attachments."""
         # Parse recipients
         to_recipients = [
             {"emailAddress": {"address": email.strip()}}
@@ -382,6 +433,39 @@ class OutlookEmailServer(BaseMCPServer):
         if bcc_recipients:
             message["message"]["bccRecipients"] = bcc_recipients
 
+        # Handle attachments
+        attachments_info = []
+        if attachment_urls:
+            attachments = []
+            for i, url in enumerate(attachment_urls):
+                try:
+                    content, filename, content_type = await self._download_file(url)
+
+                    # Use custom filename for first attachment if provided
+                    if i == 0 and attachment_filename:
+                        filename = attachment_filename
+
+                    # Check size (3MB limit for inline attachments)
+                    if len(content) > 3 * 1024 * 1024:
+                        raise ValueError(f"Attachment '{filename}' exceeds 3MB limit")
+
+                    attachments.append({
+                        "@odata.type": "#microsoft.graph.fileAttachment",
+                        "name": filename,
+                        "contentType": content_type,
+                        "contentBytes": base64.b64encode(content).decode("utf-8"),
+                    })
+                    attachments_info.append({
+                        "name": filename,
+                        "size_bytes": len(content),
+                        "content_type": content_type,
+                    })
+                except httpx.HTTPError as e:
+                    raise ValueError(f"Failed to download attachment from {url}: {str(e)}")
+
+            if attachments:
+                message["message"]["attachments"] = attachments
+
         await self._graph_request(
             credentials,
             "POST",
@@ -389,12 +473,18 @@ class OutlookEmailServer(BaseMCPServer):
             json_data=message,
         )
 
-        return {
+        result = {
             "success": True,
             "to": to,
             "subject": subject,
             "message": "Email sent successfully",
         }
+
+        if attachments_info:
+            result["attachments"] = attachments_info
+            result["message"] = f"Email sent successfully with {len(attachments_info)} attachment(s)"
+
+        return result
 
     @tool(
         name="search_emails",

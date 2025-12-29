@@ -34,7 +34,7 @@ class LLMCompletionInput:
     model: str
     messages: List[Dict[str, Any]]  # List of message dicts
     user_id: str  # Required for user-level analytics
-    temperature: float = 0.7
+    temperature: float = 0.0
     max_tokens: int = 1024
     stop_sequences: Optional[List[str]] = None
     tools: Optional[List[ToolDefinitionInput]] = None  # Tools for function calling

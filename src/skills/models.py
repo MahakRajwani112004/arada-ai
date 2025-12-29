@@ -141,17 +141,21 @@ class SkillFile:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SkillFile":
+        uploaded_at = data.get("uploaded_at")
+        if isinstance(uploaded_at, str):
+            uploaded_at = datetime.fromisoformat(uploaded_at)
+        elif uploaded_at is None:
+            uploaded_at = datetime.now()
+
         return cls(
-            id=data["id"],
-            name=data["name"],
-            file_type=FileType(data["file_type"]),
-            mime_type=data["mime_type"],
-            storage_url=data["storage_url"],
-            content_preview=data["content_preview"],
-            size_bytes=data["size_bytes"],
-            uploaded_at=datetime.fromisoformat(data["uploaded_at"])
-            if isinstance(data["uploaded_at"], str)
-            else data["uploaded_at"],
+            id=data.get("id", ""),
+            name=data.get("name", ""),
+            file_type=FileType(data.get("file_type", "reference")),
+            mime_type=data.get("mime_type", "application/octet-stream"),
+            storage_url=data.get("storage_url", ""),
+            content_preview=data.get("content_preview"),
+            size_bytes=data.get("size_bytes", 0),
+            uploaded_at=uploaded_at,
         )
 
 
@@ -511,7 +515,8 @@ class Skill:
             sections.append("### Reference Knowledge")
             for file in reference_files:
                 sections.append(f"**{file.name}**:")
-                sections.append(file.content_preview)
+                if file.content_preview:
+                    sections.append(file.content_preview)
                 sections.append("")
 
         # Template files
@@ -526,8 +531,9 @@ class Skill:
                 sections.append(f"- Storage Key: `{file.storage_url}`")
                 sections.append(f"- To use: `fill_docx_template(template_storage_key=\"{file.storage_url}\", values={{...}}, output_filename=\"...\")`")
                 sections.append("")
-                sections.append("Template preview (placeholders shown in {{UPPERCASE}}):")
-                sections.append(file.content_preview)
+                if file.content_preview:
+                    sections.append("Template preview (placeholders shown in {{UPPERCASE}}):")
+                    sections.append(file.content_preview)
                 sections.append("")
 
         # Code snippets

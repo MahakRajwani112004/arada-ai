@@ -50,6 +50,7 @@ class WorkflowExecutor:
         user_id: str,
         context: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
     ) -> Tuple[str, str, List[StepExecutionResult], Optional[str], Optional[str]]:
         """
         Execute a stored workflow.
@@ -88,6 +89,7 @@ class WorkflowExecutor:
         self._context["user_input"] = user_input
         self._context["user_id"] = user_id
         self._context["session_id"] = session_id
+        self._context["conversation_history"] = conversation_history or []
         self._step_results = {}
 
         # Create execution record
@@ -276,7 +278,7 @@ class WorkflowExecutor:
                 agent_type=agent_config.agent_type.value,
                 user_input=input_text,
                 user_id=user_id,
-                conversation_history=[],
+                conversation_history=self._context.get("conversation_history", []),
                 session_id=session_id,
                 system_prompt=self._build_system_prompt(agent_config),
                 safety_level=agent_config.safety.level.value,

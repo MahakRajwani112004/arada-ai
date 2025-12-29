@@ -45,6 +45,8 @@ import { generateAgentConfig } from "@/lib/api/agents";
 import type { AgentType, AgentExample, KnowledgeBaseConfig, RouterConfig, OrchestratorConfig } from "@/types/agent";
 import { ToolSelectorSheet } from "./tool-selector-sheet";
 import { SelectedToolsDisplay } from "./selected-tools-display";
+import { SkillSelectorSheet } from "./skill-selector-sheet";
+import { SelectedSkillsDisplay } from "./selected-skills-display";
 import { KBSelector } from "./kb-selector";
 import { RoutingTableBuilder } from "./routing-table-builder";
 import { OrchestratorConfigBuilder } from "./orchestrator-config-builder";
@@ -62,6 +64,7 @@ export interface AgentFormData {
   rules: string[];
   examples: AgentExample[];
   selectedTools: string[];
+  selectedSkills: string[];
   knowledgeBase?: KnowledgeBaseConfig;
   llmProvider: "openai" | "anthropic";
   llmModel: string;
@@ -85,6 +88,7 @@ export const defaultAgentFormData: AgentFormData = {
   rules: [],
   examples: [],
   selectedTools: [],
+  selectedSkills: [],
   knowledgeBase: undefined,
   llmProvider: "openai",
   llmModel: "gpt-4o",
@@ -494,6 +498,26 @@ export function AgentFormFields({
                 updateField(
                   "selectedTools",
                   data.selectedTools.filter((t) => t !== toolId)
+                )
+              }
+            />
+          </div>
+
+          {/* Skills */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label>Skills</Label>
+              <SkillSelectorSheet
+                selectedSkills={data.selectedSkills}
+                onSkillsChange={(skills) => updateField("selectedSkills", skills)}
+              />
+            </div>
+            <SelectedSkillsDisplay
+              selectedSkills={data.selectedSkills}
+              onRemove={(skillId) =>
+                updateField(
+                  "selectedSkills",
+                  data.selectedSkills.filter((s) => s !== skillId)
                 )
               }
             />

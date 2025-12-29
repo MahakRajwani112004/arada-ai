@@ -410,6 +410,13 @@ class ApplyGeneratedWorkflowResponse(BaseModel):
 # ==================== Workflow Execution Schemas ====================
 
 
+class ConversationMessage(BaseModel):
+    """A message in the conversation history."""
+
+    role: str = Field(..., description="Role of the message sender (user/assistant)")
+    content: str = Field(..., description="Content of the message")
+
+
 class ExecuteWorkflowRequest(BaseModel):
     """Request to execute a stored workflow."""
 
@@ -418,6 +425,9 @@ class ExecuteWorkflowRequest(BaseModel):
         None, description="Additional context variables for the workflow"
     )
     session_id: Optional[str] = Field(None, description="Session ID for conversation tracking")
+    conversation_history: List[ConversationMessage] = Field(
+        default_factory=list, description="Previous messages in the conversation"
+    )
 
 
 class StepExecutionResult(BaseModel):

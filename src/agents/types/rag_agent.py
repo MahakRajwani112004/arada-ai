@@ -1,16 +1,22 @@
 """RAGAgent - LLM with knowledge base retrieval."""
-from typing import List
+from typing import List, Optional
 
 from src.agents.base import BaseAgent
 from src.knowledge.knowledge_base import KnowledgeBase
 from src.llm import LLMClient, LLMMessage
 from src.models.agent_config import AgentConfig
 from src.models.responses import AgentContext, AgentResponse
+from src.skills.models import Skill
 
 
 class RAGAgent(BaseAgent):
     """
     Agent that retrieves context before generating response.
+
+    Components Used:
+    - Skills: YES (injected into system prompt via build_system_prompt)
+    - Tools: NO
+    - Knowledge Base: YES (retrieval before LLM call)
 
     Use cases:
     - Question answering over documents
@@ -19,9 +25,19 @@ class RAGAgent(BaseAgent):
     - Documentation helpers
     """
 
-    def __init__(self, config: AgentConfig):
-        """Initialize RAGAgent."""
-        super().__init__(config)
+    def __init__(
+        self,
+        config: AgentConfig,
+        skills: Optional[List[Skill]] = None,
+    ):
+        """
+        Initialize RAGAgent.
+
+        Args:
+            config: Agent configuration
+            skills: List of Skill objects for domain expertise
+        """
+        super().__init__(config, skills=skills)
         if not config.llm_config:
             raise ValueError("RAGAgent requires llm_config")
         if not config.knowledge_base:

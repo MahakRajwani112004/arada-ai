@@ -125,10 +125,16 @@ export interface StepExecutionResult {
   duration_ms?: number;
 }
 
+export interface ConversationMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface ExecuteWorkflowRequest {
   user_input: string;
   context?: Record<string, unknown>;
   session_id?: string;
+  conversation_history?: ConversationMessage[];
 }
 
 export interface ExecuteWorkflowResponse {

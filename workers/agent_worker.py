@@ -17,8 +17,11 @@ from src.activities.agent_tool_activity import (
     execute_agent_as_tool,
     get_agent_tool_definitions,
 )
+from src.activities.hallucination_checker_activity import check_hallucination
+from src.activities.input_sanitizer_activity import sanitize_input, sanitize_tool_result
 from src.activities.knowledge_activity import retrieve_knowledge
 from src.activities.llm_activity import llm_completion
+from src.activities.loop_detector_activity import detect_loop
 from src.activities.safety_activity import check_input_safety, check_output_safety
 from src.activities.simple_agent_activity import execute_simple_agent
 from src.activities.tool_activity import execute_tool, get_tool_definitions
@@ -119,6 +122,12 @@ async def create_worker() -> Worker:
         get_agent_tool_definitions,
         execute_simple_agent,
         validate_action,
+        # Validation activities
+        detect_loop,
+        check_hallucination,
+        # Sanitization activities
+        sanitize_input,
+        sanitize_tool_result,
     ]
 
     worker = Worker(

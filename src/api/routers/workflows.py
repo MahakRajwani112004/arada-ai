@@ -328,12 +328,19 @@ async def execute_workflow(
         temporal_client=temporal_client,
     )
 
+    # Convert conversation history to dict format
+    conversation_history = [
+        {"role": msg.role, "content": msg.content}
+        for msg in request.conversation_history
+    ] if request.conversation_history else []
+
     execution_id, exec_status, step_results, final_output, error = await executor.execute(
         workflow_id=workflow_id,
         user_input=request.user_input,
         user_id=current_user.id,
         context=request.context,
         session_id=request.session_id,
+        conversation_history=conversation_history,
     )
 
     # Calculate total duration

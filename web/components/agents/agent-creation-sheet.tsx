@@ -171,6 +171,12 @@ export function AgentCreationSheet({
       },
       knowledge_base: formData.knowledgeBase,
       tools: formData.selectedTools.map((id) => ({ tool_id: id })),
+      skills: formData.selectedSkills.map((id) => ({
+        skill_id: id,
+        enabled: true,
+        parameters: {},
+        priority: 0,
+      })),
       safety: {
         level: "standard",
         blocked_topics: [],

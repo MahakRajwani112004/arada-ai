@@ -253,6 +253,7 @@ class TestBaseLLMProvider:
                 max_tokens: Optional[int] = None,
                 stop_sequences: Optional[List[str]] = None,
                 tools: Optional[List[ToolDefinition]] = None,
+                tool_choice: Optional[str] = None,
             ):
                 return LLMResponse(
                     content="Mocked response",
@@ -293,6 +294,7 @@ class TestBaseLLMProvider:
                 max_tokens: Optional[int] = None,
                 stop_sequences: Optional[List[str]] = None,
                 tools: Optional[List[ToolDefinition]] = None,
+                tool_choice: Optional[str] = None,
             ):
                 raise ValueError("API Error")
 

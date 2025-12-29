@@ -1,17 +1,25 @@
 """ToolAgent - LLM with function calling capabilities."""
+import asyncio
 import json
 from typing import Any, Dict, List, Optional
 
 from src.agents.base import BaseAgent
+from src.agents.confidence import ConfidenceCalculator
 from src.llm import LLMClient, LLMMessage
 from src.models.agent_config import AgentConfig
 from src.models.responses import AgentContext, AgentResponse
+from src.skills.models import Skill
 from src.tools.registry import get_registry
 
 
 class ToolAgent(BaseAgent):
     """
     Agent that can use tools via LLM function calling.
+
+    Components Used:
+    - Skills: YES (injected into system prompt via build_system_prompt)
+    - Tools: YES (native LLM function calling)
+    - Knowledge Base: NO
 
     Use cases:
     - Task automation
@@ -21,16 +29,49 @@ class ToolAgent(BaseAgent):
     """
 
     MAX_TOOL_ITERATIONS = 10
+    TOOL_TIMEOUT_SECONDS = 30  # Timeout for individual tool execution
 
-    def __init__(self, config: AgentConfig):
-        """Initialize ToolAgent."""
-        super().__init__(config)
+    def __init__(
+        self,
+        config: AgentConfig,
+        skills: Optional[List[Skill]] = None,
+    ):
+        """
+        Initialize ToolAgent.
+
+        Args:
+            config: Agent configuration
+            skills: List of Skill objects for domain expertise
+        """
+        super().__init__(config, skills=skills)
         if not config.llm_config:
             raise ValueError("ToolAgent requires llm_config")
 
         self._provider = LLMClient.get_provider(config.llm_config)
         self._registry = get_registry()
         self._enabled_tools = self.get_enabled_tools()
+
+        # Validate enabled tools exist in registry
+        self._validate_tools()
+
+    def _validate_tools(self) -> None:
+        """Validate that enabled tools exist in the registry."""
+        import structlog
+        logger = structlog.get_logger(__name__)
+
+        if not self._enabled_tools:
+            return
+
+        available = set(self._registry.available_tools)
+        missing = [t for t in self._enabled_tools if t not in available]
+
+        if missing:
+            logger.warning(
+                "tools_not_found_in_registry",
+                agent_id=self.id,
+                missing_tools=missing,
+                available_tools=list(available),
+            )
 
     def _build_messages(self, context: AgentContext) -> List[LLMMessage]:
         """Build LLM messages from context."""
@@ -79,9 +120,15 @@ class ToolAgent(BaseAgent):
 
             if not tool_calls:
                 # No more tool calls, return final response
+                confidence = ConfidenceCalculator.from_llm_response(
+                    response,
+                    tool_calls_made=tool_calls_made,
+                    iterations=iterations,
+                    max_iterations_reached=False,
+                )
                 return AgentResponse(
                     content=response.content,
-                    confidence=0.9,
+                    confidence=confidence,
                     metadata={
                         "model": response.model,
                         "usage": response.usage,
@@ -124,10 +171,20 @@ class ToolAgent(BaseAgent):
                     tool_call_id=tool_call["id"],
                 ))
 
-        # Max iterations reached
+        # Max iterations reached - calculate confidence with penalty
+        from src.agents.confidence import ConfidenceSignals
+        signals = ConfidenceSignals(
+            tool_calls_total=len(tool_calls_made),
+            tool_calls_succeeded=sum(1 for tc in tool_calls_made if tc.get("result", {}).get("success", False)),
+            tool_calls_failed=sum(1 for tc in tool_calls_made if not tc.get("result", {}).get("success", False)),
+            iterations_used=iterations,
+            max_iterations_reached=True,
+        )
+        confidence = ConfidenceCalculator.calculate(signals)
+
         return AgentResponse(
             content="I've reached the maximum number of tool operations.",
-            confidence=0.5,
+            confidence=confidence,
             metadata={
                 "tool_calls": tool_calls_made,
                 "iterations": iterations,
@@ -171,14 +228,70 @@ class ToolAgent(BaseAgent):
     async def _execute_tool(
         self, tool_call: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Execute a single tool call."""
-        result = await self._registry.execute(
-            tool_call["name"],
-            **tool_call["arguments"],
-        )
+        """Execute a single tool call with error handling and timeout."""
+        import structlog
+        logger = structlog.get_logger(__name__)
 
-        return {
-            "success": result.success,
-            "output": result.output,
-            "error": result.error,
-        }
+        tool_name = tool_call.get("name", "unknown")
+        arguments = tool_call.get("arguments", {})
+
+        # Validate arguments is a dict
+        if not isinstance(arguments, dict):
+            logger.warning(
+                "tool_invalid_arguments",
+                tool=tool_name,
+                arguments_type=type(arguments).__name__,
+            )
+            return {
+                "success": False,
+                "output": None,
+                "error": f"Invalid arguments type: expected dict, got {type(arguments).__name__}",
+            }
+
+        try:
+            # Execute with timeout
+            result = await asyncio.wait_for(
+                self._registry.execute(tool_name, **arguments),
+                timeout=self.TOOL_TIMEOUT_SECONDS,
+            )
+            return {
+                "success": result.success,
+                "output": result.output,
+                "error": result.error,
+            }
+        except asyncio.TimeoutError:
+            logger.warning(
+                "tool_timeout",
+                tool=tool_name,
+                timeout_seconds=self.TOOL_TIMEOUT_SECONDS,
+            )
+            return {
+                "success": False,
+                "output": None,
+                "error": f"Tool execution timed out after {self.TOOL_TIMEOUT_SECONDS} seconds",
+            }
+        except TypeError as e:
+            # Argument mismatch (missing required args, unexpected args)
+            logger.warning(
+                "tool_argument_error",
+                tool=tool_name,
+                error=str(e),
+            )
+            return {
+                "success": False,
+                "output": None,
+                "error": f"Tool argument error: {e}",
+            }
+        except Exception as e:
+            # Catch-all for tool execution failures
+            logger.error(
+                "tool_execution_error",
+                tool=tool_name,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            return {
+                "success": False,
+                "output": None,
+                "error": f"Tool execution failed: {type(e).__name__}: {e}",
+            }

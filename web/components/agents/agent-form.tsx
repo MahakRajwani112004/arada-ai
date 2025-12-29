@@ -73,6 +73,7 @@ function toFormData(detail?: AgentDetail): AgentFormData {
     rules: detail.instructions?.rules ?? [],
     examples: detail.examples ?? [],
     selectedTools: detail.tools?.map((t) => t.tool_id) ?? [],
+    selectedSkills: detail.skills?.map((s) => s.skill_id) ?? [],
     knowledgeBase: detail.knowledge_base ?? undefined,
     llmProvider:
       (detail.llm_config?.provider as "openai" | "anthropic") ?? "openai",
@@ -163,6 +164,12 @@ export function AgentForm({
       },
       knowledge_base: formData.knowledgeBase,
       tools: formData.selectedTools.map((id) => ({ tool_id: id })),
+      skills: formData.selectedSkills.map((id) => ({
+        skill_id: id,
+        enabled: true,
+        parameters: {},
+        priority: 0,
+      })),
       safety: {
         level: "standard",
         blocked_topics: [],

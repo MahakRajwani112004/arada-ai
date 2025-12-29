@@ -22,7 +22,7 @@ class TestLLMConfig:
 
         assert config.provider == "openai"  # default
         assert config.model == "gpt-4-turbo"  # default
-        assert config.temperature == 0.7  # default
+        assert config.temperature == 0.0  # default (deterministic)
         assert config.max_tokens == 4096  # default
 
     def test_custom_temperature(self):

@@ -5,11 +5,18 @@ from src.agents.base import BaseAgent
 from src.llm import LLMClient, LLMMessage
 from src.models.agent_config import AgentConfig
 from src.models.responses import AgentContext, AgentResponse
+from src.skills.models import Skill
 
 
 class RouterAgent(BaseAgent):
     """
     Agent that classifies input and routes to target agents.
+
+    Components Used:
+    - Skills: YES (can provide classification guidance)
+    - Tools: NO
+    - Knowledge Base: NO
+    - Routing Table: YES (maps categories to target agents)
 
     Use cases:
     - Multi-agent orchestration
@@ -18,9 +25,19 @@ class RouterAgent(BaseAgent):
     - Agent selection based on context
     """
 
-    def __init__(self, config: AgentConfig):
-        """Initialize RouterAgent."""
-        super().__init__(config)
+    def __init__(
+        self,
+        config: AgentConfig,
+        skills: Optional[List[Skill]] = None,
+    ):
+        """
+        Initialize RouterAgent.
+
+        Args:
+            config: Agent configuration
+            skills: List of Skill objects for classification expertise
+        """
+        super().__init__(config, skills=skills)
         if not config.llm_config:
             raise ValueError("RouterAgent requires llm_config")
         if not config.routing_table:

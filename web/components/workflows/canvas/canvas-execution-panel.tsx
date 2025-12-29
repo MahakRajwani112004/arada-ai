@@ -84,6 +84,9 @@ export function CanvasExecutionPanel({
         workflowId,
         request: {
           user_input: input.trim(),
+          conversation_history: workflowMessages
+            .filter((m) => m.role !== "system")
+            .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
         },
       });
 

@@ -252,6 +252,14 @@ class BaseAgent(ABC):
             for prohibited in instructions.prohibited:
                 parts.append(f"- DO NOT: {prohibited}")
 
+        # Anti-hallucination rules - always included for reliability
+        parts.append("\n## CRITICAL RULES")
+        parts.append("- ONLY state facts you can verify from provided context or tool results")
+        parts.append("- If you don't have information, say \"I don't have that information\"")
+        parts.append("- NEVER make up data, names, dates, numbers, or specific details")
+        parts.append("- If asked about something not in your context, acknowledge the limitation")
+        parts.append("- Do NOT repeat questions that have already been answered in the conversation")
+
         if instructions.output_format:
             parts.append(f"\n## OUTPUT FORMAT\n{instructions.output_format}")
 

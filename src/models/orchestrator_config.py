@@ -4,6 +4,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from src.models.routing_rules import RoutingRules
+
 
 class OrchestratorMode(str, Enum):
     """How the orchestrator decides which agents to run."""
@@ -67,4 +69,19 @@ class OrchestratorConfig(BaseModel):
 
     allow_self_reference: bool = Field(
         default=False, description="Whether orchestrator can call itself"
+    )
+
+    routing_rules: Optional[RoutingRules] = Field(
+        default=None,
+        description="Explicit routing rules for hybrid mode (pattern -> agent mapping)",
+    )
+
+    max_same_agent_calls: int = Field(
+        default=3,
+        description="Maximum times the same agent can be called consecutively (prevents loops)",
+    )
+
+    max_iterations: int = Field(
+        default=15,
+        description="Maximum number of LLM-tool call iterations before returning",
     )

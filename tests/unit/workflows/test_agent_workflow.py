@@ -269,7 +269,7 @@ class TestAgentWorkflowInput:
 
         assert input_data.conversation_history == []
         assert input_data.session_id is None
-        assert input_data.llm_temperature == 0.7
+        assert input_data.llm_temperature == 0.0  # deterministic by default
         assert input_data.llm_max_tokens == 1024
         assert input_data.system_prompt == ""
         assert input_data.safety_level == "standard"
