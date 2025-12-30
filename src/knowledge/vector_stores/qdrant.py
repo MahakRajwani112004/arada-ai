@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, PointStruct, VectorParams
 
 
 @dataclass
@@ -124,3 +124,35 @@ class QdrantStore:
         """Delete a collection."""
         await self.client.delete_collection(collection_name=collection_name)
         return True
+
+    async def delete_by_document_id(
+        self,
+        collection_name: str,
+        document_id: str,
+    ) -> int:
+        """Delete all points belonging to a specific document.
+
+        Args:
+            collection_name: The collection to delete from
+            document_id: The document ID to match in payload
+
+        Returns:
+            Number of points deleted (approximate)
+        """
+        # Create filter for document_id in payload
+        delete_filter = Filter(
+            must=[
+                FieldCondition(
+                    key="document_id",
+                    match=MatchValue(value=document_id),
+                )
+            ]
+        )
+
+        # Delete points matching the filter
+        result = await self.client.delete(
+            collection_name=collection_name,
+            points_selector=delete_filter,
+        )
+
+        return result.operation_id if result else 0

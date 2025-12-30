@@ -30,9 +30,13 @@ WORKDIR /app
 RUN groupadd --gid 1000 magone && \
     useradd --uid 1000 --gid 1000 --shell /bin/bash --create-home magone
 
-# Install runtime dependencies
+# Install runtime dependencies including Tesseract for OCR
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy wheels from builder and install

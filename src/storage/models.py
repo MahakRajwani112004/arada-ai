@@ -563,6 +563,12 @@ class KnowledgeDocumentModel(Base):
     )
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Document metadata
+    tags: Mapped[List[str]] = mapped_column(ARRAY(String), nullable=False, default=[])
+    category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    author: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    custom_metadata: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default={})
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -576,6 +582,48 @@ class KnowledgeDocumentModel(Base):
     def __repr__(self) -> str:
         """String representation."""
         return f"<KnowledgeDocumentModel(id={self.id!r}, filename={self.filename!r}, status={self.status!r})>"
+
+
+class DocumentTagModel(Base):
+    """SQLAlchemy model for document tag autocomplete suggestions.
+
+    Stores unique tags used across documents in a knowledge base
+    for autocomplete functionality.
+    """
+
+    __tablename__ = "document_tags"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Reference to knowledge base
+    knowledge_base_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Tag info
+    tag: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    usage_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<DocumentTagModel(kb_id={self.knowledge_base_id!r}, tag={self.tag!r}, count={self.usage_count})>"
 
 class SkillModel(Base):
     """SQLAlchemy model for skills table.

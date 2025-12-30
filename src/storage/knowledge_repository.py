@@ -1,13 +1,13 @@
 """Knowledge Base Repository - stores and retrieves knowledge bases and documents."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.storage.models import KnowledgeBaseModel, KnowledgeDocumentModel
+from src.storage.models import DocumentTagModel, KnowledgeBaseModel, KnowledgeDocumentModel
 
 
 @dataclass
@@ -43,6 +43,23 @@ class KnowledgeDocument:
     error_message: Optional[str]
     created_at: datetime
     indexed_at: Optional[datetime]
+    # Metadata fields
+    tags: List[str] = field(default_factory=list)
+    category: Optional[str] = None
+    author: Optional[str] = None
+    custom_metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DocumentTag:
+    """Document tag data object for autocomplete."""
+
+    id: str
+    knowledge_base_id: str
+    tag: str
+    usage_count: int
+    created_at: datetime
+    updated_at: datetime
 
 
 class KnowledgeRepository:
@@ -244,14 +261,21 @@ class KnowledgeRepository:
         self,
         knowledge_base_id: str,
         status: Optional[str] = None,
+        category: Optional[str] = None,
+        tags: Optional[List[str]] = None,
     ) -> List[KnowledgeDocument]:
-        """List documents in a knowledge base."""
+        """List documents in a knowledge base with optional filters."""
         stmt = select(KnowledgeDocumentModel).where(
             KnowledgeDocumentModel.knowledge_base_id == knowledge_base_id
         )
 
         if status:
             stmt = stmt.where(KnowledgeDocumentModel.status == status)
+        if category:
+            stmt = stmt.where(KnowledgeDocumentModel.category == category)
+        if tags:
+            # Filter documents that have any of the specified tags
+            stmt = stmt.where(KnowledgeDocumentModel.tags.overlap(tags))
 
         stmt = stmt.order_by(KnowledgeDocumentModel.created_at.desc())
 
@@ -292,13 +316,130 @@ class KnowledgeRepository:
             return False
 
         kb_id = model.knowledge_base_id
+        old_tags = model.tags or []
+
         await self.session.delete(model)
         await self.session.flush()
 
         # Update KB stats
         await self.update_kb_stats(kb_id)
 
+        # Update tag counts
+        for tag in old_tags:
+            await self._decrement_tag_count(kb_id, tag)
+
         return True
+
+    async def update_document_metadata(
+        self,
+        doc_id: str,
+        tags: Optional[List[str]] = None,
+        category: Optional[str] = None,
+        author: Optional[str] = None,
+        custom_metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[KnowledgeDocument]:
+        """Update document metadata fields."""
+        model = await self.session.get(KnowledgeDocumentModel, doc_id)
+        if model is None:
+            return None
+
+        kb_id = model.knowledge_base_id
+        old_tags = set(model.tags or [])
+
+        if tags is not None:
+            new_tags = set(tags)
+            # Update tag counts
+            for tag in old_tags - new_tags:
+                await self._decrement_tag_count(kb_id, tag)
+            for tag in new_tags - old_tags:
+                await self._increment_tag_count(kb_id, tag)
+            model.tags = tags
+
+        if category is not None:
+            model.category = category if category else None
+        if author is not None:
+            model.author = author if author else None
+        if custom_metadata is not None:
+            model.custom_metadata = custom_metadata
+
+        await self.session.flush()
+
+        return self._doc_to_dataclass(model)
+
+    # ==================== Tag Management ====================
+
+    async def get_tags(
+        self,
+        knowledge_base_id: str,
+        prefix: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[DocumentTag]:
+        """Get tags for a knowledge base (for autocomplete)."""
+        stmt = select(DocumentTagModel).where(
+            DocumentTagModel.knowledge_base_id == knowledge_base_id
+        )
+
+        if prefix:
+            stmt = stmt.where(DocumentTagModel.tag.ilike(f"{prefix}%"))
+
+        stmt = stmt.order_by(DocumentTagModel.usage_count.desc()).limit(limit)
+
+        result = await self.session.execute(stmt)
+        models = result.scalars().all()
+        return [self._tag_to_dataclass(m) for m in models]
+
+    async def get_categories(self, knowledge_base_id: str) -> List[str]:
+        """Get unique categories used in a knowledge base."""
+        stmt = (
+            select(KnowledgeDocumentModel.category)
+            .where(KnowledgeDocumentModel.knowledge_base_id == knowledge_base_id)
+            .where(KnowledgeDocumentModel.category.isnot(None))
+            .distinct()
+            .order_by(KnowledgeDocumentModel.category)
+        )
+
+        result = await self.session.execute(stmt)
+        return [row[0] for row in result.all()]
+
+    async def _increment_tag_count(self, knowledge_base_id: str, tag: str) -> None:
+        """Increment tag usage count or create new tag."""
+        stmt = select(DocumentTagModel).where(
+            DocumentTagModel.knowledge_base_id == knowledge_base_id,
+            DocumentTagModel.tag == tag,
+        )
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
+
+        if model:
+            model.usage_count += 1
+            model.updated_at = datetime.now(timezone.utc)
+        else:
+            model = DocumentTagModel(
+                id=f"tag-{uuid4().hex[:12]}",
+                knowledge_base_id=knowledge_base_id,
+                tag=tag,
+                usage_count=1,
+            )
+            self.session.add(model)
+
+        await self.session.flush()
+
+    async def _decrement_tag_count(self, knowledge_base_id: str, tag: str) -> None:
+        """Decrement tag usage count or delete if zero."""
+        stmt = select(DocumentTagModel).where(
+            DocumentTagModel.knowledge_base_id == knowledge_base_id,
+            DocumentTagModel.tag == tag,
+        )
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
+
+        if model:
+            model.usage_count -= 1
+            if model.usage_count <= 0:
+                await self.session.delete(model)
+            else:
+                model.updated_at = datetime.now(timezone.utc)
+            await self.session.flush()
 
     # ==================== Helpers ====================
 
@@ -333,4 +474,20 @@ class KnowledgeRepository:
             error_message=model.error_message,
             created_at=model.created_at,
             indexed_at=model.indexed_at,
+            # Metadata fields
+            tags=model.tags or [],
+            category=model.category,
+            author=model.author,
+            custom_metadata=model.custom_metadata or {},
+        )
+
+    def _tag_to_dataclass(self, model: DocumentTagModel) -> DocumentTag:
+        """Convert ORM model to dataclass."""
+        return DocumentTag(
+            id=model.id,
+            knowledge_base_id=model.knowledge_base_id,
+            tag=model.tag,
+            usage_count=model.usage_count,
+            created_at=model.created_at,
+            updated_at=model.updated_at,
         )

@@ -1,16 +1,20 @@
 """API router for knowledge base management."""
+import asyncio
 import os
 import tempfile
 from datetime import datetime, timezone
 from typing import List
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.schemas.knowledge import (
     BatchUploadResponse,
     CreateKnowledgeBaseRequest,
+    DocumentCategoryListResponse,
+    DocumentTagListResponse,
+    DocumentTagResponse,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
     KnowledgeDocumentListResponse,
@@ -18,12 +22,14 @@ from src.api.schemas.knowledge import (
     SearchKnowledgeBaseRequest,
     SearchKnowledgeBaseResponse,
     SearchResultItem,
+    UpdateDocumentMetadataRequest,
     UpdateKnowledgeBaseRequest,
     UploadDocumentResponse,
 )
 from src.auth.dependencies import CurrentUser
 from src.config.logging import get_logger
-from src.knowledge.chunker import SUPPORTED_TYPES, get_file_type, process_document
+from src.knowledge.chunker import get_file_type, process_document
+from src.knowledge.document_processor import get_mime_type, get_supported_types
 from src.knowledge.knowledge_base import Document, KnowledgeBase
 from src.models.knowledge_config import KnowledgeBaseConfig
 from src.storage.database import get_session
@@ -34,15 +40,7 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/knowledge-bases", tags=["knowledge-bases"])
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-
-# Content type mapping for uploads
-CONTENT_TYPES = {
-    "pdf": "application/pdf",
-    "txt": "text/plain",
-    "md": "text/markdown",
-    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-}
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB - increased to support larger documents
 
 
 def get_repository(
@@ -85,6 +83,11 @@ def _doc_to_response(doc) -> KnowledgeDocumentResponse:
         error_message=doc.error_message,
         created_at=doc.created_at,
         indexed_at=doc.indexed_at,
+        # Metadata fields
+        tags=doc.tags or [],
+        category=doc.category,
+        author=doc.author,
+        custom_metadata=doc.custom_metadata or {},
     )
 
 
@@ -249,9 +252,18 @@ async def delete_knowledge_base(
 @router.get("/{kb_id}/documents", response_model=KnowledgeDocumentListResponse)
 async def list_documents(
     kb_id: str,
+    status_filter: str | None = None,
+    category: str | None = None,
+    tags: str | None = None,  # Comma-separated list of tags
     repo: KnowledgeRepository = Depends(get_repository),
 ) -> KnowledgeDocumentListResponse:
-    """List all documents in a knowledge base."""
+    """List all documents in a knowledge base.
+
+    Filter options:
+    - status_filter: Filter by document status (pending, processing, indexed, error)
+    - category: Filter by category
+    - tags: Comma-separated list of tags to filter by (documents with ANY of these tags)
+    """
     # Verify KB exists
     kb = await repo.get_knowledge_base(kb_id)
     if not kb:
@@ -260,12 +272,311 @@ async def list_documents(
             detail=f"Knowledge base not found: {kb_id}",
         )
 
-    docs = await repo.list_documents(kb_id)
+    # Parse tags
+    tag_list = [t.strip() for t in tags.split(",")] if tags else None
+
+    docs = await repo.list_documents(
+        knowledge_base_id=kb_id,
+        status=status_filter,
+        category=category,
+        tags=tag_list,
+    )
 
     return KnowledgeDocumentListResponse(
         documents=[_doc_to_response(doc) for doc in docs],
         total=len(docs),
     )
+
+
+# ==================== Chunked Upload Endpoints ====================
+
+
+@router.post("/{kb_id}/documents/upload/init")
+async def init_chunked_upload(
+    kb_id: str,
+    current_user: CurrentUser,
+    filename: str = Form(...),
+    file_size: int = Form(...),
+    content_type: str = Form(...),
+    repo: KnowledgeRepository = Depends(get_repository),
+):
+    """Initialize a chunked upload session.
+
+    Returns upload_id and chunk information for client to upload chunks.
+    """
+    from src.storage.upload_manager import get_upload_manager, CHUNK_SIZE
+
+    # Verify KB exists
+    kb = await repo.get_knowledge_base(kb_id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Knowledge base not found: {kb_id}",
+        )
+
+    # Validate file type
+    file_type = get_file_type(filename)
+    if not file_type:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file type. Supported: {', '.join(sorted(get_supported_types()))}",
+        )
+
+    try:
+        manager = get_upload_manager()
+        session = await manager.init_upload(
+            knowledge_base_id=kb_id,
+            filename=filename,
+            file_size=file_size,
+            content_type=content_type,
+        )
+
+        logger.info(
+            "chunked_upload_initialized",
+            upload_id=session.upload_id,
+            kb_id=kb_id,
+            filename=filename,
+            user_id=current_user.id,
+        )
+
+        return {
+            "upload_id": session.upload_id,
+            "filename": session.filename,
+            "file_size": session.file_size,
+            "chunk_size": session.chunk_size,
+            "total_chunks": session.total_chunks,
+            "status": session.status.value,
+        }
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@router.post("/{kb_id}/documents/upload/{upload_id}/chunk/{chunk_num}")
+async def upload_chunk(
+    kb_id: str,
+    upload_id: str,
+    chunk_num: int,
+    current_user: CurrentUser,
+    chunk: UploadFile = File(...),
+):
+    """Upload a single chunk of a file.
+
+    Chunks are 0-indexed. Upload all chunks then call /complete.
+    """
+    from src.storage.upload_manager import get_upload_manager
+
+    manager = get_upload_manager()
+
+    # Verify session exists and matches KB
+    session = await manager.get_session(upload_id)
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Upload session not found: {upload_id}",
+        )
+
+    if session.knowledge_base_id != kb_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upload session does not belong to this knowledge base",
+        )
+
+    try:
+        chunk_data = await chunk.read()
+        session = await manager.upload_chunk(upload_id, chunk_num, chunk_data)
+
+        return {
+            "upload_id": session.upload_id,
+            "chunk_num": chunk_num,
+            "received_chunks": len(session.received_chunks),
+            "total_chunks": session.total_chunks,
+            "status": session.status.value,
+        }
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@router.post("/{kb_id}/documents/upload/{upload_id}/complete")
+async def complete_chunked_upload(
+    kb_id: str,
+    upload_id: str,
+    current_user: CurrentUser,
+    repo: KnowledgeRepository = Depends(get_repository),
+):
+    """Complete a chunked upload and trigger document indexing.
+
+    Assembles all chunks and stores the file in MinIO.
+    Returns the created document record.
+    """
+    from src.storage.upload_manager import get_upload_manager
+
+    manager = get_upload_manager()
+
+    # Verify session
+    session = await manager.get_session(upload_id)
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Upload session not found: {upload_id}",
+        )
+
+    if session.knowledge_base_id != kb_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upload session does not belong to this knowledge base",
+        )
+
+    # Verify KB exists
+    kb = await repo.get_knowledge_base(kb_id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Knowledge base not found: {kb_id}",
+        )
+
+    try:
+        # Complete the upload (assembles chunks and uploads to MinIO)
+        session = await manager.complete_upload(upload_id)
+
+        # Get file type
+        file_type = get_file_type(session.filename) or "unknown"
+
+        # Create document record
+        doc = await repo.create_document(
+            knowledge_base_id=kb_id,
+            filename=session.filename,
+            file_type=file_type,
+            file_size=session.file_size,
+            file_path=session.storage_key,
+            status="pending",
+        )
+
+        # Trigger indexing in background
+        asyncio.create_task(_process_and_index_document(kb, doc, repo))
+
+        logger.info(
+            "chunked_upload_completed",
+            upload_id=upload_id,
+            doc_id=doc.id,
+            kb_id=kb_id,
+            user_id=current_user.id,
+        )
+
+        return {
+            "document": {
+                "id": doc.id,
+                "filename": doc.filename,
+                "file_type": doc.file_type,
+                "file_size": doc.file_size,
+                "status": doc.status,
+                "created_at": doc.created_at.isoformat(),
+            },
+            "upload": {
+                "upload_id": session.upload_id,
+                "status": session.status.value,
+                "checksum": session.checksum,
+            },
+            "message": "Upload complete. Document is being indexed.",
+        }
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error("chunked_upload_complete_failed", upload_id=upload_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to complete upload: {str(e)}",
+        )
+
+
+@router.get("/{kb_id}/documents/upload/{upload_id}/status")
+async def get_upload_status(
+    kb_id: str,
+    upload_id: str,
+    current_user: CurrentUser,
+):
+    """Get the status of a chunked upload session."""
+    from src.storage.upload_manager import get_upload_manager
+
+    manager = get_upload_manager()
+    session = await manager.get_session(upload_id)
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Upload session not found: {upload_id}",
+        )
+
+    if session.knowledge_base_id != kb_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upload session does not belong to this knowledge base",
+        )
+
+    return {
+        "upload_id": session.upload_id,
+        "filename": session.filename,
+        "file_size": session.file_size,
+        "chunk_size": session.chunk_size,
+        "total_chunks": session.total_chunks,
+        "received_chunks": sorted(list(session.received_chunks)),
+        "missing_chunks": sorted(list(set(range(session.total_chunks)) - session.received_chunks)),
+        "status": session.status.value,
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+        "completed_at": session.completed_at,
+        "error_message": session.error_message,
+    }
+
+
+@router.delete("/{kb_id}/documents/upload/{upload_id}")
+async def cancel_chunked_upload(
+    kb_id: str,
+    upload_id: str,
+    current_user: CurrentUser,
+):
+    """Cancel a chunked upload and cleanup resources."""
+    from src.storage.upload_manager import get_upload_manager
+
+    manager = get_upload_manager()
+    session = await manager.get_session(upload_id)
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Upload session not found: {upload_id}",
+        )
+
+    if session.knowledge_base_id != kb_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upload session does not belong to this knowledge base",
+        )
+
+    await manager.cancel_upload(upload_id)
+
+    logger.info(
+        "chunked_upload_cancelled",
+        upload_id=upload_id,
+        kb_id=kb_id,
+        user_id=current_user.id,
+    )
+
+    return {"message": "Upload cancelled", "upload_id": upload_id}
+
+
+# ==================== Standard Upload Endpoint ====================
 
 
 @router.post("/{kb_id}/documents", response_model=UploadDocumentResponse)
@@ -301,7 +612,7 @@ async def upload_document(
     if not file_type:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported file type. Supported: {', '.join(SUPPORTED_TYPES)}",
+            detail=f"Unsupported file type. Supported: {', '.join(sorted(get_supported_types()))}",
         )
 
     # Read file content to check size
@@ -322,7 +633,7 @@ async def upload_document(
     await storage.upload(
         key=storage_key,
         data=content,
-        content_type=CONTENT_TYPES.get(file_type, "application/octet-stream"),
+        content_type=get_mime_type(file.filename or ""),
     )
 
     # Create document record (file_path now stores MinIO key)
@@ -392,7 +703,7 @@ async def upload_documents_batch(
             # Validate file type
             file_type = get_file_type(file.filename or "")
             if not file_type:
-                errors.append(f"{file.filename}: Unsupported file type")
+                errors.append(f"{file.filename}: Unsupported file type. Supported: {', '.join(sorted(get_supported_types()))}")
                 error_count += 1
                 continue
 
@@ -413,7 +724,7 @@ async def upload_documents_batch(
             await storage.upload(
                 key=storage_key,
                 data=content,
-                content_type=CONTENT_TYPES.get(file_type, "application/octet-stream"),
+                content_type=get_mime_type(file.filename or ""),
             )
 
             # Create document record (file_path now stores MinIO key)
@@ -470,6 +781,24 @@ async def delete_document(
             detail=f"Document not found: {doc_id}",
         )
 
+    # Get KB info to delete vectors
+    kb = await repo.get_knowledge_base(kb_id)
+
+    # Delete vectors from Qdrant
+    if kb:
+        try:
+            kb_config = KnowledgeBaseConfig(
+                collection_name=kb.collection_name,
+                embedding_model=kb.embedding_model,
+            )
+            knowledge_base = KnowledgeBase(kb_config)
+            await knowledge_base.initialize()
+            await knowledge_base.delete_document_vectors(doc_id)
+            await knowledge_base.close()
+            logger.info("vectors_deleted", doc_id=doc_id, kb_id=kb_id)
+        except Exception as e:
+            logger.warning("failed_to_delete_vectors", doc_id=doc_id, error=str(e))
+
     # Delete from MinIO
     if doc.file_path:
         storage = get_storage()
@@ -478,11 +807,251 @@ async def delete_document(
         except Exception as e:
             logger.warning("failed_to_delete_minio_object", key=doc.file_path, error=str(e))
 
-    # TODO: Delete vectors from Qdrant (requires storing point IDs)
-
     # Delete from database
     await repo.delete_document(doc_id)
     logger.info("document_deleted", doc_id=doc_id, kb_id=kb_id)
+
+
+# ==================== Document Metadata Endpoints ====================
+
+
+@router.patch("/{kb_id}/documents/{doc_id}/metadata", response_model=KnowledgeDocumentResponse)
+async def update_document_metadata(
+    kb_id: str,
+    doc_id: str,
+    request: UpdateDocumentMetadataRequest,
+    current_user: CurrentUser,
+    repo: KnowledgeRepository = Depends(get_repository),
+) -> KnowledgeDocumentResponse:
+    """Update document metadata (tags, category, author, custom_metadata)."""
+    # Verify document exists and belongs to KB
+    doc = await repo.get_document(doc_id)
+    if not doc or doc.knowledge_base_id != kb_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document not found: {doc_id}",
+        )
+
+    # Update metadata
+    updated_doc = await repo.update_document_metadata(
+        doc_id=doc_id,
+        tags=request.tags,
+        category=request.category,
+        author=request.author,
+        custom_metadata=request.custom_metadata,
+    )
+
+    logger.info(
+        "document_metadata_updated",
+        doc_id=doc_id,
+        kb_id=kb_id,
+        user_id=current_user.id,
+    )
+
+    return _doc_to_response(updated_doc)
+
+
+@router.get("/{kb_id}/tags", response_model=DocumentTagListResponse)
+async def get_tags(
+    kb_id: str,
+    prefix: str | None = None,
+    limit: int = 20,
+    repo: KnowledgeRepository = Depends(get_repository),
+) -> DocumentTagListResponse:
+    """Get tags used in a knowledge base for autocomplete.
+
+    Args:
+        kb_id: Knowledge base ID
+        prefix: Optional prefix to filter tags (for autocomplete)
+        limit: Maximum number of tags to return (default 20)
+    """
+    # Verify KB exists
+    kb = await repo.get_knowledge_base(kb_id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Knowledge base not found: {kb_id}",
+        )
+
+    tags = await repo.get_tags(
+        knowledge_base_id=kb_id,
+        prefix=prefix,
+        limit=limit,
+    )
+
+    return DocumentTagListResponse(
+        tags=[
+            DocumentTagResponse(tag=t.tag, usage_count=t.usage_count)
+            for t in tags
+        ],
+        total=len(tags),
+    )
+
+
+@router.get("/{kb_id}/categories", response_model=DocumentCategoryListResponse)
+async def get_categories(
+    kb_id: str,
+    repo: KnowledgeRepository = Depends(get_repository),
+) -> DocumentCategoryListResponse:
+    """Get all categories used in a knowledge base."""
+    # Verify KB exists
+    kb = await repo.get_knowledge_base(kb_id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Knowledge base not found: {kb_id}",
+        )
+
+    categories = await repo.get_categories(kb_id)
+
+    return DocumentCategoryListResponse(
+        categories=categories,
+        total=len(categories),
+    )
+
+
+# ==================== Document Preview Endpoints ====================
+
+
+@router.get("/{kb_id}/documents/{doc_id}/download")
+async def download_document(
+    kb_id: str,
+    doc_id: str,
+    current_user: CurrentUser,
+    repo: KnowledgeRepository = Depends(get_repository),
+):
+    """Download the original document file."""
+    from fastapi.responses import Response
+
+    doc = await repo.get_document(doc_id)
+
+    if not doc or doc.knowledge_base_id != kb_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document not found: {doc_id}",
+        )
+
+    if not doc.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document file not available",
+        )
+
+    try:
+        storage = get_storage()
+        file_content = await storage.download(doc.file_path)
+
+        # Determine content type
+        content_type = get_mime_type(doc.filename)
+
+        return Response(
+            content=file_content,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'inline; filename="{doc.filename}"',
+                "Cache-Control": "private, max-age=3600",
+            },
+        )
+    except Exception as e:
+        logger.error("document_download_failed", doc_id=doc_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to download document: {str(e)}",
+        )
+
+
+@router.get("/{kb_id}/documents/{doc_id}/preview")
+async def preview_document(
+    kb_id: str,
+    doc_id: str,
+    current_user: CurrentUser,
+    repo: KnowledgeRepository = Depends(get_repository),
+):
+    """Get document preview data including extracted text and metadata.
+
+    Returns the extracted text content suitable for displaying in a preview.
+    For binary formats like PDF, returns extracted text. For images, returns
+    a presigned URL for direct viewing.
+    """
+    from src.knowledge.document_processor import get_document_type, DocumentType
+
+    doc = await repo.get_document(doc_id)
+
+    if not doc or doc.knowledge_base_id != kb_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document not found: {doc_id}",
+        )
+
+    if not doc.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document file not available",
+        )
+
+    try:
+        storage = get_storage()
+        doc_type = get_document_type(doc.filename)
+
+        # For images, return presigned URL for direct viewing
+        if doc_type == DocumentType.IMAGE:
+            presigned_url = await storage.get_url(doc.file_path, expires_seconds=3600)
+            return {
+                "type": "image",
+                "url": presigned_url,
+                "filename": doc.filename,
+                "file_type": doc.file_type,
+                "file_size": doc.file_size,
+            }
+
+        # For text-based files, extract and return the text
+        file_content = await storage.download(doc.file_path)
+
+        # Get file extension
+        ext = doc.filename.rsplit(".", 1)[-1].lower() if "." in doc.filename else ""
+
+        # Create temp file for processing
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
+            tmp.write(file_content)
+            temp_path = tmp.name
+
+        try:
+            from src.knowledge.document_processor import process_document as extract_document
+
+            result = await extract_document(temp_path, doc.filename)
+
+            return {
+                "type": "text",
+                "content": result.text,
+                "filename": doc.filename,
+                "file_type": doc.file_type,
+                "file_size": doc.file_size,
+                "page_count": result.page_count,
+                "word_count": result.word_count,
+                "has_tables": len(result.tables) > 0,
+                "has_images": len(result.images) > 0,
+                "tables": [
+                    {
+                        "markdown": t.markdown,
+                        "page_number": t.page_number,
+                        "sheet_name": t.sheet_name,
+                        "row_count": t.row_count,
+                        "col_count": t.col_count,
+                    }
+                    for t in result.tables
+                ],
+                "metadata": result.metadata,
+            }
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    except Exception as e:
+        logger.error("document_preview_failed", doc_id=doc_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate preview: {str(e)}",
+        )
 
 
 # ==================== Search Endpoint ====================
@@ -518,6 +1087,8 @@ async def search_knowledge_base(
         )
 
     try:
+        from src.knowledge.knowledge_base import SearchMode
+
         kb_config = KnowledgeBaseConfig(
             collection_name=kb.collection_name,
             embedding_model=kb.embedding_model,
@@ -527,10 +1098,16 @@ async def search_knowledge_base(
         knowledge_base = KnowledgeBase(kb_config)
         await knowledge_base.initialize()
 
+        # Determine search mode
+        search_mode = SearchMode(request.mode.value)
+        if request.rerank and search_mode == SearchMode.HYBRID:
+            search_mode = SearchMode.HYBRID_RERANK
+
         result = await knowledge_base.search(
             query=request.query,
             top_k=request.top_k,
             score_threshold=request.similarity_threshold,
+            mode=search_mode,
         )
 
         await knowledge_base.close()
@@ -539,6 +1116,7 @@ async def search_knowledge_base(
             "knowledge_base_search_completed",
             kb_id=kb_id,
             results_count=len(result.documents),
+            mode=search_mode.value,
             user_id=current_user.id,
         )
 
