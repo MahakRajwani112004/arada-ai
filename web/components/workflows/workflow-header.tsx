@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowLeft, Play, MoreVertical, Trash2, Copy, AlertTriangle, LayoutGrid, CheckCircle2, Circle, Bot } from "lucide-react";
+import { useState } from "react";
+import { ArrowLeft, Play, MoreVertical, Trash2, Copy, AlertTriangle, LayoutGrid, CheckCircle2, Circle, Bot, Calendar, Clock } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { WorkflowDetail } from "@/types/workflow";
 import { formatDistanceToNow } from "date-fns";
+import { ScheduleDialog } from "./schedule-dialog";
+import { useSchedule } from "@/lib/hooks/use-schedules";
 
 export type WorkflowStatus = "draft" | "incomplete" | "ready";
 
@@ -82,6 +85,8 @@ export function WorkflowHeader({
 }: WorkflowHeaderProps) {
   void _onEdit; // Kept for API compatibility
   const router = useRouter();
+  const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
+  const { data: schedule } = useSchedule(workflow.id);
   const updatedAgo = formatDistanceToNow(new Date(workflow.updated_at), {
     addSuffix: true,
   });
@@ -197,6 +202,24 @@ export function WorkflowHeader({
               Edit in Canvas
             </Button>
             <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => setScheduleDialogOpen(true)}
+            >
+              {schedule?.enabled ? (
+                <>
+                  <Clock className="h-4 w-4 text-green-500" />
+                  Scheduled
+                </>
+              ) : (
+                <>
+                  <Calendar className="h-4 w-4" />
+                  Schedule
+                </>
+              )}
+            </Button>
+            <Button
               size="sm"
               className="gap-2"
               disabled={isBlocked}
@@ -212,6 +235,10 @@ export function WorkflowHeader({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setScheduleDialogOpen(true)}>
+                  <Calendar className="mr-2 h-4 w-4" />
+                  {schedule ? "Edit Schedule" : "Add Schedule"}
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={onCopy}>
                   <Copy className="mr-2 h-4 w-4" />
                   Duplicate
@@ -229,6 +256,13 @@ export function WorkflowHeader({
           </div>
         </div>
       </div>
+
+      <ScheduleDialog
+        workflowId={workflow.id}
+        workflowName={workflow.name}
+        open={scheduleDialogOpen}
+        onOpenChange={setScheduleDialogOpen}
+      />
     </div>
   );
 }

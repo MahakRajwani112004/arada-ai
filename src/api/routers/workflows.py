@@ -7,6 +7,7 @@ from src.api.dependencies import (
     get_mcp_manager,
     get_mcp_repository,
     get_repository,
+    get_schedule_repository,
     get_workflow_repository,
 )
 from src.auth.dependencies import CurrentUser
@@ -20,6 +21,7 @@ from src.api.schemas.workflows import (
     AvailableToolResponse,
     AvailableToolsResponse,
     CopyWorkflowRequest,
+    CreateScheduleRequest,
     CreateWorkflowRequest,
     ExecuteWorkflowRequest,
     ExecuteWorkflowResponse,
@@ -28,8 +30,14 @@ from src.api.schemas.workflows import (
     GenerateWorkflowRequest,
     GenerateWorkflowResponse,
     MCPToolResponse,
+    ScheduleListResponse,
+    SchedulePreviewRequest,
+    ScheduleResponse,
     StepExecutionResult,
+    UpdateScheduleRequest,
     UpdateWorkflowRequest,
+    ValidateCronRequest,
+    ValidateCronResponse,
     ValidateWorkflowRequest,
     ValidateWorkflowResponse,
     ValidationError,
@@ -42,6 +50,7 @@ from src.api.schemas.workflows import (
 from src.mcp.repository import MCPServerRepository
 from src.models.workflow_definition import validate_workflow_definition as validate_definition
 from src.storage import BaseAgentRepository
+from src.storage.schedule_repository import ScheduleRepository
 from src.storage.workflow_repository import (
     WorkflowFilters,
     WorkflowMetadata,
@@ -690,4 +699,364 @@ async def apply_generated_workflow(
         request=request,
         agent_repo=agent_repo,
         workflow_repo=workflow_repo,
+    )
+
+
+# ==================== Workflow Schedules ====================
+
+
+@router.post("/schedule/validate", response_model=ValidateCronResponse)
+async def validate_cron_expression(
+    request: ValidateCronRequest,
+    current_user: CurrentUser,
+) -> ValidateCronResponse:
+    """Validate a cron expression and preview next run times."""
+    from src.utils import validate_cron, describe_cron, get_next_runs
+
+    is_valid, error = validate_cron(request.cron_expression)
+
+    if not is_valid:
+        return ValidateCronResponse(
+            is_valid=False,
+            error=error,
+        )
+
+    try:
+        description = describe_cron(request.cron_expression)
+        next_runs = get_next_runs(
+            request.cron_expression,
+            count=5,
+            timezone=request.timezone,
+        )
+        return ValidateCronResponse(
+            is_valid=True,
+            description=description,
+            next_runs=next_runs,
+        )
+    except Exception as e:
+        return ValidateCronResponse(
+            is_valid=False,
+            error=str(e),
+        )
+
+
+@router.post("/schedule/preview", response_model=ValidateCronResponse)
+async def preview_schedule(
+    request: SchedulePreviewRequest,
+    current_user: CurrentUser,
+) -> ValidateCronResponse:
+    """Preview the next run times for a cron expression."""
+    from src.utils import validate_cron, describe_cron, get_next_runs
+
+    is_valid, error = validate_cron(request.cron_expression)
+
+    if not is_valid:
+        return ValidateCronResponse(
+            is_valid=False,
+            error=error,
+        )
+
+    try:
+        description = describe_cron(request.cron_expression)
+        next_runs = get_next_runs(
+            request.cron_expression,
+            count=request.count,
+            timezone=request.timezone,
+        )
+        return ValidateCronResponse(
+            is_valid=True,
+            description=description,
+            next_runs=next_runs,
+        )
+    except Exception as e:
+        return ValidateCronResponse(
+            is_valid=False,
+            error=str(e),
+        )
+
+
+@router.post("/{workflow_id}/schedule", response_model=ScheduleResponse, status_code=status.HTTP_201_CREATED)
+async def create_schedule(
+    workflow_id: str,
+    request: CreateScheduleRequest,
+    current_user: CurrentUser,
+    workflow_repo: WorkflowRepository = Depends(get_workflow_repository),
+    schedule_repo: ScheduleRepository = Depends(get_schedule_repository),
+) -> ScheduleResponse:
+    """Create a schedule for a workflow."""
+    from src.workflows.schedule_service import ScheduleService
+
+    # Verify workflow exists
+    if not await workflow_repo.exists(workflow_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow '{workflow_id}' not found",
+        )
+
+    # Check if schedule already exists for this workflow
+    existing = await schedule_repo.get_by_workflow(workflow_id)
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Schedule already exists for workflow '{workflow_id}'. Use PUT to update.",
+        )
+
+    try:
+        # Create schedule in database
+        schedule = await schedule_repo.create(
+            workflow_id=workflow_id,
+            cron_expression=request.cron_expression,
+            user_id=current_user.id,
+            timezone_str=request.timezone,
+            enabled=request.enabled,
+            input_text=request.input,
+            context=request.context,
+        )
+
+        # Create Temporal schedule (if Temporal is available)
+        try:
+            schedule_service = ScheduleService()
+            temporal_schedule_id = await schedule_service.create_schedule(
+                schedule_id=schedule.id,
+                workflow_id=workflow_id,
+                cron_expression=request.cron_expression,
+                timezone=request.timezone,
+                input_text=request.input,
+                context=request.context,
+                user_id=current_user.id,
+                enabled=request.enabled,
+            )
+            # Store the Temporal schedule ID
+            await schedule_repo.set_temporal_schedule_id(schedule.id, temporal_schedule_id)
+            # Refresh schedule data
+            schedule = await schedule_repo.get(schedule.id)
+        except Exception as temporal_error:
+            # Log but don't fail - schedule is stored in DB and can be synced later
+            import logging
+            logging.warning(f"Failed to create Temporal schedule: {temporal_error}")
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    return ScheduleResponse(
+        id=schedule.id,
+        workflow_id=schedule.workflow_id,
+        cron_expression=schedule.cron_expression,
+        cron_description=schedule.cron_description,
+        timezone=schedule.timezone,
+        enabled=schedule.enabled,
+        input=schedule.input_text,
+        context=schedule.context,
+        next_run_at=schedule.next_run_at,
+        last_run_at=schedule.last_run_at,
+        run_count=schedule.run_count,
+        last_error=schedule.last_error,
+        created_at=schedule.created_at,
+        updated_at=schedule.updated_at,
+    )
+
+
+@router.get("/{workflow_id}/schedule", response_model=ScheduleResponse)
+async def get_schedule(
+    workflow_id: str,
+    current_user: CurrentUser,
+    workflow_repo: WorkflowRepository = Depends(get_workflow_repository),
+    schedule_repo: ScheduleRepository = Depends(get_schedule_repository),
+) -> ScheduleResponse:
+    """Get the schedule for a workflow."""
+    # Verify workflow exists
+    if not await workflow_repo.exists(workflow_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow '{workflow_id}' not found",
+        )
+
+    schedule = await schedule_repo.get_by_workflow(workflow_id)
+    if not schedule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No schedule found for workflow '{workflow_id}'",
+        )
+
+    return ScheduleResponse(
+        id=schedule.id,
+        workflow_id=schedule.workflow_id,
+        cron_expression=schedule.cron_expression,
+        cron_description=schedule.cron_description,
+        timezone=schedule.timezone,
+        enabled=schedule.enabled,
+        input=schedule.input_text,
+        context=schedule.context,
+        next_run_at=schedule.next_run_at,
+        last_run_at=schedule.last_run_at,
+        run_count=schedule.run_count,
+        last_error=schedule.last_error,
+        created_at=schedule.created_at,
+        updated_at=schedule.updated_at,
+    )
+
+
+@router.put("/{workflow_id}/schedule", response_model=ScheduleResponse)
+async def update_schedule(
+    workflow_id: str,
+    request: UpdateScheduleRequest,
+    current_user: CurrentUser,
+    workflow_repo: WorkflowRepository = Depends(get_workflow_repository),
+    schedule_repo: ScheduleRepository = Depends(get_schedule_repository),
+) -> ScheduleResponse:
+    """Update the schedule for a workflow."""
+    from src.workflows.schedule_service import ScheduleService
+
+    # Verify workflow exists
+    if not await workflow_repo.exists(workflow_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow '{workflow_id}' not found",
+        )
+
+    # Get existing schedule
+    existing = await schedule_repo.get_by_workflow(workflow_id)
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No schedule found for workflow '{workflow_id}'",
+        )
+
+    try:
+        # Update schedule in database
+        schedule = await schedule_repo.update(
+            schedule_id=existing.id,
+            cron_expression=request.cron_expression,
+            timezone_str=request.timezone,
+            enabled=request.enabled,
+            input_text=request.input,
+            context=request.context,
+        )
+
+        # Update Temporal schedule (if it exists)
+        if existing.temporal_schedule_id:
+            try:
+                schedule_service = ScheduleService()
+                await schedule_service.update_schedule(
+                    temporal_schedule_id=existing.temporal_schedule_id,
+                    cron_expression=request.cron_expression,
+                    timezone=request.timezone,
+                    input_text=request.input,
+                    context=request.context,
+                    enabled=request.enabled,
+                )
+            except Exception as temporal_error:
+                import logging
+                logging.warning(f"Failed to update Temporal schedule: {temporal_error}")
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    if not schedule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Schedule not found",
+        )
+
+    return ScheduleResponse(
+        id=schedule.id,
+        workflow_id=schedule.workflow_id,
+        cron_expression=schedule.cron_expression,
+        cron_description=schedule.cron_description,
+        timezone=schedule.timezone,
+        enabled=schedule.enabled,
+        input=schedule.input_text,
+        context=schedule.context,
+        next_run_at=schedule.next_run_at,
+        last_run_at=schedule.last_run_at,
+        run_count=schedule.run_count,
+        last_error=schedule.last_error,
+        created_at=schedule.created_at,
+        updated_at=schedule.updated_at,
+    )
+
+
+@router.delete("/{workflow_id}/schedule", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_schedule(
+    workflow_id: str,
+    current_user: CurrentUser,
+    workflow_repo: WorkflowRepository = Depends(get_workflow_repository),
+    schedule_repo: ScheduleRepository = Depends(get_schedule_repository),
+) -> None:
+    """Delete the schedule for a workflow."""
+    from src.workflows.schedule_service import ScheduleService
+
+    # Verify workflow exists
+    if not await workflow_repo.exists(workflow_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow '{workflow_id}' not found",
+        )
+
+    # Get schedule to check for Temporal schedule ID
+    existing = await schedule_repo.get_by_workflow(workflow_id)
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No schedule found for workflow '{workflow_id}'",
+        )
+
+    # Delete Temporal schedule if it exists
+    if existing.temporal_schedule_id:
+        try:
+            schedule_service = ScheduleService()
+            await schedule_service.delete_schedule(existing.temporal_schedule_id)
+        except Exception as temporal_error:
+            import logging
+            logging.warning(f"Failed to delete Temporal schedule: {temporal_error}")
+
+    # Delete from database
+    await schedule_repo.delete_by_workflow(workflow_id)
+
+
+@router.get("/schedules", response_model=ScheduleListResponse)
+async def list_schedules(
+    current_user: CurrentUser,
+    enabled: Optional[bool] = Query(None, description="Filter by enabled status"),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    schedule_repo: ScheduleRepository = Depends(get_schedule_repository),
+) -> ScheduleListResponse:
+    """List all schedules for the current user."""
+    from src.storage.schedule_repository import ScheduleFilters
+
+    filters = ScheduleFilters(
+        user_id=current_user.id,
+        enabled=enabled,
+    )
+
+    schedules = await schedule_repo.list(filters, limit, offset)
+
+    return ScheduleListResponse(
+        schedules=[
+            ScheduleResponse(
+                id=s.id,
+                workflow_id=s.workflow_id,
+                cron_expression=s.cron_expression,
+                cron_description=s.cron_description,
+                timezone=s.timezone,
+                enabled=s.enabled,
+                input=s.input_text,
+                context=s.context,
+                next_run_at=s.next_run_at,
+                last_run_at=s.last_run_at,
+                run_count=s.run_count,
+                last_error=s.last_error,
+                created_at=s.created_at,
+                updated_at=s.updated_at,
+            )
+            for s in schedules
+        ],
+        total=len(schedules),
     )

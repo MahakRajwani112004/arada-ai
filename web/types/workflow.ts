@@ -29,8 +29,14 @@ export interface WorkflowStep {
   default?: string;
 
   // Loop step fields
+  loop_mode?: "count" | "foreach" | "until";
   max_iterations?: number;
+  over?: string; // Expression to iterate over (foreach mode)
+  item_variable?: string; // Variable name for current item
   exit_condition?: string;
+  break_condition?: string; // Break condition
+  continue_condition?: string; // Continue condition
+  collect_results?: boolean; // Whether to collect all iteration results
   steps?: Record<string, unknown>[];
 }
 

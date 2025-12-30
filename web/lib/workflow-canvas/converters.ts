@@ -8,6 +8,9 @@ import type {
   AgentNodeData,
   ConditionalNodeData,
   ParallelNodeData,
+  LoopNodeData,
+  LoopMode,
+  ApprovalNodeData,
   EndNodeData
 } from "./types";
 import { createEdge, applyAutoLayout } from "./layout";
@@ -49,6 +52,12 @@ export function workflowToCanvas(
         break;
       case "parallel":
         node = createParallelNode(step, index, context);
+        break;
+      case "loop":
+        node = createLoopNode(step, index, context);
+        break;
+      case "approval":
+        node = createApprovalNode(step, index);
         break;
       case "agent":
       default:
@@ -294,6 +303,90 @@ function createParallelNode(
 }
 
 /**
+ * Create a loop node from a workflow step
+ */
+function createLoopNode(
+  step: WorkflowStep,
+  index: number,
+  context: ConversionContext = {}
+): CanvasNode {
+  // Parse loop mode from step
+  const loopMode: LoopMode = (step.loop_mode as LoopMode) || "count";
+
+  // Build inner steps array
+  const innerSteps = (step.steps || []).map((innerStep, stepIndex) => {
+    const innerStepData = innerStep as { id: string; agent_id?: string; input?: string; timeout?: number };
+    const agent = context.agents?.find((a) => a.id === innerStepData.agent_id);
+    return {
+      id: innerStepData.id || `loop-step-${stepIndex}`,
+      agentId: innerStepData.agent_id,
+      agentName: agent?.name,
+      input: innerStepData.input,
+      timeout: innerStepData.timeout,
+    };
+  });
+
+  // Determine status - ready if all inner steps have agents
+  const allStepsReady = innerSteps.every((s) => s.agentId && context.agents?.some((a) => a.id === s.agentId));
+  const status: NodeStatus = innerSteps.length > 0 && allStepsReady ? "ready" : "draft";
+
+  const data: LoopNodeData = {
+    type: "loop",
+    stepId: step.id,
+    name: step.name || `Loop ${index + 1}`,
+    loopMode,
+    maxIterations: step.max_iterations || 5,
+    over: step.over,
+    itemVariable: step.item_variable || "item",
+    exitCondition: step.exit_condition,
+    breakCondition: step.break_condition,
+    continueCondition: step.continue_condition,
+    collectResults: step.collect_results !== false,
+    innerSteps,
+    status,
+  };
+
+  return {
+    id: step.id,
+    type: "loop",
+    position: { x: 0, y: 0 },
+    data,
+  };
+}
+
+/**
+ * Create an approval node from a workflow step
+ */
+function createApprovalNode(
+  step: WorkflowStep,
+  index: number
+): CanvasNode {
+  // Determine status - ready if message and approvers are configured
+  const hasMessage = !!step.approval_message;
+  const hasApprovers = step.approvers && step.approvers.length > 0;
+  const status: NodeStatus = hasMessage && hasApprovers ? "ready" : "draft";
+
+  const data: ApprovalNodeData = {
+    type: "approval",
+    stepId: step.id,
+    name: step.name || `Approval ${index + 1}`,
+    approvalMessage: step.approval_message || "Please review and approve this workflow step.",
+    approvers: step.approvers || [],
+    requiredApprovals: step.required_approvals || 1,
+    timeoutSeconds: step.approval_timeout_seconds,
+    onReject: step.on_reject || "fail",
+    status,
+  };
+
+  return {
+    id: step.id,
+    type: "approval",
+    position: { x: 0, y: 0 },
+    data,
+  };
+}
+
+/**
  * Create the end node
  */
 function createEndNode(): CanvasNode {
@@ -389,6 +482,52 @@ export function canvasToWorkflow(
         branches,
         aggregation: data.aggregation,
         timeout: originalStep?.timeout || 120,
+        retries: originalStep?.retries || 0,
+        on_error: originalStep?.on_error || "fail",
+      };
+    }
+
+    if (node.type === "loop") {
+      const data = node.data as LoopNodeData;
+      // Convert innerSteps back to workflow format
+      const steps = data.innerSteps.map((step) => ({
+        id: step.id,
+        agent_id: step.agentId,
+        input: step.input || "${user_input}",
+        timeout: step.timeout || 120,
+      }));
+
+      return {
+        id: data.stepId,
+        type: "loop" as const,
+        name: data.name,
+        loop_mode: data.loopMode,
+        max_iterations: data.maxIterations,
+        over: data.over,
+        item_variable: data.itemVariable,
+        exit_condition: data.exitCondition,
+        break_condition: data.breakCondition,
+        continue_condition: data.continueCondition,
+        collect_results: data.collectResults,
+        steps,
+        timeout: originalStep?.timeout || 120,
+        retries: originalStep?.retries || 0,
+        on_error: originalStep?.on_error || "fail",
+      };
+    }
+
+    if (node.type === "approval") {
+      const data = node.data as ApprovalNodeData;
+      return {
+        id: data.stepId,
+        type: "approval" as const,
+        name: data.name,
+        approval_message: data.approvalMessage,
+        approvers: data.approvers,
+        required_approvals: data.requiredApprovals,
+        approval_timeout_seconds: data.timeoutSeconds,
+        on_reject: data.onReject,
+        timeout: originalStep?.timeout || 300, // Approvals may need longer timeout
         retries: originalStep?.retries || 0,
         on_error: originalStep?.on_error || "fail",
       };
