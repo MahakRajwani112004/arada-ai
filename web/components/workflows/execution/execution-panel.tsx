@@ -62,7 +62,7 @@ export function ExecutionPanel({
     : [];
   const totalSteps = stepResultsValues.length;
   const completedSteps = stepResultsValues.filter(
-    (s) => s.status === "completed"
+    (s) => s.status === "COMPLETED"
   ).length;
   const progressPercent = totalSteps > 0 ? (completedSteps / totalSteps) * 100 : 0;
 
