@@ -16,7 +16,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { TriggerNode, AgentNode, EndNode } from "./nodes";
+import { TriggerNode, AgentNode, ConditionalNode, ParallelNode, LoopNode, ApprovalNode, EndNode } from "./nodes";
 import { workflowToCanvas } from "@/lib/workflow-canvas";
 import type { CanvasNode, CanvasEdge } from "@/lib/workflow-canvas/types";
 import type { WorkflowDefinition, WorkflowTrigger } from "@/types/workflow";
@@ -28,6 +28,10 @@ import { Button } from "@/components/ui/button";
 const nodeTypes: NodeTypes = {
   trigger: TriggerNode,
   agent: AgentNode,
+  conditional: ConditionalNode,
+  parallel: ParallelNode,
+  loop: LoopNode,
+  approval: ApprovalNode,
   end: EndNode,
 };
 
@@ -168,6 +172,10 @@ export function WorkflowCanvas({
                 return "#3b82f6";
               case "parallel":
                 return "#a855f7";
+              case "loop":
+                return "#06b6d4"; // cyan-500
+              case "approval":
+                return "#f59e0b"; // amber-500
               case "end":
                 return "#94a3b8";
               default:

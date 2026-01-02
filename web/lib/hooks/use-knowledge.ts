@@ -13,10 +13,12 @@ import {
   uploadDocumentsBatch,
   deleteDocument,
   searchKnowledgeBase,
+  updateDocumentMetadata,
 } from "@/lib/api/knowledge";
 import type {
   CreateKnowledgeBaseRequest,
   UpdateKnowledgeBaseRequest,
+  UpdateDocumentMetadataRequest,
   SearchKnowledgeBaseRequest,
 } from "@/types/knowledge";
 
@@ -170,6 +172,28 @@ export function useDeleteDocument() {
       queryClient.invalidateQueries({ queryKey: knowledgeKeys.detail(kbId) });
       queryClient.invalidateQueries({ queryKey: knowledgeKeys.list() });
       toast.success("Document deleted");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+}
+
+export function useUpdateDocumentMetadata() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      kbId,
+      docId,
+      data,
+    }: {
+      kbId: string;
+      docId: string;
+      data: UpdateDocumentMetadataRequest;
+    }) => updateDocumentMetadata(kbId, docId, data),
+    onSuccess: (_, { kbId }) => {
+      queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(kbId) });
     },
     onError: (error: Error) => {
       toast.error(error.message);

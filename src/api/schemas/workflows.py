@@ -13,11 +13,44 @@ class TriggerType(str, Enum):
     """Types of workflow triggers."""
     MANUAL = "manual"
     WEBHOOK = "webhook"
+    SCHEDULE = "schedule"
 
 
 class ManualTriggerConfig(BaseModel):
     """Configuration for manual triggers."""
     pass  # No additional config needed
+
+
+class ScheduleTriggerConfig(BaseModel):
+    """Configuration for scheduled triggers (cron-based)."""
+    cron_expression: str = Field(
+        ...,
+        description="Cron expression (5 or 6 fields: min hour day month dow [year])",
+        examples=["0 9 * * 1-5", "*/15 * * * *", "0 0 1 * *"],
+    )
+    timezone: str = Field(
+        default="UTC",
+        description="IANA timezone name (e.g., 'America/New_York', 'Europe/London')"
+    )
+    enabled: bool = Field(default=True, description="Whether the schedule is active")
+    input: Optional[str] = Field(
+        None,
+        max_length=10000,
+        description="Static input to pass to workflow on each scheduled run"
+    )
+    context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional context to pass to workflow"
+    )
+    next_run_at: Optional[datetime] = Field(
+        None,
+        description="Next scheduled run time (computed)"
+    )
+    last_run_at: Optional[datetime] = Field(
+        None,
+        description="Last run time"
+    )
+    run_count: int = Field(default=0, description="Total number of scheduled runs")
 
 
 class WebhookTriggerConfig(BaseModel):
@@ -34,6 +67,7 @@ class WorkflowTrigger(BaseModel):
     type: TriggerType
     manual_config: Optional[ManualTriggerConfig] = None
     webhook_config: Optional[WebhookTriggerConfig] = None
+    schedule_config: Optional[ScheduleTriggerConfig] = None
 
 
 # ==================== Workflow Skeleton Schemas (Two-Phase Creation) ====================
@@ -481,3 +515,87 @@ class ValidateWorkflowResponse(BaseModel):
     warnings: List[ValidationError] = []
     missing_agents: List[str] = []
     missing_mcps: List[str] = []
+
+
+# ==================== Schedule Schemas ====================
+
+
+class CreateScheduleRequest(BaseModel):
+    """Request to create a workflow schedule."""
+
+    cron_expression: str = Field(
+        ...,
+        description="Cron expression (5 fields: min hour day month dow)",
+        examples=["0 9 * * 1-5", "*/15 * * * *"],
+    )
+    timezone: str = Field(default="UTC", description="IANA timezone name")
+    enabled: bool = Field(default=True, description="Whether the schedule is active")
+    input: Optional[str] = Field(
+        None,
+        max_length=10000,
+        description="Static input for each scheduled run"
+    )
+    context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional context for scheduled runs"
+    )
+
+
+class UpdateScheduleRequest(BaseModel):
+    """Request to update a workflow schedule."""
+
+    cron_expression: Optional[str] = Field(None, description="New cron expression")
+    timezone: Optional[str] = Field(None, description="New timezone")
+    enabled: Optional[bool] = Field(None, description="Enable or disable schedule")
+    input: Optional[str] = Field(None, max_length=10000)
+    context: Optional[Dict[str, Any]] = Field(None)
+
+
+class ScheduleResponse(BaseModel):
+    """Response containing schedule details."""
+
+    id: str
+    workflow_id: str
+    cron_expression: str
+    cron_description: str = Field("", description="Human-readable schedule description")
+    timezone: str
+    enabled: bool
+    input: Optional[str] = None
+    context: Dict[str, Any] = Field(default_factory=dict)
+    next_run_at: Optional[datetime] = None
+    last_run_at: Optional[datetime] = None
+    run_count: int = 0
+    last_error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScheduleListResponse(BaseModel):
+    """Response containing list of schedules."""
+
+    schedules: List[ScheduleResponse]
+    total: int
+
+
+class ValidateCronRequest(BaseModel):
+    """Request to validate a cron expression."""
+
+    cron_expression: str
+    timezone: str = Field(default="UTC")
+
+
+class ValidateCronResponse(BaseModel):
+    """Response from cron validation."""
+
+    is_valid: bool
+    error: Optional[str] = None
+    description: Optional[str] = None
+    next_runs: List[datetime] = Field(default_factory=list)
+
+
+class SchedulePreviewRequest(BaseModel):
+    """Request to preview schedule runs."""
+
+    cron_expression: str
+    timezone: str = Field(default="UTC")
+    count: int = Field(default=5, ge=1, le=20)

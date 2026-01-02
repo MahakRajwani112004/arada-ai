@@ -40,6 +40,7 @@ from .tool_activity import (
     execute_tool,
     get_tool_definitions,
 )
+from .scheduled_workflow_activity import execute_scheduled_workflow
 
 __all__ = [
     "llm_completion",
@@ -72,4 +73,6 @@ __all__ = [
     "SanitizeInputOutput",
     "SanitizeToolResultInput",
     "SanitizeToolResultOutput",
+    # Scheduled workflow execution
+    "execute_scheduled_workflow",
 ]

@@ -46,9 +46,24 @@ class OrchestratorConfig(BaseModel):
         description="How orchestrator decides agent execution",
     )
 
+    auto_discover: bool = Field(
+        default=False,
+        description="If True, automatically discover all available agents instead of using available_agents list",
+    )
+
+    exclude_agent_types: List[str] = Field(
+        default_factory=lambda: ["OrchestratorAgent"],
+        description="Agent types to exclude when auto_discover is True (prevents orchestrator loops)",
+    )
+
+    exclude_agent_ids: List[str] = Field(
+        default_factory=list,
+        description="Specific agent IDs to exclude when auto_discover is True",
+    )
+
     available_agents: List[AgentReference] = Field(
         default_factory=list,
-        description="Agents available to this orchestrator",
+        description="Agents available to this orchestrator (ignored if auto_discover is True)",
     )
 
     workflow_definition: Optional[str] = Field(

@@ -229,12 +229,35 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
     chunk_count INTEGER NOT NULL DEFAULT 0,
     status VARCHAR(20) NOT NULL DEFAULT 'pending',
     error_message TEXT,
+    -- Metadata fields
+    tags VARCHAR[] NOT NULL DEFAULT '{}',
+    category VARCHAR(100),
+    author VARCHAR(255),
+    custom_metadata JSONB NOT NULL DEFAULT '{}',
+    -- Timestamps
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     indexed_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_documents_kb_id ON knowledge_documents(knowledge_base_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_documents_status ON knowledge_documents(status);
+CREATE INDEX IF NOT EXISTS idx_knowledge_documents_category ON knowledge_documents(category);
+
+-- ============================================
+-- Document tags table (for autocomplete)
+-- ============================================
+CREATE TABLE IF NOT EXISTS document_tags (
+    id VARCHAR(100) PRIMARY KEY,
+    knowledge_base_id VARCHAR(100) NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+    tag VARCHAR(100) NOT NULL,
+    usage_count INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(knowledge_base_id, tag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_tags_kb_id ON document_tags(knowledge_base_id);
+CREATE INDEX IF NOT EXISTS idx_document_tags_tag ON document_tags(tag);
 
 -- ============================================
 -- LLM Usage tracking table (for analytics, user-scoped)

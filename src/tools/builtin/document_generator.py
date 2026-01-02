@@ -44,8 +44,9 @@ class DocumentGeneratorTool(BaseTool):
 Supports:
 - Creating documents from content (contracts, invoices, letters, reports)
 - Filling templates with data
-- Output formats: docx, pdf, txt
+- Output formats: docx (recommended), txt, pdf
 
+IMPORTANT: Use 'docx' format for best compatibility. PDF requires additional libraries.
 The tool returns a download URL that expires in 24 hours.""",
             parameters=[
                 ToolParameter(

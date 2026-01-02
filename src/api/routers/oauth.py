@@ -153,7 +153,7 @@ async def google_authorize(
 
     auth_url, _ = flow.authorization_url(
         access_type="offline",  # Required to get refresh_token
-        prompt="consent",  # Force consent to always get refresh_token
+        prompt="select_account",  # Force consent to always get refresh_token
         state=combined_state,
     )
 
@@ -296,7 +296,7 @@ async def get_authorize_url(
 
     auth_url, _ = flow.authorization_url(
         access_type="offline",
-        prompt="consent",
+        prompt="select_account",
         state=state,
     )
 
@@ -342,7 +342,7 @@ async def get_microsoft_authorize_url(
         "response_mode": "query",
         "scope": " ".join(scopes),
         "state": state,
-        "prompt": "consent",  # Force consent to get refresh token
+        "prompt": "select_account",  # Force consent to get refresh token
     }
 
     auth_url = f"{MICROSOFT_AUTH_URL.format(tenant=MICROSOFT_TENANT_ID)}?{urlencode(params)}"

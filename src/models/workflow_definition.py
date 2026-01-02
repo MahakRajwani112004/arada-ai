@@ -22,6 +22,7 @@ class StepType(str, Enum):
     PARALLEL = "parallel"
     CONDITIONAL = "conditional"
     LOOP = "loop"
+    APPROVAL = "approval"  # Human-in-the-loop approval gate
 
 
 class ErrorHandling(str, Enum):
@@ -62,6 +63,14 @@ class LoopInnerStep(BaseModel):
     timeout: int = Field(default=120, ge=1, le=600)
 
 
+class LoopMode(str, Enum):
+    """Mode for loop iteration."""
+
+    COUNT = "count"  # Iterate a fixed number of times
+    FOREACH = "foreach"  # Iterate over a collection
+    UNTIL = "until"  # Iterate until condition is met
+
+
 class WorkflowStep(BaseModel):
     """A single step in a workflow definition."""
 
@@ -94,9 +103,56 @@ class WorkflowStep(BaseModel):
     default: Optional[str] = Field(None, pattern=ID_PATTERN)
 
     # Loop step fields
-    max_iterations: int = Field(default=5, ge=1, le=20)
-    exit_condition: Optional[str] = Field(None, max_length=1000)
+    loop_mode: Optional[LoopMode] = Field(default=LoopMode.COUNT, description="Loop mode")
+    max_iterations: int = Field(default=5, ge=1, le=100)
+    over: Optional[str] = Field(
+        None, max_length=10000,
+        description="Expression to iterate over. Can be JSON array, ${steps.X.output}, or template variable"
+    )
+    item_variable: Optional[str] = Field(
+        default="item",
+        pattern=r"^[a-zA-Z][a-zA-Z0-9_]*$",
+        description="Variable name for current item in foreach mode (accessible as ${loop.item})"
+    )
+    exit_condition: Optional[str] = Field(
+        None, max_length=1000,
+        description="Expression that when 'true'/'done'/'complete' exits the loop"
+    )
+    break_condition: Optional[str] = Field(
+        None, max_length=1000,
+        description="Expression to break loop early (evaluated after each iteration)"
+    )
+    continue_condition: Optional[str] = Field(
+        None, max_length=1000,
+        description="Expression to skip to next iteration (evaluated before each step)"
+    )
+    collect_results: bool = Field(
+        default=True,
+        description="Whether to collect all iteration results into an array"
+    )
     steps: Optional[List[LoopInnerStep]] = Field(None, max_length=10)
+
+    # Approval step fields (human-in-the-loop)
+    approval_message: Optional[str] = Field(
+        None, max_length=5000,
+        description="Message to display to approvers explaining what needs approval"
+    )
+    approvers: Optional[List[str]] = Field(
+        None, max_length=50,
+        description="List of user IDs, emails, or role patterns (e.g., 'role:admin') who can approve"
+    )
+    required_approvals: int = Field(
+        default=1, ge=1, le=10,
+        description="Number of approvals required (1 for single approver)"
+    )
+    approval_timeout_seconds: Optional[int] = Field(
+        None, ge=60, le=604800,  # 1 min to 7 days
+        description="Timeout in seconds for approval (None = no timeout)"
+    )
+    on_reject: Optional[str] = Field(
+        default="fail",
+        description="Action on rejection: 'fail', 'skip', or step_id to jump to"
+    )
 
     @field_validator("on_error")
     @classmethod
@@ -135,6 +191,23 @@ class WorkflowStep(BaseModel):
         elif self.type == StepType.LOOP:
             if not self.steps or len(self.steps) == 0:
                 raise ValueError(f"Step '{self.id}': loop step requires inner steps")
+            # Validate foreach mode requires 'over' expression
+            if self.loop_mode == LoopMode.FOREACH and not self.over:
+                raise ValueError(
+                    f"Step '{self.id}': foreach loop mode requires 'over' expression"
+                )
+            # Validate until mode requires exit_condition
+            if self.loop_mode == LoopMode.UNTIL and not self.exit_condition:
+                raise ValueError(
+                    f"Step '{self.id}': until loop mode requires 'exit_condition'"
+                )
+
+        elif self.type == StepType.APPROVAL:
+            if not self.approval_message:
+                raise ValueError(
+                    f"Step '{self.id}': approval step requires approval_message"
+                )
+            # Approvers are optional - if not set, workflow creator can approve
 
         return self
 

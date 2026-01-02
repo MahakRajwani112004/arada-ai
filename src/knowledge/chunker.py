@@ -2,6 +2,14 @@
 
 Handles reading various file types and splitting them into chunks
 suitable for embedding and vector storage.
+
+Uses the enhanced document_processor module for extraction which supports:
+- PDF (with tables, images, OCR)
+- DOCX (with tables, images)
+- PPTX (slides, speaker notes)
+- Excel/CSV (as markdown tables)
+- Images (OCR)
+- HTML, TXT, Markdown
 """
 import os
 import re
@@ -9,11 +17,17 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from src.config.logging import get_logger
+from src.knowledge.document_processor import (
+    ExtractionResult,
+    get_document_type,
+    get_supported_types,
+    process_document as extract_document,
+)
 
 logger = get_logger(__name__)
 
-# Supported file types
-SUPPORTED_TYPES = {"pdf", "txt", "md", "docx"}
+# Supported file types - now delegated to document_processor
+SUPPORTED_TYPES = set(get_supported_types())
 
 # Default chunking settings
 DEFAULT_CHUNK_SIZE = 500  # tokens (approx 4 chars per token)
@@ -46,81 +60,28 @@ def get_file_type(filename: str) -> Optional[str]:
 
 
 async def extract_text_from_file(file_path: str, file_type: str) -> str:
-    """Extract text content from a file.
+    """Extract text content from a file using enhanced document processor.
 
     Args:
         file_path: Path to the file
-        file_type: Type of file (pdf, txt, md, docx)
+        file_type: Type of file extension
 
     Returns:
-        Extracted text content
+        Extracted text content (includes tables in markdown format)
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
-    if file_type == "txt" or file_type == "md":
-        return await _extract_text_file(file_path)
-    elif file_type == "pdf":
-        return await _extract_pdf(file_path)
-    elif file_type == "docx":
-        return await _extract_docx(file_path)
-    else:
-        raise ValueError(f"Unsupported file type: {file_type}")
+    # Create a filename with the correct extension for type detection
+    filename = f"document.{file_type}"
 
+    # Use the enhanced document processor
+    result = await extract_document(file_path, filename)
 
-async def _extract_text_file(file_path: str) -> str:
-    """Extract text from .txt or .md file."""
-    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-        return f.read()
+    if result.error:
+        raise ValueError(f"Extraction failed: {result.error}")
 
-
-async def _extract_pdf(file_path: str) -> str:
-    """Extract text from PDF file using pypdf."""
-    try:
-        from pypdf import PdfReader
-
-        reader = PdfReader(file_path)
-        text_parts = []
-
-        for page_num, page in enumerate(reader.pages):
-            page_text = page.extract_text()
-            if page_text:
-                text_parts.append(f"[Page {page_num + 1}]\n{page_text}")
-
-        return "\n\n".join(text_parts)
-
-    except ImportError:
-        logger.warning("pypdf not installed, trying alternative PDF extraction")
-        # Fallback: try pymupdf
-        try:
-            import fitz  # PyMuPDF
-
-            doc = fitz.open(file_path)
-            text_parts = []
-            for page_num, page in enumerate(doc):
-                text_parts.append(f"[Page {page_num + 1}]\n{page.get_text()}")
-            doc.close()
-            return "\n\n".join(text_parts)
-        except ImportError:
-            raise ImportError(
-                "Neither pypdf nor pymupdf is installed. "
-                "Install with: pip install pypdf or pip install pymupdf"
-            )
-
-
-async def _extract_docx(file_path: str) -> str:
-    """Extract text from DOCX file."""
-    try:
-        from docx import Document
-
-        doc = Document(file_path)
-        paragraphs = [para.text for para in doc.paragraphs if para.text.strip()]
-        return "\n\n".join(paragraphs)
-
-    except ImportError:
-        raise ImportError(
-            "python-docx is not installed. Install with: pip install python-docx"
-        )
+    return result.text
 
 
 def chunk_text(
@@ -307,14 +268,24 @@ async def process_document(
     filename: str,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+    include_image_descriptions: bool = False,
 ) -> ChunkingResult:
     """Process a document: extract text and chunk it.
+
+    Uses enhanced document processor that supports:
+    - PDF with tables, images, and OCR for scanned documents
+    - DOCX with tables and images
+    - PPTX with slides and speaker notes
+    - Excel/CSV as markdown tables
+    - Images with OCR
+    - HTML, TXT, Markdown
 
     Args:
         file_path: Path to the file
         filename: Original filename
         chunk_size: Target chunk size in tokens
         chunk_overlap: Overlap between chunks in tokens
+        include_image_descriptions: Whether to generate AI descriptions for images
 
     Returns:
         ChunkingResult with chunks and metadata
@@ -326,12 +297,34 @@ async def process_document(
             chunks=[],
             total_chars=0,
             file_type="unknown",
-            error=f"Unsupported file type. Supported: {', '.join(SUPPORTED_TYPES)}",
+            error=f"Unsupported file type. Supported: {', '.join(sorted(SUPPORTED_TYPES))}",
         )
 
     try:
-        # Extract text
-        text = await extract_text_from_file(file_path, file_type)
+        # Use enhanced document processor
+        result = await extract_document(file_path, filename)
+
+        if result.error:
+            return ChunkingResult(
+                chunks=[],
+                total_chars=0,
+                file_type=file_type,
+                error=result.error,
+            )
+
+        text = result.text
+
+        # Optionally add image descriptions to the text
+        if include_image_descriptions and result.images:
+            from src.knowledge.document_processor import describe_images_with_llm
+            images_with_desc = await describe_images_with_llm(result.images)
+            image_texts = []
+            for i, img in enumerate(images_with_desc):
+                if img.description:
+                    page_info = f" (Page {img.page_number})" if img.page_number else ""
+                    image_texts.append(f"[Image {i + 1}{page_info}]: {img.description}")
+            if image_texts:
+                text = text + "\n\n## Extracted Images\n\n" + "\n".join(image_texts)
 
         if not text.strip():
             return ChunkingResult(
@@ -347,6 +340,25 @@ async def process_document(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             source_filename=filename,
+        )
+
+        # Add extraction metadata to chunks
+        for chunk in chunks:
+            chunk.metadata["page_count"] = result.page_count
+            chunk.metadata["word_count"] = result.word_count
+            chunk.metadata["has_tables"] = len(result.tables) > 0
+            chunk.metadata["has_images"] = len(result.images) > 0
+            chunk.metadata["has_ocr_content"] = result.has_ocr_content
+
+        logger.info(
+            "document_processed",
+            filename=filename,
+            file_type=file_type,
+            chunks=len(chunks),
+            total_chars=len(text),
+            tables=len(result.tables),
+            images=len(result.images),
+            has_ocr=result.has_ocr_content,
         )
 
         return ChunkingResult(

@@ -563,6 +563,12 @@ class KnowledgeDocumentModel(Base):
     )
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Document metadata
+    tags: Mapped[List[str]] = mapped_column(ARRAY(String), nullable=False, default=[])
+    category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    author: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    custom_metadata: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default={})
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -576,6 +582,48 @@ class KnowledgeDocumentModel(Base):
     def __repr__(self) -> str:
         """String representation."""
         return f"<KnowledgeDocumentModel(id={self.id!r}, filename={self.filename!r}, status={self.status!r})>"
+
+
+class DocumentTagModel(Base):
+    """SQLAlchemy model for document tag autocomplete suggestions.
+
+    Stores unique tags used across documents in a knowledge base
+    for autocomplete functionality.
+    """
+
+    __tablename__ = "document_tags"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Reference to knowledge base
+    knowledge_base_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Tag info
+    tag: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    usage_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<DocumentTagModel(kb_id={self.knowledge_base_id!r}, tag={self.tag!r}, count={self.usage_count})>"
 
 class SkillModel(Base):
     """SQLAlchemy model for skills table.
@@ -715,3 +763,127 @@ class SkillExecutionModel(Base):
     def __repr__(self) -> str:
         """String representation."""
         return f"<SkillExecutionModel(skill_id={self.skill_id!r}, success={self.success})>"
+
+
+class WorkflowApprovalModel(Base):
+    """SQLAlchemy model for workflow approval requests.
+
+    Tracks human approval gates in workflow executions.
+    Used with Temporal signals to pause and resume workflows.
+    """
+
+    __tablename__ = "workflow_approvals"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Workflow execution context
+    workflow_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    execution_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    step_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    temporal_workflow_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Approval details
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    context: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default={})
+
+    # Who can approve (user IDs, emails, or role patterns like "role:admin")
+    approvers: Mapped[List[str]] = mapped_column(ARRAY(String), nullable=False, default=[])
+    required_approvals: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    # Status: pending, approved, rejected, expired
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", index=True
+    )
+
+    # Approval tracking
+    approvals_received: Mapped[List[Dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=[]
+    )
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Timeout
+    timeout_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    responded_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # User tracking
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    responded_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<WorkflowApprovalModel(id={self.id!r}, workflow={self.workflow_id!r}, status={self.status!r})>"
+
+
+class WorkflowScheduleModel(Base):
+    """SQLAlchemy model for workflow schedules.
+
+    Tracks cron-based scheduled executions of workflows.
+    Integrates with Temporal Schedules for reliable execution.
+    """
+
+    __tablename__ = "workflow_schedules"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Reference to workflow
+    workflow_id: Mapped[str] = mapped_column(
+        String(100), ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Owner
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Schedule configuration
+    cron_expression: Mapped[str] = mapped_column(String(100), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(100), nullable=False, default="UTC")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Input for scheduled runs
+    input_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    context_json: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default={})
+
+    # Temporal integration
+    temporal_schedule_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Tracking
+    next_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    run_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<WorkflowScheduleModel(id={self.id!r}, workflow={self.workflow_id!r}, cron={self.cron_expression!r})>"

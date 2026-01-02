@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X, Bot, Check, Sparkles, Loader2, GitBranch, Split, Plus, Trash2, ChevronRight, Layers } from "lucide-react";
+import { X, Bot, Check, Sparkles, Loader2, GitBranch, Split, Plus, Trash2, ChevronRight, Layers, RefreshCw, Hash, ListOrdered, Target } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { AgentCreationSheet } from "@/components/agents/agent-creation-sheet";
-import type { CanvasNode, AgentNodeData, TriggerNodeData, ConditionalNodeData, ParallelNodeData } from "@/lib/workflow-canvas/types";
+import type { CanvasNode, AgentNodeData, TriggerNodeData, ConditionalNodeData, ParallelNodeData, LoopNodeData, LoopMode } from "@/lib/workflow-canvas/types";
 import type { Agent } from "@/types/agent";
 import type { SuggestedAgent } from "@/types/workflow";
 
@@ -67,6 +67,16 @@ export function NodeConfigPanel({
     return (
       <ParallelConfigPanel
         data={node.data as ParallelNodeData}
+        agents={agents}
+        onClose={onClose}
+      />
+    );
+  }
+
+  if (node.type === "loop") {
+    return (
+      <LoopConfigPanel
+        data={node.data as LoopNodeData}
         agents={agents}
         onClose={onClose}
       />
@@ -671,6 +681,257 @@ function ParallelConfigPanel({
             All branches execute simultaneously. The workflow waits for all to complete
             (or just the first, depending on strategy) before proceeding.
           </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const LOOP_MODE_OPTIONS: { value: LoopMode; label: string; description: string; icon: React.ReactNode }[] = [
+  { value: "count", label: "Count", description: "Run a fixed number of times", icon: <Hash className="h-4 w-4" /> },
+  { value: "foreach", label: "For Each", description: "Iterate over a collection", icon: <ListOrdered className="h-4 w-4" /> },
+  { value: "until", label: "Until", description: "Run until condition is met", icon: <Target className="h-4 w-4" /> },
+];
+
+function LoopConfigPanel({
+  data,
+  agents,
+  onClose,
+}: {
+  data: LoopNodeData;
+  agents: Agent[];
+  onClose: () => void;
+}) {
+  return (
+    <div className="w-[380px] min-w-[380px] border-l border-border bg-card flex flex-col h-full overflow-hidden">
+      <div className="flex items-center justify-between p-4 border-b border-border shrink-0">
+        <div className="flex items-center gap-2">
+          <RefreshCw className="h-5 w-5 text-cyan-500" />
+          <h2 className="font-semibold">Loop Step</h2>
+        </div>
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClose}>
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        {/* Step Name */}
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Step Name</label>
+          <Input value={data.name} readOnly className="bg-muted" />
+        </div>
+
+        {/* Loop Mode */}
+        <div className="space-y-3">
+          <label className="text-sm font-medium">Loop Mode</label>
+          <div className="space-y-2">
+            {LOOP_MODE_OPTIONS.map((option) => (
+              <label
+                key={option.value}
+                className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition-colors ${
+                  data.loopMode === option.value
+                    ? "border-cyan-500/50 bg-cyan-500/5"
+                    : "hover:bg-muted/50"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="loopMode"
+                  value={option.value}
+                  checked={data.loopMode === option.value}
+                  onChange={() => {}}
+                  className="mt-0.5"
+                />
+                <div className="flex items-center gap-2 flex-1">
+                  <span className="text-cyan-500">{option.icon}</span>
+                  <div>
+                    <div className="text-sm font-medium">{option.label}</div>
+                    <div className="text-xs text-muted-foreground">{option.description}</div>
+                  </div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Count Mode: Max Iterations */}
+        {data.loopMode === "count" && (
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Max Iterations</label>
+            <Input
+              type="number"
+              value={data.maxIterations}
+              min={1}
+              max={100}
+              readOnly
+              className="bg-muted"
+            />
+          </div>
+        )}
+
+        {/* Foreach Mode: Over Expression */}
+        {data.loopMode === "foreach" && (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Iterate Over</label>
+              <Textarea
+                value={data.over || ""}
+                placeholder='["item1", "item2", "item3"] or ${steps.X.output}'
+                readOnly
+                rows={2}
+                className="bg-muted font-mono text-xs"
+              />
+              <p className="text-xs text-muted-foreground">
+                JSON array, template variable, or comma-separated values
+              </p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Item Variable Name</label>
+              <Input
+                value={data.itemVariable || "item"}
+                readOnly
+                className="bg-muted font-mono"
+              />
+              <p className="text-xs text-muted-foreground">
+                Access via {"${loop.item}"} in step inputs
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Until Mode: Exit Condition */}
+        {data.loopMode === "until" && (
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Exit Condition</label>
+            <Textarea
+              value={data.exitCondition || ""}
+              placeholder='${previous} contains "done"'
+              readOnly
+              rows={2}
+              className="bg-muted font-mono text-xs"
+            />
+            <p className="text-xs text-muted-foreground">
+              Loop exits when this evaluates to &quot;true&quot;, &quot;done&quot;, or &quot;complete&quot;
+            </p>
+          </div>
+        )}
+
+        {/* Inner Steps Configuration */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium">Loop Steps</label>
+            <Badge variant="secondary" className="text-xs">
+              {data.innerSteps.length} step{data.innerSteps.length !== 1 ? "s" : ""}
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            These steps execute in each iteration. All must complete before the next iteration.
+          </p>
+
+          {/* Step list */}
+          <div className="space-y-2">
+            {data.innerSteps.map((step, index) => (
+              <div key={step.id} className="p-3 rounded border bg-muted/50 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Bot className={`h-4 w-4 ${step.agentId ? "text-cyan-500" : "text-gray-400"}`} />
+                    <span className="text-sm font-medium">
+                      {step.agentName || `Step ${index + 1}`}
+                    </span>
+                  </div>
+                  <Button variant="ghost" size="icon" className="h-6 w-6">
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+
+                {/* Agent selector */}
+                {!step.agentId && (
+                  <Select>
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue placeholder="Select agent..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {agents.map((agent) => (
+                        <SelectItem key={agent.id} value={agent.id}>
+                          <div className="flex items-center gap-2">
+                            <Bot className="h-3 w-3" />
+                            <span>{agent.name}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+
+                {/* Input template */}
+                <div className="text-xs text-muted-foreground font-mono truncate">
+                  Input: {step.input || "${user_input}"}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Add step button */}
+          <Button variant="outline" size="sm" className="w-full">
+            <Plus className="h-4 w-4 mr-2" />
+            Add Step
+          </Button>
+        </div>
+
+        {/* Advanced Options */}
+        <div className="space-y-3">
+          <label className="text-sm font-medium">Advanced Options</label>
+
+          {/* Break Condition */}
+          <div className="space-y-2">
+            <label className="text-xs text-muted-foreground">Break Condition (Optional)</label>
+            <Input
+              value={data.breakCondition || ""}
+              placeholder="Exit loop early when..."
+              readOnly
+              className="bg-muted font-mono text-xs"
+            />
+          </div>
+
+          {/* Continue Condition */}
+          <div className="space-y-2">
+            <label className="text-xs text-muted-foreground">Continue Condition (Optional)</label>
+            <Input
+              value={data.continueCondition || ""}
+              placeholder="Skip iteration when..."
+              readOnly
+              className="bg-muted font-mono text-xs"
+            />
+          </div>
+
+          {/* Collect Results Toggle */}
+          <label className="flex items-center gap-3 p-3 rounded border cursor-pointer">
+            <input
+              type="checkbox"
+              checked={data.collectResults}
+              onChange={() => {}}
+              className="h-4 w-4"
+            />
+            <div>
+              <div className="text-sm font-medium">Collect Results</div>
+              <div className="text-xs text-muted-foreground">
+                Store all iteration outputs in an array
+              </div>
+            </div>
+          </label>
+        </div>
+
+        {/* Loop Variables Reference */}
+        <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+          <div className="text-xs text-cyan-600 font-medium mb-2">Loop Variables</div>
+          <div className="space-y-1 text-xs font-mono text-muted-foreground">
+            <div><span className="text-cyan-600">{"${loop.index}"}</span> - Current iteration (1-based)</div>
+            <div><span className="text-cyan-600">{"${loop.item}"}</span> - Current item (foreach)</div>
+            <div><span className="text-cyan-600">{"${loop.previous}"}</span> - Last iteration output</div>
+            <div><span className="text-cyan-600">{"${loop.total}"}</span> - Total iterations</div>
+            <div><span className="text-cyan-600">{"${loop.first}"}</span> - Is first iteration</div>
+            <div><span className="text-cyan-600">{"${loop.last}"}</span> - Is last iteration</div>
+          </div>
         </div>
       </div>
     </div>

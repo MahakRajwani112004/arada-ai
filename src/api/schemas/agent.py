@@ -94,7 +94,10 @@ class OrchestratorConfigSchema(BaseModel):
     """API schema for orchestrator config."""
 
     mode: str = "llm_driven"  # llm_driven, workflow, hybrid
-    available_agents: List[AgentReferenceSchema] = []
+    auto_discover: bool = False  # If True, automatically discover all available agents
+    exclude_agent_types: List[str] = ["OrchestratorAgent"]  # Agent types to exclude when auto_discover is True
+    exclude_agent_ids: List[str] = []  # Specific agent IDs to exclude when auto_discover is True
+    available_agents: List[AgentReferenceSchema] = []  # Ignored if auto_discover is True
     workflow_definition: Optional[str] = None
     default_aggregation: str = "all"  # first, all, vote, merge, best
     max_parallel: int = 5

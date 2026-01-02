@@ -230,6 +230,9 @@ def _to_agent_config(request: CreateAgentRequest) -> AgentConfig:
     if request.orchestrator_config:
         orchestrator_config = OrchestratorConfig(
             mode=OrchestratorMode(request.orchestrator_config.mode),
+            auto_discover=request.orchestrator_config.auto_discover,
+            exclude_agent_types=request.orchestrator_config.exclude_agent_types,
+            exclude_agent_ids=request.orchestrator_config.exclude_agent_ids,
             available_agents=[
                 AgentReference(
                     agent_id=a.agent_id,
@@ -425,6 +428,9 @@ def _config_to_detail_response(config: AgentConfig) -> AgentDetailResponse:
     if config.orchestrator_config:
         orchestrator_config = OrchestratorConfigSchema(
             mode=config.orchestrator_config.mode.value,
+            auto_discover=config.orchestrator_config.auto_discover,
+            exclude_agent_types=config.orchestrator_config.exclude_agent_types,
+            exclude_agent_ids=config.orchestrator_config.exclude_agent_ids,
             available_agents=[
                 AgentReferenceSchema(
                     agent_id=a.agent_id,

@@ -48,7 +48,10 @@ import {
   useDocuments,
   useUploadDocumentsBatch,
   useDeleteDocument,
+  knowledgeKeys,
 } from "@/lib/hooks/use-knowledge";
+import { useQueryClient } from "@tanstack/react-query";
+import type { KnowledgeDocument } from "@/types/knowledge";
 import { formatDistanceToNow } from "date-fns";
 
 function DetailSkeleton() {
@@ -76,6 +79,7 @@ function DetailSkeleton() {
 export default function KnowledgeBaseDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const kbId = params.id as string;
 
   const { data: kb, isLoading: kbLoading } = useKnowledgeBase(kbId);
@@ -121,6 +125,11 @@ export default function KnowledgeBaseDetailPage() {
     } finally {
       setDeletingDocId(null);
     }
+  };
+
+  const handleDocumentUpdate = (_doc: KnowledgeDocument) => {
+    // Invalidate queries to refresh the list with updated metadata
+    queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(kbId) });
   };
 
   if (kbLoading) {
@@ -284,7 +293,9 @@ export default function KnowledgeBaseDetailPage() {
           ) : (
             <DocumentList
               documents={docsData?.documents ?? []}
+              knowledgeBaseId={kbId}
               onDelete={handleDeleteDoc}
+              onUpdate={handleDocumentUpdate}
               isDeleting={deletingDocId}
             />
           )}

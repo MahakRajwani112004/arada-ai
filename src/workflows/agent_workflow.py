@@ -605,6 +605,11 @@ class AgentWorkflow:
         iterations = 0
         validation_retries = 0
 
+        # Track successfully completed action tools to prevent duplicate calls
+        # These are tools that perform actions (send email, create event) vs. query tools
+        completed_action_tools: Set[str] = set()
+        ACTION_TOOL_KEYWORDS = ["send", "create", "update", "delete", "write", "post"]
+
         # Get tool definitions for enabled tools
         tool_defs_result: GetToolDefinitionsOutput = await workflow.execute_activity(
             get_tool_definitions,
@@ -752,8 +757,20 @@ class AgentWorkflow:
                 original_name = tool_name_map.get(tc.name, tc.name)
                 workflow.logger.info(f"Executing tool: {original_name} (sanitized: {tc.name}) with args: {tc.arguments}")
 
+                # Check if this is an action tool that was already completed
+                is_action_tool = any(kw in original_name.lower() for kw in ACTION_TOOL_KEYWORDS)
+                if is_action_tool and original_name in completed_action_tools:
+                    workflow.logger.warning(
+                        f"Skipping duplicate action tool call: {original_name} (already completed successfully)"
+                    )
+                    tool_result = {
+                        "success": True,
+                        "output": f"Action '{original_name}' was already completed successfully in this session. No need to call again.",
+                        "error": None,
+                        "skipped_duplicate": True,
+                    }
                 # Check if tool is enabled (use resolved name)
-                if original_name not in resolved_enabled_tools:
+                elif original_name not in resolved_enabled_tools:
                     tool_result = {"error": f"Tool {original_name} not enabled"}
                 else:
                     result: ToolExecutionOutput = await workflow.execute_activity(
@@ -770,6 +787,10 @@ class AgentWorkflow:
                         "output": result.output,
                         "error": result.error,
                     }
+                    # Track successful action tool calls
+                    if is_action_tool and result.success:
+                        completed_action_tools.add(original_name)
+                        workflow.logger.info(f"Action tool completed: {original_name}")
 
                 # Sanitize tool result before LLM consumption (prevent injection via tool results)
                 sanitized_result: SanitizeToolResultOutput = await workflow.execute_activity(
@@ -869,6 +890,10 @@ class AgentWorkflow:
         tool_calls_made = []
         iterations = 0
         validation_retries = 0
+
+        # Track successfully completed action tools to prevent duplicate calls
+        completed_action_tools: Set[str] = set()
+        ACTION_TOOL_KEYWORDS = ["send", "create", "update", "delete", "write", "post"]
 
         messages: List[Dict[str, Any]] = [{"role": "system", "content": augmented_prompt}]
         messages.extend(input.conversation_history)
@@ -984,7 +1009,19 @@ class AgentWorkflow:
                 # Map sanitized name back to original (resolved) name
                 original_name = tool_name_map.get(tc.name, tc.name)
 
-                if original_name not in resolved_enabled_tools:
+                # Check if this is an action tool that was already completed
+                is_action_tool = any(kw in original_name.lower() for kw in ACTION_TOOL_KEYWORDS)
+                if is_action_tool and original_name in completed_action_tools:
+                    workflow.logger.warning(
+                        f"Skipping duplicate action tool call: {original_name} (already completed successfully)"
+                    )
+                    tool_result = {
+                        "success": True,
+                        "output": f"Action '{original_name}' was already completed successfully in this session.",
+                        "error": None,
+                        "skipped_duplicate": True,
+                    }
+                elif original_name not in resolved_enabled_tools:
                     tool_result = {"error": f"Tool {original_name} not enabled"}
                 else:
                     result: ToolExecutionOutput = await workflow.execute_activity(
@@ -993,6 +1030,10 @@ class AgentWorkflow:
                         start_to_close_timeout=timedelta(seconds=60),
                     )
                     tool_result = {"success": result.success, "output": result.output, "error": result.error}
+                    # Track successful action tool calls
+                    if is_action_tool and result.success:
+                        completed_action_tools.add(original_name)
+                        workflow.logger.info(f"Action tool completed: {original_name}")
 
                 # Sanitize tool result before LLM consumption
                 sanitized_result: SanitizeToolResultOutput = await workflow.execute_activity(

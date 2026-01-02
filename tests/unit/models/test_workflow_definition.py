@@ -7,6 +7,7 @@ from src.models.workflow_definition import (
     StepType,
     ErrorHandling,
     AggregationType,
+    LoopMode,
     ParallelBranch,
     LoopInnerStep,
     WorkflowStep,
@@ -175,6 +176,106 @@ class TestWorkflowStep:
                 type=StepType.LOOP,
             )
         assert "loop step requires inner steps" in str(exc_info.value)
+
+    def test_loop_step_foreach_mode(self):
+        """Test creating a loop step with foreach mode."""
+        step = WorkflowStep(
+            id="loop-foreach",
+            type=StepType.LOOP,
+            loop_mode=LoopMode.FOREACH,
+            over='["item1", "item2", "item3"]',
+            item_variable="current",
+            steps=[
+                LoopInnerStep(id="inner-1", agent_id="agent-1"),
+            ],
+        )
+
+        assert step.type == StepType.LOOP
+        assert step.loop_mode == LoopMode.FOREACH
+        assert step.over == '["item1", "item2", "item3"]'
+        assert step.item_variable == "current"
+
+    def test_loop_step_foreach_requires_over(self):
+        """Test that foreach loop mode requires 'over' expression."""
+        with pytest.raises(ValidationError) as exc_info:
+            WorkflowStep(
+                id="loop-foreach",
+                type=StepType.LOOP,
+                loop_mode=LoopMode.FOREACH,
+                steps=[
+                    LoopInnerStep(id="inner-1", agent_id="agent-1"),
+                ],
+            )
+        assert "foreach loop mode requires 'over' expression" in str(exc_info.value)
+
+    def test_loop_step_until_mode(self):
+        """Test creating a loop step with until mode."""
+        step = WorkflowStep(
+            id="loop-until",
+            type=StepType.LOOP,
+            loop_mode=LoopMode.UNTIL,
+            exit_condition='${previous} contains "done"',
+            max_iterations=10,
+            steps=[
+                LoopInnerStep(id="inner-1", agent_id="agent-1"),
+            ],
+        )
+
+        assert step.type == StepType.LOOP
+        assert step.loop_mode == LoopMode.UNTIL
+        assert step.exit_condition == '${previous} contains "done"'
+
+    def test_loop_step_until_requires_exit_condition(self):
+        """Test that until loop mode requires exit_condition."""
+        with pytest.raises(ValidationError) as exc_info:
+            WorkflowStep(
+                id="loop-until",
+                type=StepType.LOOP,
+                loop_mode=LoopMode.UNTIL,
+                steps=[
+                    LoopInnerStep(id="inner-1", agent_id="agent-1"),
+                ],
+            )
+        assert "until loop mode requires 'exit_condition'" in str(exc_info.value)
+
+    def test_loop_step_with_break_and_continue(self):
+        """Test creating a loop step with break and continue conditions."""
+        step = WorkflowStep(
+            id="loop-complex",
+            type=StepType.LOOP,
+            loop_mode=LoopMode.COUNT,
+            max_iterations=5,
+            break_condition='${loop.index} > 3 and ${steps.inner-1.output} contains "stop"',
+            continue_condition='${loop.item} == "skip"',
+            collect_results=True,
+            steps=[
+                LoopInnerStep(id="inner-1", agent_id="agent-1"),
+            ],
+        )
+
+        assert step.break_condition is not None
+        assert step.continue_condition is not None
+        assert step.collect_results is True
+
+    def test_loop_step_max_iterations_limit(self):
+        """Test that max_iterations has a limit of 100."""
+        # Valid - at limit
+        step = WorkflowStep(
+            id="loop-max",
+            type=StepType.LOOP,
+            max_iterations=100,
+            steps=[LoopInnerStep(id="inner-1", agent_id="agent-1")],
+        )
+        assert step.max_iterations == 100
+
+        # Invalid - over limit
+        with pytest.raises(ValidationError):
+            WorkflowStep(
+                id="loop-over",
+                type=StepType.LOOP,
+                max_iterations=101,
+                steps=[LoopInnerStep(id="inner-1", agent_id="agent-1")],
+            )
 
     def test_on_error_validation(self):
         """Test on_error field validation."""

@@ -2,7 +2,7 @@
 
 // ==================== Step Types ====================
 
-export type StepType = "agent" | "parallel" | "conditional" | "loop" | "tool";
+export type StepType = "agent" | "parallel" | "conditional" | "loop" | "tool" | "approval";
 
 export type AggregationType = "all" | "first" | "merge" | "best";
 
@@ -29,9 +29,22 @@ export interface WorkflowStep {
   default?: string;
 
   // Loop step fields
+  loop_mode?: "count" | "foreach" | "until";
   max_iterations?: number;
+  over?: string; // Expression to iterate over (foreach mode)
+  item_variable?: string; // Variable name for current item
   exit_condition?: string;
+  break_condition?: string; // Break condition
+  continue_condition?: string; // Continue condition
+  collect_results?: boolean; // Whether to collect all iteration results
   steps?: Record<string, unknown>[];
+
+  // Approval step fields
+  approval_message?: string;
+  approvers?: string[];
+  required_approvals?: number;
+  approval_timeout_seconds?: number;
+  on_reject?: OnErrorAction;
 }
 
 export interface WorkflowDefinition {
@@ -106,15 +119,17 @@ export interface CopyWorkflowRequest {
 
 export type ExecutionStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
 
-// Status values match backend (lowercase)
-export type StepExecutionStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+// Status values match backend (uppercase)
+export type StepExecutionStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "SKIPPED";
 
 export interface StepResult {
   step_id: string;
+  step_name?: string;
   status: StepExecutionStatus;
   output?: unknown;
   error?: string;
   duration_ms?: number;
+  metadata?: Record<string, unknown>;
 }
 
 // Alias for backwards compatibility (same as StepResult)

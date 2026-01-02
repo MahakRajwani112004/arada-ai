@@ -8,6 +8,7 @@ from uuid import uuid4
 from src.api.schemas.workflows import StepExecutionResult
 from src.config.logging import get_logger
 from src.models.workflow_definition import (
+    LoopMode,
     StepType,
     WorkflowDefinition,
     WorkflowStep,
@@ -84,16 +85,20 @@ class WorkflowExecutor:
                 f"Invalid workflow definition: {e}",
             )
 
+        # Create Temporal workflow ID
+        temporal_wf_id = f"workflow-{workflow_id}-{uuid4().hex[:8]}"
+
         # Initialize context
         self._context = context or {}
         self._context["user_input"] = user_input
         self._context["user_id"] = user_id
         self._context["session_id"] = session_id
         self._context["conversation_history"] = conversation_history or []
+        self._context["workflow_id"] = workflow_id
+        self._context["temporal_workflow_id"] = temporal_wf_id
         self._step_results = {}
 
         # Create execution record
-        temporal_wf_id = f"workflow-{workflow_id}-{uuid4().hex[:8]}"
         try:
             execution_id = await self.workflow_repo.create_execution(
                 workflow_id=workflow_id,
@@ -108,6 +113,9 @@ class WorkflowExecutor:
         except Exception as e:
             logger.warning("execution_record_creation_failed", error=str(e))
             execution_id = f"execution-{uuid4().hex[:12]}"  # Fallback ID
+
+        # Add execution_id to context for approval steps
+        self._context["execution_id"] = execution_id
 
         # Execute workflow steps
         step_results: List[StepExecutionResult] = []
@@ -134,15 +142,31 @@ class WorkflowExecutor:
                 step_end = datetime.now(timezone.utc)
                 duration_ms = int((step_end - step_start).total_seconds() * 1000)
 
+                # Determine step status
+                step_status = "completed" if result.get("success") else "failed"
+                if result.get("status") == "waiting_for_approval":
+                    step_status = "waiting_for_approval"
+
                 step_result = StepExecutionResult(
                     step_id=current_step.id,
-                    status="completed" if result.get("success") else "failed",
+                    status=step_status,
                     output=result.get("output"),
                     error=result.get("error"),
                     duration_ms=duration_ms,
                 )
                 step_results.append(step_result)
                 self._step_results[current_step.id] = result
+
+                # Handle waiting for approval - pause workflow
+                if result.get("status") == "waiting_for_approval":
+                    status = "waiting_for_approval"
+                    final_output = result.get("output")
+                    logger.info(
+                        "workflow_waiting_for_approval",
+                        step_id=current_step.id,
+                        approval_id=result.get("approval_id"),
+                    )
+                    break
 
                 # Check for error handling
                 if not result.get("success"):
@@ -231,6 +255,8 @@ class WorkflowExecutor:
             return await self._execute_conditional_step(step, workflow)
         elif step.type == StepType.LOOP:
             return await self._execute_loop_step(step, user_input, user_id, session_id)
+        elif step.type == StepType.APPROVAL:
+            return await self._execute_approval_step(step, user_input, user_id)
         else:
             return {"success": False, "error": f"Unknown step type: {step.type}"}
 
@@ -434,20 +460,67 @@ class WorkflowExecutor:
         user_id: str,
         session_id: Optional[str],
     ) -> Dict[str, Any]:
-        """Execute a loop step that iterates until a condition is met."""
+        """Execute a loop step with support for count, foreach, and until modes.
+
+        Loop context variables available during execution:
+        - ${loop.index}: Current iteration (1-based)
+        - ${loop.item}: Current item (foreach mode only)
+        - ${loop.previous}: Output from previous iteration
+        - ${loop.total}: Total iterations (foreach mode) or max_iterations (count mode)
+        - ${loop.first}: True if first iteration
+        - ${loop.last}: True if last iteration (foreach mode only)
+        """
         if not step.steps:
             return {"success": False, "error": "Loop step has no inner steps"}
 
-        outputs = []
+        outputs: List[str] = []
+        iteration_results: List[Dict[str, Any]] = []
+        loop_mode = step.loop_mode or LoopMode.COUNT
+
+        # Parse items for foreach mode
+        items: List[Any] = []
+        if loop_mode == LoopMode.FOREACH and step.over:
+            items = self._parse_loop_items(step.over, user_input)
+            if not items:
+                logger.warning("loop_empty_collection", step_id=step.id, over=step.over)
+                return {
+                    "success": True,
+                    "output": "",
+                    "loop_results": [],
+                }
+
+        # Determine max iterations
+        max_iters = len(items) if loop_mode == LoopMode.FOREACH else step.max_iterations
+        total = len(items) if loop_mode == LoopMode.FOREACH else step.max_iterations
         iteration = 0
 
-        while iteration < step.max_iterations:
+        while iteration < max_iters:
             iteration += 1
 
-            # Execute all inner steps
+            # Set up loop context
+            current_item = items[iteration - 1] if items else None
+            loop_context = {
+                "index": iteration,
+                "item": current_item,
+                "previous": outputs[-1] if outputs else "",
+                "total": total,
+                "first": iteration == 1,
+                "last": iteration == max_iters if loop_mode == LoopMode.FOREACH else False,
+            }
+            self._context["loop"] = loop_context
+
+            # Check continue condition (skip this iteration)
+            if step.continue_condition:
+                continue_value = self._resolve_template(step.continue_condition, user_input)
+                if continue_value.lower() in ("true", "skip", "continue", "1"):
+                    logger.debug("loop_continue", step_id=step.id, iteration=iteration)
+                    continue
+
+            # Execute all inner steps for this iteration
+            iteration_output = ""
             for inner_step in step.steps:
                 inner_workflow_step = WorkflowStep(
-                    id=inner_step.id,
+                    id=f"{inner_step.id}-iter{iteration}",
                     type=StepType.AGENT,
                     agent_id=inner_step.agent_id,
                     input=inner_step.input,
@@ -457,23 +530,229 @@ class WorkflowExecutor:
                     inner_workflow_step, user_input, user_id, session_id
                 )
                 if not result.get("success"):
+                    # Store partial results before failure
+                    if step.collect_results:
+                        return {
+                            "success": False,
+                            "error": result.get("error"),
+                            "loop_results": iteration_results,
+                            "failed_iteration": iteration,
+                        }
                     return result
-                self._step_results[inner_step.id] = result
-                outputs.append(result.get("output", ""))
 
-            # Check exit condition
-            if step.exit_condition:
-                exit_value = self._resolve_template(step.exit_condition, "")
-                if exit_value.lower() in ("true", "done", "complete", "exit"):
+                # Store step result
+                self._step_results[inner_step.id] = result
+                iteration_output = result.get("output", "")
+
+            outputs.append(iteration_output)
+            iteration_results.append({
+                "iteration": iteration,
+                "item": current_item,
+                "output": iteration_output,
+            })
+
+            # Check break condition (exit loop early)
+            if step.break_condition:
+                break_value = self._resolve_template(step.break_condition, user_input)
+                if break_value.lower() in ("true", "break", "stop", "1"):
+                    logger.debug("loop_break", step_id=step.id, iteration=iteration)
                     break
 
-        return {
-            "success": True,
-            "output": outputs[-1] if outputs else "",
+            # Check exit condition (for until mode and backwards compatibility)
+            if step.exit_condition:
+                exit_value = self._resolve_template(step.exit_condition, user_input)
+                if exit_value.lower() in ("true", "done", "complete", "exit", "1"):
+                    logger.debug("loop_exit_condition", step_id=step.id, iteration=iteration)
+                    break
+
+        # Clear loop context
+        self._context.pop("loop", None)
+
+        # Build final output
+        if step.collect_results:
+            # Return structured results
+            return {
+                "success": True,
+                "output": outputs[-1] if outputs else "",
+                "loop_results": iteration_results,
+                "iterations_completed": iteration,
+            }
+        else:
+            # Return just the last output
+            return {
+                "success": True,
+                "output": outputs[-1] if outputs else "",
+            }
+
+    async def _execute_approval_step(
+        self,
+        step: WorkflowStep,
+        user_input: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """Execute an approval step that waits for human approval.
+
+        This step creates an approval request and waits for a human to approve/reject.
+
+        In Temporal mode:
+        - Creates an approval record in the database
+        - Uses Temporal signals to wait for the approval response
+        - Resumes workflow when approved or handles rejection
+
+        In direct execution mode (testing):
+        - Returns a "waiting_for_approval" status
+        - Caller must poll for approval status
+        """
+        # Validate approval configuration
+        if not step.approvers:
+            return {
+                "success": False,
+                "error": "Approval step has no approvers configured",
+            }
+
+        # Resolve approval message template
+        message = self._resolve_template(
+            step.approval_message or "Please approve this workflow step.",
+            user_input
+        )
+
+        # Build context for the approval
+        approval_context = {
+            "user_input": user_input,
+            "triggered_by": user_id,
+            "previous_steps": {
+                step_id: result.get("output", "")
+                for step_id, result in self._step_results.items()
+            },
         }
 
+        # Get execution context
+        execution_id = self._context.get("execution_id", "")
+        workflow_id = self._context.get("workflow_id", "")
+        temporal_workflow_id = self._context.get("temporal_workflow_id", "")
+
+        if self.temporal_client:
+            # Temporal mode: Create approval and wait for signal
+            try:
+                from datetime import timedelta
+                from src.storage.approval_repository import ApprovalRepository
+                from src.storage.database import get_async_session
+
+                # Calculate timeout
+                timeout_at = None
+                if step.approval_timeout_seconds:
+                    from datetime import datetime, timezone
+                    timeout_at = datetime.now(timezone.utc) + timedelta(
+                        seconds=step.approval_timeout_seconds
+                    )
+
+                # Create approval record
+                async with get_async_session() as session:
+                    approval_repo = ApprovalRepository(session, user_id=user_id)
+                    approval = await approval_repo.create(
+                        workflow_id=workflow_id,
+                        execution_id=execution_id,
+                        step_id=step.id,
+                        temporal_workflow_id=temporal_workflow_id,
+                        title=step.name or f"Approval required: {step.id}",
+                        message=message,
+                        approvers=step.approvers,
+                        required_approvals=step.required_approvals,
+                        context=approval_context,
+                        timeout_at=timeout_at,
+                        created_by=user_id,
+                    )
+                    await session.commit()
+
+                logger.info(
+                    "approval_request_created",
+                    approval_id=approval.id,
+                    step_id=step.id,
+                    approvers=step.approvers,
+                )
+
+                # Return waiting status - workflow will be resumed via signal
+                return {
+                    "success": True,
+                    "output": f"Waiting for approval: {approval.id}",
+                    "status": "waiting_for_approval",
+                    "approval_id": approval.id,
+                    "approvers": step.approvers,
+                    "required_approvals": step.required_approvals,
+                }
+
+            except Exception as e:
+                logger.error("approval_creation_failed", step_id=step.id, error=str(e))
+                return {
+                    "success": False,
+                    "error": f"Failed to create approval request: {e}",
+                }
+
+        else:
+            # Direct execution mode (testing): Auto-approve or simulate
+            logger.warning(
+                "approval_step_auto_approved",
+                step_id=step.id,
+                reason="No Temporal client available - auto-approving for testing",
+            )
+            return {
+                "success": True,
+                "output": "Approval auto-granted (testing mode)",
+                "status": "auto_approved",
+            }
+
+    def _parse_loop_items(self, over_expression: str, user_input: str) -> List[Any]:
+        """Parse the 'over' expression to get items for foreach loop.
+
+        Supports:
+        - JSON array literal: ["a", "b", "c"]
+        - Template variable: ${steps.X.output}
+        - Comma-separated string: "a, b, c"
+        """
+        import json
+
+        resolved = self._resolve_template(over_expression, user_input)
+
+        # Try parsing as JSON array
+        try:
+            parsed = json.loads(resolved)
+            if isinstance(parsed, list):
+                return parsed
+            elif isinstance(parsed, dict):
+                # If dict, iterate over values or key-value pairs
+                return list(parsed.items())
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Try splitting as comma-separated string
+        if "," in resolved:
+            return [item.strip() for item in resolved.split(",") if item.strip()]
+
+        # Try splitting by newlines
+        if "\n" in resolved:
+            return [item.strip() for item in resolved.split("\n") if item.strip()]
+
+        # Single item
+        if resolved.strip():
+            return [resolved.strip()]
+
+        return []
+
     def _resolve_template(self, template: str, user_input: str) -> str:
-        """Resolve template variables like ${user_input}, ${previous}, and ${steps.X.output}."""
+        """Resolve template variables.
+
+        Supported variables:
+        - ${user_input}: The original user input
+        - ${previous}: Output from the most recently executed step
+        - ${context.X}: Context variables
+        - ${steps.X.output}: Output from a specific step
+        - ${loop.index}: Current loop iteration (1-based)
+        - ${loop.item}: Current item in foreach loop
+        - ${loop.previous}: Output from previous iteration
+        - ${loop.total}: Total iterations
+        - ${loop.first}: True if first iteration
+        - ${loop.last}: True if last iteration
+        """
         result = template
 
         # Replace ${user_input}
@@ -486,9 +765,28 @@ class WorkflowExecutor:
             previous_output = self._step_results[last_step_id].get("output", "")
             result = result.replace("${previous}", str(previous_output) if previous_output else "")
 
-        # Replace ${context.X}
+        # Replace ${loop.X} - loop context variables
+        loop_context = self._context.get("loop", {})
+        if loop_context:
+            loop_pattern = re.compile(r"\$\{loop\.([^}]+)\}")
+            for match in loop_pattern.finditer(result):
+                var_name = match.group(1)
+                if var_name in loop_context:
+                    value = loop_context[var_name]
+                    # Handle special serialization for complex items
+                    if isinstance(value, (dict, list, tuple)):
+                        import json
+                        str_value = json.dumps(value)
+                    elif isinstance(value, bool):
+                        str_value = "true" if value else "false"
+                    else:
+                        str_value = str(value) if value is not None else ""
+                    result = result.replace(match.group(0), str_value)
+
+        # Replace ${context.X} - skip loop context as it's handled above
         for key, value in self._context.items():
-            result = result.replace(f"${{context.{key}}}", str(value))
+            if key != "loop":  # Skip loop context
+                result = result.replace(f"${{context.{key}}}", str(value))
 
         # Replace ${steps.X.output}
         step_pattern = re.compile(r"\$\{steps\.([^.]+)\.output\}")
@@ -552,6 +850,18 @@ async def validate_workflow_with_resources(
         elif step.type == StepType.LOOP and step.steps:
             for inner_step in step.steps:
                 agent_ids.add(inner_step.agent_id)
+        elif step.type == StepType.APPROVAL:
+            # Validate approval step configuration
+            if not step.approvers:
+                errors.append({
+                    "field": f"steps.{step.id}.approvers",
+                    "message": f"Approval step '{step.id}' has no approvers configured",
+                })
+            if not step.approval_message:
+                warnings.append({
+                    "field": f"steps.{step.id}.approval_message",
+                    "message": f"Approval step '{step.id}' has no custom message (will use default)",
+                })
 
     # Check if all referenced agents exist
     for agent_id in agent_ids:

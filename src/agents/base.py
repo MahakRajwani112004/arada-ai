@@ -263,12 +263,22 @@ class BaseAgent(ABC):
         """
         parts = []
 
-        # Current date/time context
+        # Current date/time context with timezone
+        import time
         now = datetime.now()
+        # Get system timezone
+        tz_name = time.tzname[time.daylight] if time.daylight else time.tzname[0]
+        # Calculate UTC offset
+        utc_offset_seconds = -time.timezone if not time.daylight else -time.altzone
+        utc_offset_hours = utc_offset_seconds // 3600
+        utc_offset_minutes = abs(utc_offset_seconds % 3600) // 60
+        utc_offset_str = f"UTC{'+' if utc_offset_hours >= 0 else ''}{utc_offset_hours:+d}:{utc_offset_minutes:02d}"
+
         parts.append(
             f"## CURRENT DATE/TIME\n"
-            f"Current date and time: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"Today is {now.strftime('%A, %B %d, %Y')}"
+            f"Current date and time: {now.strftime('%Y-%m-%d %H:%M:%S')} {tz_name} ({utc_offset_str})\n"
+            f"Today is {now.strftime('%A, %B %d, %Y')}\n"
+            f"Timezone: {tz_name} ({utc_offset_str})"
         )
 
         # Role section

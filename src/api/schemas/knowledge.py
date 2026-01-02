@@ -1,8 +1,17 @@
 """API schemas for knowledge base management."""
 from datetime import datetime
-from typing import List, Optional
+from enum import Enum
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+
+class SearchModeEnum(str, Enum):
+    """Search mode for knowledge base queries."""
+    VECTOR = "vector"  # Pure semantic search
+    BM25 = "bm25"  # Pure lexical search (with vector pre-filter)
+    HYBRID = "hybrid"  # Combined vector + BM25 with RRF
+    HYBRID_RERANK = "hybrid_rerank"  # Hybrid + cross-encoder re-ranking
 
 
 # ==================== Knowledge Base Schemas ====================
@@ -63,6 +72,11 @@ class KnowledgeDocumentResponse(BaseModel):
     error_message: Optional[str]
     created_at: datetime
     indexed_at: Optional[datetime]
+    # Metadata fields
+    tags: List[str] = []
+    category: Optional[str] = None
+    author: Optional[str] = None
+    custom_metadata: dict = {}
 
 
 class KnowledgeDocumentListResponse(BaseModel):
@@ -88,6 +102,39 @@ class BatchUploadResponse(BaseModel):
     errors: List[str]
 
 
+# ==================== Metadata Schemas ====================
+
+
+class UpdateDocumentMetadataRequest(BaseModel):
+    """Request to update document metadata."""
+
+    tags: Optional[List[str]] = Field(None, max_length=20)
+    category: Optional[str] = Field(None, max_length=100)
+    author: Optional[str] = Field(None, max_length=200)
+    custom_metadata: Optional[dict] = None
+
+
+class DocumentTagResponse(BaseModel):
+    """A tag used in the knowledge base."""
+
+    tag: str
+    usage_count: int
+
+
+class DocumentTagListResponse(BaseModel):
+    """Response containing list of tags for autocomplete."""
+
+    tags: List[DocumentTagResponse]
+    total: int
+
+
+class DocumentCategoryListResponse(BaseModel):
+    """Response containing list of categories."""
+
+    categories: List[str]
+    total: int
+
+
 # ==================== Search Schemas ====================
 
 
@@ -97,6 +144,14 @@ class SearchKnowledgeBaseRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=1000)
     top_k: int = Field(5, ge=1, le=20)
     similarity_threshold: float = Field(0.1, ge=0.0, le=1.0)
+    mode: SearchModeEnum = Field(
+        SearchModeEnum.VECTOR,
+        description="Search mode: vector (semantic), bm25 (lexical), hybrid, or hybrid_rerank"
+    )
+    rerank: bool = Field(
+        False,
+        description="Enable cross-encoder re-ranking (applies to hybrid mode)"
+    )
 
 
 class SearchResultItem(BaseModel):

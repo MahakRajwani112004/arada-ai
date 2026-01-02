@@ -39,12 +39,27 @@ export function DocumentUpload({
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
+      // Documents
       "application/pdf": [".pdf"],
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+      "application/msword": [".doc"],
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
+      "application/vnd.ms-powerpoint": [".ppt"],
+      // Spreadsheets
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+      "application/vnd.ms-excel": [".xls"],
+      "text/csv": [".csv"],
+      // Text files
       "text/plain": [".txt"],
-      "text/markdown": [".md"],
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [
-        ".docx",
-      ],
+      "text/markdown": [".md", ".markdown"],
+      "text/html": [".html", ".htm"],
+      // Images
+      "image/jpeg": [".jpg", ".jpeg"],
+      "image/png": [".png"],
+      "image/gif": [".gif"],
+      "image/bmp": [".bmp"],
+      "image/tiff": [".tiff", ".tif"],
+      "image/webp": [".webp"],
     },
     maxSize: MAX_FILE_SIZE,
     disabled: disabled || isUploading,
@@ -95,7 +110,7 @@ export function DocumentUpload({
             : "Drop files here or click to upload"}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          PDF, TXT, MD, DOCX up to {formatFileSize(MAX_FILE_SIZE)}
+          PDF, DOCX, PPTX, XLSX, CSV, TXT, MD, HTML, Images up to {formatFileSize(MAX_FILE_SIZE)}
         </p>
       </div>
 
