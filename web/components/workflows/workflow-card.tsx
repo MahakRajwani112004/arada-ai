@@ -1,156 +1,234 @@
 "use client";
 
 import Link from "next/link";
-import { MoreVertical, Pencil, Trash2, Workflow } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+  Workflow,
+  Play,
+  MoreVertical,
+  Trash2,
+  Copy,
+  Clock,
+  AlertTriangle,
+  CheckCircle2,
+  Circle,
+  Bot,
+} from "lucide-react";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
-import { WorkflowDefinitionResponse } from "@/types/workflow";
-import { useDeleteWorkflow } from "@/lib/hooks/use-workflows";
-import { toast } from "sonner";
+import { Progress } from "@/components/ui/progress";
+import type { WorkflowSummary } from "@/types/workflow";
+import { formatDistanceToNow } from "date-fns";
+
+export type WorkflowStatus = "draft" | "incomplete" | "ready";
 
 interface WorkflowCardProps {
-  workflow: WorkflowDefinitionResponse;
+  workflow: WorkflowSummary;
+  onDelete?: (id: string) => void;
+  onCopy?: (id: string) => void;
+  onRun?: (id: string) => void;
+  isBlocked?: boolean;
+  // New props for progress tracking
+  totalSteps?: number;
+  configuredSteps?: number;
+  status?: WorkflowStatus;
 }
 
-export function WorkflowCard({ workflow }: WorkflowCardProps) {
-  const deleteWorkflow = useDeleteWorkflow();
+const categoryColors: Record<string, string> = {
+  "customer-support": "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  "data-processing": "bg-green-500/10 text-green-400 border-green-500/20",
+  "content-creation": "bg-purple-500/10 text-purple-400 border-purple-500/20",
+  "sales-automation": "bg-orange-500/10 text-orange-400 border-orange-500/20",
+  "hr-onboarding": "bg-cyan-500/10 text-cyan-400 border-cyan-500/20",
+  "ai-generated": "bg-violet-500/10 text-violet-400 border-violet-500/20",
+  general: "bg-gray-500/10 text-gray-400 border-gray-500/20",
+};
 
-  const handleDelete = async () => {
-    try {
-      await deleteWorkflow.mutateAsync(workflow.id);
-      toast.success("Workflow deleted");
-    } catch {
-      // Error handled by mutation
-    }
-  };
+function getCategoryColor(category: string): string {
+  return categoryColors[category] || categoryColors.general;
+}
 
-  const stepCount = workflow.steps?.length || 0;
+function formatCategory(category: string): string {
+  return category
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+const statusConfig = {
+  draft: {
+    label: "Draft",
+    color: "bg-gray-500/10 text-gray-400 border-gray-500/20",
+    icon: Circle,
+  },
+  incomplete: {
+    label: "Incomplete",
+    color: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+    icon: AlertTriangle,
+  },
+  ready: {
+    label: "Ready",
+    color: "bg-green-500/10 text-green-400 border-green-500/20",
+    icon: CheckCircle2,
+  },
+};
+
+export function WorkflowCard({
+  workflow,
+  onDelete,
+  onCopy,
+  onRun,
+  isBlocked = false,
+  totalSteps = 0,
+  configuredSteps = 0,
+  status,
+}: WorkflowCardProps) {
+  const updatedAgo = formatDistanceToNow(new Date(workflow.updated_at), {
+    addSuffix: true,
+  });
+
+  // Determine status from props or compute from isBlocked
+  const computedStatus: WorkflowStatus = status || (isBlocked ? "incomplete" : totalSteps > 0 ? "ready" : "draft");
+  const statusInfo = statusConfig[computedStatus];
+  const StatusIcon = statusInfo.icon;
+  const progressPercent = totalSteps > 0 ? Math.round((configuredSteps / totalSteps) * 100) : 0;
 
   return (
-    <Card className="hover:border-primary/40 hover:shadow-md transition-all">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between">
+    <Link href={`/workflows/${workflow.id}`}>
+      <Card className="group h-full cursor-pointer transition-all hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5">
+        <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-md bg-primary/10">
-              <Workflow className="h-5 w-5 text-primary" />
+            <div
+              className={`flex h-10 w-10 items-center justify-center rounded-lg ${
+                isBlocked
+                  ? "bg-amber-500/10"
+                  : "bg-gradient-to-br from-purple-500/20 to-blue-500/20"
+              }`}
+            >
+              {isBlocked ? (
+                <AlertTriangle className="h-5 w-5 text-amber-400" />
+              ) : (
+                <Workflow className="h-5 w-5 text-primary" />
+              )}
             </div>
             <div>
-              <CardTitle className="text-base">
-                {workflow.name || workflow.id}
-              </CardTitle>
-              <Badge variant="outline" className="font-mono text-xs mt-1">
-                {workflow.id}
-              </Badge>
+              <h3 className="font-semibold leading-none tracking-tight">
+                {workflow.name}
+              </h3>
+              <div className="mt-1.5 flex items-center gap-2">
+                <Badge
+                  variant="outline"
+                  className={`gap-1 ${getCategoryColor(workflow.category)}`}
+                >
+                  {formatCategory(workflow.category)}
+                </Badge>
+                {workflow.is_template && (
+                  <Badge
+                    variant="outline"
+                    className="bg-yellow-500/10 text-yellow-400 border-yellow-500/20"
+                  >
+                    Template
+                  </Badge>
+                )}
+                <Badge
+                  variant="outline"
+                  className={`gap-1 ${statusInfo.color}`}
+                >
+                  <StatusIcon className="h-3 w-3" />
+                  {statusInfo.label}
+                </Badge>
+              </div>
             </div>
           </div>
-
-          <AlertDialog>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
-                  <MoreVertical className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem asChild>
-                  <Link href={`/workflows/${workflow.id}`}>
-                    <Pencil className="h-4 w-4 mr-2" />
-                    Edit
-                  </Link>
-                </DropdownMenuItem>
-                <AlertDialogTrigger asChild>
-                  <DropdownMenuItem className="text-destructive">
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
-                  </DropdownMenuItem>
-                </AlertDialogTrigger>
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete Workflow?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This will permanently delete &quot;{workflow.name || workflow.id}&quot;.
-                  This action cannot be undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={handleDelete}
-                  className="bg-destructive text-destructive-foreground"
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild onClick={(e) => e.preventDefault()}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 opacity-0 group-hover:opacity-100"
+              >
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {!isBlocked && (
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onRun?.(workflow.id);
+                  }}
                 >
-                  Delete
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
-      </CardHeader>
+                  <Play className="mr-2 h-4 w-4" />
+                  Run Workflow
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.preventDefault();
+                  onCopy?.(workflow.id);
+                }}
+              >
+                <Copy className="mr-2 h-4 w-4" />
+                Copy
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={(e) => {
+                  e.preventDefault();
+                  onDelete?.(workflow.id);
+                }}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </CardHeader>
+        <CardContent className="flex flex-col">
+          {/* Description - fixed height with ellipsis */}
+          <p className="line-clamp-2 text-sm text-muted-foreground h-10">
+            {workflow.description || "No description provided"}
+          </p>
 
-      <CardContent>
-        {workflow.description && (
-          <CardDescription className="mb-3 line-clamp-2">
-            {workflow.description}
-          </CardDescription>
-        )}
-
-        <div className="flex items-center gap-4 text-sm text-muted-foreground">
-          <span>
-            {stepCount} {stepCount === 1 ? "step" : "steps"}
-          </span>
-          {workflow.updated_at && (
-            <span>
-              Updated {new Date(workflow.updated_at).toLocaleDateString()}
-            </span>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-export function WorkflowCardSkeleton() {
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-start gap-3">
-          <div className="p-2 rounded-md bg-muted animate-pulse w-9 h-9" />
-          <div className="flex-1">
-            <div className="h-5 bg-muted animate-pulse rounded w-32 mb-2" />
-            <div className="h-4 bg-muted animate-pulse rounded w-24" />
+          {/* Progress indicator - always shown */}
+          <div className="mt-4 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1 text-muted-foreground">
+                <Bot className="h-3 w-3" />
+                <span>
+                  {configuredSteps}/{totalSteps} agents configured
+                </span>
+              </div>
+              <span className={computedStatus === "ready" ? "text-green-400" : "text-muted-foreground"}>
+                {progressPercent}%
+              </span>
+            </div>
+            <Progress
+              value={progressPercent}
+              className="h-1.5"
+            />
           </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="h-4 bg-muted animate-pulse rounded w-full mb-3" />
-        <div className="h-4 bg-muted animate-pulse rounded w-20" />
-      </CardContent>
-    </Card>
+
+          {/* Footer - fixed at bottom */}
+          <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Clock className="h-3 w-3" />
+              <span>Updated {updatedAgo}</span>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              v{workflow.version}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </Link>
   );
 }

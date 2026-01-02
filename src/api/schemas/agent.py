@@ -65,6 +65,15 @@ class ToolConfigSchema(BaseModel):
     requires_confirmation: bool = False
 
 
+class SkillConfigSchema(BaseModel):
+    """API schema for skill config."""
+
+    skill_id: str
+    enabled: bool = True
+    parameters: Dict[str, Any] = {}
+    priority: int = 0
+
+
 class SafetyConfigSchema(BaseModel):
     """API schema for safety config."""
 
@@ -85,7 +94,10 @@ class OrchestratorConfigSchema(BaseModel):
     """API schema for orchestrator config."""
 
     mode: str = "llm_driven"  # llm_driven, workflow, hybrid
-    available_agents: List[AgentReferenceSchema] = []
+    auto_discover: bool = False  # If True, automatically discover all available agents
+    exclude_agent_types: List[str] = ["OrchestratorAgent"]  # Agent types to exclude when auto_discover is True
+    exclude_agent_ids: List[str] = []  # Specific agent IDs to exclude when auto_discover is True
+    available_agents: List[AgentReferenceSchema] = []  # Ignored if auto_discover is True
     workflow_definition: Optional[str] = None
     default_aggregation: str = "all"  # first, all, vote, merge, best
     max_parallel: int = 5
@@ -107,19 +119,47 @@ class CreateAgentRequest(BaseModel):
     llm_config: Optional[LLMConfigSchema] = None
     knowledge_base: Optional[KnowledgeBaseConfigSchema] = None
     tools: List[ToolConfigSchema] = []
+    skills: List[SkillConfigSchema] = []
     routing_table: Optional[Dict[str, str]] = None
     orchestrator_config: Optional[OrchestratorConfigSchema] = None
     safety: SafetyConfigSchema = Field(default_factory=SafetyConfigSchema)
 
 
 class AgentResponse(BaseModel):
-    """Response containing agent details."""
+    """Response containing agent summary."""
 
     id: str
     name: str
     description: str
     agent_type: AgentType
     created: bool = True
+    warnings: List[str] = Field(
+        default_factory=list,
+        description="Warnings about potential issues (e.g., hallucination risks)"
+    )
+
+    class Config:
+        from_attributes = True
+
+
+class AgentDetailResponse(BaseModel):
+    """Response containing full agent details for editing."""
+
+    id: str
+    name: str
+    description: str
+    agent_type: AgentType
+    role: AgentRoleSchema
+    goal: AgentGoalSchema
+    instructions: AgentInstructionsSchema
+    examples: List[AgentExampleSchema] = []
+    llm_config: Optional[LLMConfigSchema] = None
+    knowledge_base: Optional[KnowledgeBaseConfigSchema] = None
+    tools: List[ToolConfigSchema] = []
+    skills: List[SkillConfigSchema] = []
+    routing_table: Optional[Dict[str, str]] = None
+    orchestrator_config: Optional[OrchestratorConfigSchema] = None
+    safety: SafetyConfigSchema
 
     class Config:
         from_attributes = True

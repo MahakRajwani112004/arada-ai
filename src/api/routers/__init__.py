@@ -1,4 +1,4 @@
 """API routers package."""
-from . import agents, mcp, oauth, workflow, workflow_definitions
+from . import agents, approvals, mcp, oauth, workflow
 
-__all__ = ["agents", "mcp", "oauth", "workflow", "workflow_definitions"]
+__all__ = ["agents", "approvals", "mcp", "oauth", "workflow"]

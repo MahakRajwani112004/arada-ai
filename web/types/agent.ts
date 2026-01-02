@@ -1,5 +1,16 @@
 // Backend agent types - must match src/models/enums.py
-export type AgentType = "SimpleAgent" | "LLMAgent" | "RAGAgent" | "ToolAgent" | "FullAgent" | "RouterAgent";
+export type AgentType = "SimpleAgent" | "LLMAgent" | "RAGAgent" | "ToolAgent" | "FullAgent" | "RouterAgent" | "OrchestratorAgent";
+
+// RouterAgent configuration - maps intent categories to target agents
+export interface RouterConfig {
+  routing_table: Record<string, RoutingEntry>;
+  confidence_threshold?: number;
+}
+
+export interface RoutingEntry {
+  target_agent: string;
+  description?: string;
+}
 
 export interface AgentRole {
   title: string;
@@ -17,7 +28,7 @@ export interface AgentGoal {
 export interface AgentInstructions {
   steps: string[];
   rules: string[];
-  prohibited_actions: string[];
+  prohibited: string[];  // Must match backend field name
   output_format: string;
 }
 
@@ -34,6 +45,20 @@ export interface LLMConfig {
 
 export interface ToolReference {
   tool_id: string;
+}
+
+export interface SkillConfig {
+  skill_id: string;
+  enabled: boolean;
+  parameters: Record<string, unknown>;
+  priority: number;
+}
+
+export interface KnowledgeBaseConfig {
+  collection_name: string;
+  embedding_model?: string;
+  top_k?: number;
+  similarity_threshold?: number;
 }
 
 // API expects lowercase
@@ -55,8 +80,14 @@ export interface AgentCreate {
   instructions: AgentInstructions;
   examples: AgentExample[];
   llm_config: LLMConfig;
+  knowledge_base?: KnowledgeBaseConfig;
   tools: ToolReference[];
+  skills?: SkillConfig[];
   safety: SafetyConfig;
+  // RouterAgent specific
+  router_config?: RouterConfig;
+  // OrchestratorAgent specific
+  orchestrator_config?: OrchestratorConfig;
 }
 
 export interface Agent {
@@ -65,6 +96,46 @@ export interface Agent {
   description: string;
   agent_type: AgentType;
   created: boolean;
+}
+
+// Full agent details for editing
+export interface AgentDetail {
+  id: string;
+  name: string;
+  description: string;
+  agent_type: AgentType;
+  role: AgentRole;
+  goal: AgentGoal;
+  instructions: {
+    steps: string[];
+    rules: string[];
+    prohibited: string[];
+    output_format: string | null;
+  };
+  examples: AgentExample[];
+  llm_config: LLMConfig | null;
+  knowledge_base: KnowledgeBaseConfig | null;
+  tools: ToolReference[];
+  skills?: SkillConfig[];
+  routing_table: Record<string, string> | null;
+  orchestrator_config: OrchestratorConfig | null;
+  safety: SafetyConfig;
+}
+
+export interface OrchestratorConfig {
+  mode: string;
+  available_agents: AgentReference[];
+  workflow_definition: string | null;
+  default_aggregation: string;
+  max_parallel: number;
+  max_depth: number;
+  allow_self_reference: boolean;
+}
+
+export interface AgentReference {
+  agent_id: string;
+  alias: string | null;
+  description: string | null;
 }
 
 export interface AgentListResponse {
@@ -79,6 +150,18 @@ export interface WorkflowRequest {
   session_id?: string;
 }
 
+// Tool call result returned in metadata
+export interface ToolCallResult {
+  tool: string;
+  args: Record<string, unknown>;
+  result: {
+    success: boolean;
+    output: unknown;
+    error?: string;
+  };
+}
+
+// Matches backend ExecuteAgentResponse schema
 export interface WorkflowResponse {
   content: string;
   agent_id: string;
@@ -86,10 +169,28 @@ export interface WorkflowResponse {
   success: boolean;
   error: string | null;
   metadata: {
-    tools_used: string[];
-    execution_time_ms: number;
+    model?: string;
+    usage?: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+    };
+    tool_calls?: ToolCallResult[];
+    iterations?: number;
+    validation_retries?: number;
+    finish_reason?: string;
+    loop_detected?: boolean;
+    execution_time_ms?: number;
+    // Orchestrator specific
+    agent_results?: Record<string, unknown>[];
+    mode?: string;
   };
-  workflow_id: string;
+  workflow_id: string | null;
+
+  // Clarification fields - for interactive follow-up questions
+  requires_clarification?: boolean;
+  clarification_question?: string;
+  clarification_options?: string[];
 }
 
 export type WorkflowStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";

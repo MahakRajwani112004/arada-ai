@@ -1,13 +1,15 @@
 """Builtin tools."""
 from .calculator import CalculatorTool
 from .datetime_tool import DateTimeTool
-from .kpi_calculator import KPICalculatorTool
-from .real_estate_query import RealEstateQueryTool
-from .what_if_simulator import WhatIfSimulatorTool
+from .document_generator import DocumentGeneratorTool, TemplateFillerTool
+from .docx_template_filler import DocxTemplateFiller
 
 __all__ = [
     "CalculatorTool",
     "DateTimeTool",
+    "DocumentGeneratorTool",
+    "TemplateFillerTool",
+    "DocxTemplateFiller",
     "KPICalculatorTool",
     "RealEstateQueryTool",
     "WhatIfSimulatorTool",
@@ -21,6 +23,9 @@ def register_builtin_tools():
     registry = get_registry()
     registry.register(CalculatorTool())
     registry.register(DateTimeTool())
+    registry.register(DocumentGeneratorTool())
+    registry.register(TemplateFillerTool())
+    registry.register(DocxTemplateFiller())
     # Arada AI Real Estate Analytics tools
     registry.register(KPICalculatorTool())
     registry.register(RealEstateQueryTool())

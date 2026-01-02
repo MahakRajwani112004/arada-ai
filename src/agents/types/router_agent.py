@@ -5,11 +5,18 @@ from src.agents.base import BaseAgent
 from src.llm import LLMClient, LLMMessage
 from src.models.agent_config import AgentConfig
 from src.models.responses import AgentContext, AgentResponse
+from src.skills.models import Skill
 
 
 class RouterAgent(BaseAgent):
     """
     Agent that classifies input and routes to target agents.
+
+    Components Used:
+    - Skills: YES (can provide classification guidance)
+    - Tools: NO
+    - Knowledge Base: NO
+    - Routing Table: YES (maps categories to target agents)
 
     Use cases:
     - Multi-agent orchestration
@@ -18,9 +25,19 @@ class RouterAgent(BaseAgent):
     - Agent selection based on context
     """
 
-    def __init__(self, config: AgentConfig):
-        """Initialize RouterAgent."""
-        super().__init__(config)
+    def __init__(
+        self,
+        config: AgentConfig,
+        skills: Optional[List[Skill]] = None,
+    ):
+        """
+        Initialize RouterAgent.
+
+        Args:
+            config: Agent configuration
+            skills: List of Skill objects for classification expertise
+        """
+        super().__init__(config, skills=skills)
         if not config.llm_config:
             raise ValueError("RouterAgent requires llm_config")
         if not config.routing_table:
@@ -30,13 +47,19 @@ class RouterAgent(BaseAgent):
         self._routing_table = config.routing_table
         self._default_route = config.routing_table.get("default")
 
-    async def execute(self, context: AgentContext) -> AgentResponse:
+    async def _execute_impl(self, context: AgentContext) -> AgentResponse:
         """Classify input and return routing decision."""
         # Build classification prompt
         messages = self._build_classification_messages(context)
 
         # Get classification from LLM
-        response = await self._provider.complete(messages)
+        response = await self._provider.complete(
+            messages,
+            user_id=context.user_id,
+            agent_id=self.id,
+            request_id=context.request_id,
+            workflow_id=context.workflow_id,
+        )
 
         # Parse classification
         classification = self._parse_classification(response.content)

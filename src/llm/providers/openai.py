@@ -13,6 +13,8 @@ from .base import BaseLLMProvider, LLMMessage, LLMResponse, ToolCall, ToolDefini
 class OpenAIProvider(BaseLLMProvider):
     """OpenAI GPT provider implementation."""
 
+    _provider_name = "openai"
+
     def __init__(self, config: LLMConfig):
         """Initialize OpenAI provider."""
         super().__init__(config)
@@ -71,15 +73,21 @@ class OpenAIProvider(BaseLLMProvider):
             for tool in tools
         ]
 
-    async def complete(
+    async def _complete_impl(
         self,
         messages: List[LLMMessage],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stop_sequences: Optional[List[str]] = None,
         tools: Optional[List[ToolDefinition]] = None,
+        tool_choice: Optional[str] = None,
     ) -> LLMResponse:
-        """Generate completion using GPT with optional tool calling."""
+        """Generate completion using GPT with optional tool calling.
+
+        Args:
+            tool_choice: "auto" (default), "required" (force tool call),
+                        "none" (no tool calls), or a specific tool name.
+        """
         formatted_messages = self._format_messages(messages)
 
         kwargs: Dict[str, Any] = {
@@ -94,7 +102,20 @@ class OpenAIProvider(BaseLLMProvider):
 
         if tools:
             kwargs["tools"] = self._format_tools(tools)
-            kwargs["tool_choice"] = "auto"
+            # Handle tool_choice parameter
+            if tool_choice == "required":
+                kwargs["tool_choice"] = "required"
+            elif tool_choice == "none":
+                kwargs["tool_choice"] = "none"
+            elif tool_choice and tool_choice not in ("auto", "required", "none"):
+                # Specific tool name - force that tool to be called
+                kwargs["tool_choice"] = {
+                    "type": "function",
+                    "function": {"name": tool_choice}
+                }
+            else:
+                # Default to auto
+                kwargs["tool_choice"] = "auto"
 
         response = await self.client.chat.completions.create(**kwargs)
 

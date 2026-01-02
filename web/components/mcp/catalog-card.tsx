@@ -12,9 +12,21 @@ interface CatalogCardProps {
   isConnected?: boolean;
 }
 
+// Map template IDs to OAuth service names
+const googleOAuthServices: Record<string, string> = {
+  "google-calendar": "calendar",
+  "gmail": "gmail",
+  "google-drive": "drive",
+};
+
+const microsoftOAuthServices: Record<string, string> = {
+  "outlook-calendar": "calendar",
+  "outlook-email": "email",
+};
+
 const serviceIcons: Record<string, React.ReactNode> = {
   "google-calendar": <Calendar className="h-5 w-5" />,
-  "google-gmail": <Mail className="h-5 w-5" />,
+  "gmail": <Mail className="h-5 w-5" />,
   "google-drive": <HardDrive className="h-5 w-5" />,
   "outlook-calendar": <Calendar className="h-5 w-5" />,
   "outlook-email": <Mail className="h-5 w-5" />,
@@ -22,17 +34,31 @@ const serviceIcons: Record<string, React.ReactNode> = {
 };
 
 const serviceColors: Record<string, string> = {
-  "google-calendar": "bg-blue-50 text-blue-600",
-  "google-gmail": "bg-red-50 text-red-600",
-  "google-drive": "bg-amber-50 text-amber-600",
-  "outlook-calendar": "bg-sky-50 text-sky-600",
-  "outlook-email": "bg-sky-50 text-sky-600",
-  slack: "bg-purple-50 text-purple-600",
+  "google-calendar": "bg-blue-500/10 text-blue-500",
+  "gmail": "bg-red-500/10 text-red-500",
+  "google-drive": "bg-yellow-500/10 text-yellow-500",
+  "outlook-calendar": "bg-blue-600/10 text-blue-500",
+  "outlook-email": "bg-blue-600/10 text-blue-500",
+  slack: "bg-purple-500/10 text-purple-500",
 };
 
 export function CatalogCard({ item, onConnect, isConnected }: CatalogCardProps) {
   const icon = serviceIcons[item.id] || <ExternalLink className="h-5 w-5" />;
   const color = serviceColors[item.id] || "bg-secondary text-muted-foreground";
+  const isGoogleOAuth = !!googleOAuthServices[item.id];
+  const isMicrosoftOAuth = !!microsoftOAuthServices[item.id];
+
+  const handleClick = () => {
+    // Always use onConnect to open the sheet for name input
+    onConnect(item);
+  };
+
+  const getButtonText = () => {
+    if (isConnected) return "Manage";
+    if (isGoogleOAuth) return "Sign in with Google";
+    if (isMicrosoftOAuth) return "Sign in with Microsoft";
+    return "Connect";
+  };
 
   return (
     <Card className="h-full border-border/60 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-md">
@@ -79,9 +105,9 @@ export function CatalogCard({ item, onConnect, isConnected }: CatalogCardProps) 
         <Button
           className="w-full"
           variant={isConnected ? "outline" : "default"}
-          onClick={() => onConnect(item)}
+          onClick={handleClick}
         >
-          {isConnected ? "Manage" : "Connect"}
+          {getButtonText()}
         </Button>
       </CardContent>
     </Card>

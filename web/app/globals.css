@@ -4,9 +4,48 @@
 
 @layer base {
   :root {
-    /* Light theme - Clean and modern */
+    /* Light theme */
     --background: 0 0% 100%;
-    --foreground: 224 71% 4%;
+    --foreground: 240 10% 3.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --success: 142 76% 36%;
+    --success-foreground: 138 76% 90%;
+
+    --warning: 48 96% 53%;
+    --warning-foreground: 32 95% 44%;
+
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 5.9% 10%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    /* Dark theme */
+    --background: 240 6% 4%;
+    --foreground: 0 0% 98%;
 
     --card: 0 0% 100%;
     --card-foreground: 224 71% 4%;
@@ -35,15 +74,15 @@
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 100%;
 
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 220 90% 56%;
+    --border: 240 4% 16%;
+    --input: 240 4% 16%;
+    --ring: 0 0% 98%;
 
     --radius: 0.625rem;
 
-    --sidebar: 220 14% 98%;
-    --sidebar-foreground: 224 71% 4%;
-    --sidebar-border: 220 13% 91%;
+    --sidebar: 240 6% 8%;
+    --sidebar-foreground: 0 0% 98%;
+    --sidebar-border: 240 4% 16%;
   }
 }
 
@@ -129,5 +168,150 @@
 
   .card-shadow-lg {
     box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  }
+
+  /* ===== WORKFLOW CANVAS - CLEAN PROFESSIONAL UI ===== */
+
+  /* Base node card - clean, minimal shadow */
+  .workflow-node {
+    @apply bg-card border border-border rounded-lg;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  }
+
+  .workflow-node:hover {
+    @apply border-border;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  }
+
+  /* Selected state - clean ring */
+  .workflow-node-selected {
+    @apply ring-2 ring-primary ring-offset-1 ring-offset-background;
+  }
+
+  /* Status accent - left border indicator */
+  .node-accent-green {
+    border-left: 3px solid #22c55e;
+  }
+
+  .node-accent-orange {
+    border-left: 3px solid #f97316;
+  }
+
+  .node-accent-blue {
+    border-left: 3px solid #3b82f6;
+  }
+
+  .node-accent-purple {
+    border-left: 3px solid #a855f7;
+  }
+
+  .node-accent-yellow {
+    border-left: 3px solid #eab308;
+  }
+
+  .node-accent-red {
+    border-left: 3px solid #ef4444;
+  }
+
+  .node-accent-muted {
+    border-left: 3px solid hsl(var(--muted-foreground));
+  }
+
+  /* Clean icon containers */
+  .node-icon {
+    @apply flex items-center justify-center rounded-md;
+  }
+
+  .node-icon-green {
+    @apply bg-green-500/10 text-green-500;
+  }
+
+  .node-icon-orange {
+    @apply bg-orange-500/10 text-orange-500;
+  }
+
+  .node-icon-blue {
+    @apply bg-blue-500/10 text-blue-500;
+  }
+
+  .node-icon-purple {
+    @apply bg-purple-500/10 text-purple-500;
+  }
+
+  .node-icon-yellow {
+    @apply bg-yellow-500/10 text-yellow-500;
+  }
+
+  .node-icon-muted {
+    @apply bg-muted text-muted-foreground;
+  }
+
+  /* Clean status badges */
+  .node-badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium;
+  }
+
+  .node-badge-ready {
+    @apply bg-green-500/10 text-green-600 dark:text-green-400;
+  }
+
+  .node-badge-draft {
+    @apply bg-orange-500/10 text-orange-600 dark:text-orange-400;
+  }
+
+  .node-badge-warning {
+    @apply bg-yellow-500/10 text-yellow-600 dark:text-yellow-400;
+  }
+
+  .node-badge-error {
+    @apply bg-red-500/10 text-red-600 dark:text-red-400;
+  }
+
+  /* Type badges */
+  .node-type-badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-muted text-muted-foreground;
+  }
+
+  .node-type-badge-blue {
+    @apply bg-blue-500/10 text-blue-600 dark:text-blue-400;
+  }
+
+  .node-type-badge-purple {
+    @apply bg-purple-500/10 text-purple-600 dark:text-purple-400;
+  }
+
+  /* Handle styles - clean */
+  .workflow-handle {
+    @apply !w-3 !h-3 !border-2 !border-background !bg-muted-foreground;
+  }
+
+  .workflow-handle:hover {
+    @apply !bg-primary !scale-110;
+  }
+
+  /* Canvas background */
+  .workflow-canvas-bg {
+    background-color: hsl(var(--background));
+  }
+
+  /* Status dot indicator */
+  .status-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+
+  .status-dot-ready {
+    @apply bg-green-500;
+  }
+
+  .status-dot-draft {
+    @apply bg-orange-500;
+  }
+
+  .status-dot-warning {
+    @apply bg-yellow-500;
+  }
+
+  .status-dot-error {
+    @apply bg-red-500;
   }
 }

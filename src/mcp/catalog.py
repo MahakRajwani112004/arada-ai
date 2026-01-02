@@ -10,8 +10,12 @@ from .models import CredentialSpec, MCPServerTemplate
 MCP_GOOGLE_CALENDAR_URL = os.getenv("MCP_GOOGLE_CALENDAR_URL", "http://localhost:8001/mcp")
 MCP_GOOGLE_GMAIL_URL = os.getenv("MCP_GOOGLE_GMAIL_URL", "http://localhost:8002/mcp")
 MCP_GOOGLE_DRIVE_URL = os.getenv("MCP_GOOGLE_DRIVE_URL", "http://localhost:8003/mcp")
-MCP_MICROSOFT_URL = os.getenv("MCP_MICROSOFT_URL", "http://localhost:8004/mcp")
-MCP_SLACK_URL = os.getenv("MCP_SLACK_URL", "http://localhost:8005/mcp")
+MCP_OUTLOOK_CALENDAR_URL = os.getenv("MCP_OUTLOOK_CALENDAR_URL", "http://localhost:8004/mcp")
+MCP_OUTLOOK_EMAIL_URL = os.getenv("MCP_OUTLOOK_EMAIL_URL", "http://localhost:8005/mcp")
+MCP_SHAREPOINT_URL = os.getenv("MCP_SHAREPOINT_URL", "http://localhost:8006/mcp")
+MCP_ONEDRIVE_URL = os.getenv("MCP_ONEDRIVE_URL", "http://localhost:8007/mcp")
+MCP_SLACK_URL = os.getenv("MCP_SLACK_URL", "http://localhost:8008/mcp")
+MCP_FILESYSTEM_URL = os.getenv("MCP_FILESYSTEM_URL", "http://localhost:8007/mcp")
 
 # Arada Real Estate Analytics
 MCP_ARADA_SQL_URL = os.getenv("MCP_ARADA_SQL_URL", "http://localhost:8002/mcp")
@@ -91,7 +95,7 @@ MCP_SERVER_CATALOG: Dict[str, MCPServerTemplate] = {
     "outlook-calendar": MCPServerTemplate(
         id="outlook-calendar",
         name="Outlook Calendar",
-        url_template=MCP_MICROSOFT_URL,
+        url_template=MCP_OUTLOOK_CALENDAR_URL,
         auth_type="oauth_token",
         token_guide_url="https://developer.microsoft.com/en-us/graph/graph-explorer",
         scopes=["Calendars.ReadWrite", "offline_access"],
@@ -102,6 +106,12 @@ MCP_SERVER_CATALOG: Dict[str, MCPServerTemplate] = {
                 description="Azure AD app client ID",
                 sensitive=False,
                 header_name="X-Microsoft-Client-Id",
+            ),
+            CredentialSpec(
+                name="MICROSOFT_CLIENT_SECRET",
+                description="Azure AD app client secret",
+                sensitive=True,
+                header_name="X-Microsoft-Client-Secret",
             ),
             CredentialSpec(
                 name="MICROSOFT_TENANT_ID",
@@ -115,17 +125,37 @@ MCP_SERVER_CATALOG: Dict[str, MCPServerTemplate] = {
     "outlook-email": MCPServerTemplate(
         id="outlook-email",
         name="Outlook Email",
-        url_template=MCP_MICROSOFT_URL,
+        url_template=MCP_OUTLOOK_EMAIL_URL,
         auth_type="oauth_token",
         token_guide_url="https://developer.microsoft.com/en-us/graph/graph-explorer",
         scopes=["Mail.ReadWrite", "Mail.Send", "offline_access"],
         credentials_required=[_microsoft_refresh_token_spec()],
-        tools=["list_emails", "send_email", "search_emails", "get_email"],
+        credentials_optional=[
+            CredentialSpec(
+                name="MICROSOFT_CLIENT_ID",
+                description="Azure AD app client ID",
+                sensitive=False,
+                header_name="X-Microsoft-Client-Id",
+            ),
+            CredentialSpec(
+                name="MICROSOFT_CLIENT_SECRET",
+                description="Azure AD app client secret",
+                sensitive=True,
+                header_name="X-Microsoft-Client-Secret",
+            ),
+            CredentialSpec(
+                name="MICROSOFT_TENANT_ID",
+                description="Azure AD tenant ID",
+                sensitive=False,
+                header_name="X-Microsoft-Tenant-Id",
+            ),
+        ],
+        tools=["list_emails", "get_email", "send_email", "search_emails"],
     ),
     "sharepoint": MCPServerTemplate(
         id="sharepoint",
         name="SharePoint",
-        url_template=MCP_MICROSOFT_URL,
+        url_template=MCP_SHAREPOINT_URL,
         auth_type="oauth_token",
         token_guide_url="https://developer.microsoft.com/en-us/graph/graph-explorer",
         scopes=["Sites.ReadWrite.All", "Files.ReadWrite.All", "offline_access"],
@@ -143,7 +173,7 @@ MCP_SERVER_CATALOG: Dict[str, MCPServerTemplate] = {
     "onedrive": MCPServerTemplate(
         id="onedrive",
         name="OneDrive",
-        url_template=MCP_MICROSOFT_URL,
+        url_template=MCP_ONEDRIVE_URL,
         auth_type="oauth_token",
         token_guide_url="https://developer.microsoft.com/en-us/graph/graph-explorer",
         scopes=["Files.ReadWrite.All", "offline_access"],
@@ -190,7 +220,7 @@ MCP_SERVER_CATALOG: Dict[str, MCPServerTemplate] = {
     "filesystem": MCPServerTemplate(
         id="filesystem",
         name="Filesystem",
-        url_template=None,  # Must provide custom URL
+        url_template=MCP_FILESYSTEM_URL,
         auth_type="none",
         scopes=[],
         credentials_required=[

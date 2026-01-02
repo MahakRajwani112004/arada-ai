@@ -1,17 +1,20 @@
 """MCP Server Repository - database operations for MCP servers."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config.logging import get_logger
 from src.secrets import get_secrets_manager
 from src.storage.models import MCPServerModel
 
 from .catalog import get_template
 from .models import MCPServerConfig, MCPServerInstance, ServerStatus
+
+logger = get_logger(__name__)
 
 
 class MCPServerRepository:
@@ -21,13 +24,15 @@ class MCPServerRepository:
     Credentials are stored in vault, not in database.
     """
 
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, user_id: str | None = None):
         """Initialize repository with database session.
 
         Args:
             session: SQLAlchemy async session
+            user_id: Optional user ID for filtering (multi-tenant)
         """
         self._session = session
+        self._user_id = user_id
 
     async def create(
         self,
@@ -36,6 +41,7 @@ class MCPServerRepository:
         credentials: Dict[str, str],
         template: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        oauth_token_ref: Optional[str] = None,
     ) -> MCPServerInstance:
         """Create a new MCP server configuration.
 
@@ -45,17 +51,28 @@ class MCPServerRepository:
             credentials: Sensitive credentials to store in vault
             template: Optional catalog template ID
             headers: Optional non-sensitive headers
+            oauth_token_ref: Optional OAuth token reference for cascade delete
 
         Returns:
             Created MCPServerInstance
+
+        Raises:
+            ValueError: If user_id is not set (required for secure storage)
         """
+        if not self._user_id:
+            raise ValueError("user_id is required for creating MCP servers with secure credential storage")
+
         # Generate unique ID
         server_id = f"srv_{uuid.uuid4().hex[:12]}"
-        secret_ref = f"mcp/servers/{server_id}"
+        # Use user-scoped path for proper credential isolation
+        secret_ref = f"users/{self._user_id}/mcp/servers/{server_id}"
 
-        # Store credentials in vault
+        # Store credentials in vault with user isolation
         secrets_manager = get_secrets_manager()
-        await secrets_manager.store(secret_ref, credentials)
+        await secrets_manager.store(key=secret_ref, value={
+            **credentials,
+            "user_id": self._user_id,  # Store user_id for validation
+        })
 
         # Create database record
         db_model = MCPServerModel(
@@ -65,7 +82,9 @@ class MCPServerRepository:
             url=url,
             status=ServerStatus.DISCONNECTED.value,
             secret_ref=secret_ref,
+            oauth_token_ref=oauth_token_ref,
             headers_config=headers or {},
+            user_id=self._user_id,
         )
 
         self._session.add(db_model)
@@ -75,7 +94,7 @@ class MCPServerRepository:
         return self._to_instance(db_model)
 
     async def get(self, server_id: str) -> Optional[MCPServerInstance]:
-        """Get MCP server by ID.
+        """Get MCP server by ID (scoped to user if user_id is set).
 
         Args:
             server_id: Server ID
@@ -83,9 +102,10 @@ class MCPServerRepository:
         Returns:
             MCPServerInstance or None if not found
         """
-        result = await self._session.execute(
-            select(MCPServerModel).where(MCPServerModel.id == server_id)
-        )
+        stmt = select(MCPServerModel).where(MCPServerModel.id == server_id)
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
         db_model = result.scalar_one_or_none()
 
         if db_model is None:
@@ -94,17 +114,57 @@ class MCPServerRepository:
         return self._to_instance(db_model)
 
     async def list_all(self) -> List[MCPServerInstance]:
-        """List all MCP servers.
+        """List all MCP servers (scoped to user if user_id is set).
 
         Returns:
             List of MCPServerInstance
         """
-        result = await self._session.execute(
-            select(MCPServerModel).order_by(MCPServerModel.created_at.desc())
-        )
+        stmt = select(MCPServerModel).order_by(MCPServerModel.created_at.desc())
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
         db_models = result.scalars().all()
 
         return [self._to_instance(m) for m in db_models]
+
+    async def get_by_template(self, template: str) -> Optional[MCPServerInstance]:
+        """Get MCP server by template (scoped to user if user_id is set).
+
+        Returns the most recently created server for the given template.
+        Used to find existing servers when detecting reconnections.
+
+        Args:
+            template: Template ID (e.g., "outlook-email", "google-calendar")
+
+        Returns:
+            MCPServerInstance or None if not found
+        """
+        stmt = (
+            select(MCPServerModel)
+            .where(MCPServerModel.template == template)
+            .order_by(MCPServerModel.created_at.desc())
+        )
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
+        db_model = result.scalar_one_or_none()
+
+        if db_model is None:
+            return None
+
+        return self._to_instance(db_model)
+
+    async def get_all_server_ids(self) -> List[str]:
+        """Get all MCP server IDs (scoped to user if user_id is set).
+
+        Returns:
+            List of server IDs
+        """
+        stmt = select(MCPServerModel.id)
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
+        return [row[0] for row in result.all()]
 
     async def update_status(
         self,
@@ -112,7 +172,7 @@ class MCPServerRepository:
         status: ServerStatus,
         error_message: Optional[str] = None,
     ) -> Optional[MCPServerInstance]:
-        """Update server status.
+        """Update server status (scoped to user if user_id is set).
 
         Args:
             server_id: Server ID
@@ -122,9 +182,10 @@ class MCPServerRepository:
         Returns:
             Updated MCPServerInstance or None if not found
         """
-        result = await self._session.execute(
-            select(MCPServerModel).where(MCPServerModel.id == server_id)
-        )
+        stmt = select(MCPServerModel).where(MCPServerModel.id == server_id)
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
         db_model = result.scalar_one_or_none()
 
         if db_model is None:
@@ -132,7 +193,7 @@ class MCPServerRepository:
 
         db_model.status = status.value
         db_model.error_message = error_message
-        db_model.last_used_at = datetime.utcnow()
+        db_model.last_used_at = datetime.now(timezone.utc)
 
         await self._session.commit()
         await self._session.refresh(db_model)
@@ -140,7 +201,7 @@ class MCPServerRepository:
         return self._to_instance(db_model)
 
     async def delete(self, server_id: str) -> bool:
-        """Delete MCP server and its credentials.
+        """Delete MCP server and its credentials (scoped to user if user_id is set).
 
         Args:
             server_id: Server ID
@@ -148,9 +209,10 @@ class MCPServerRepository:
         Returns:
             True if deleted, False if not found
         """
-        result = await self._session.execute(
-            select(MCPServerModel).where(MCPServerModel.id == server_id)
-        )
+        stmt = select(MCPServerModel).where(MCPServerModel.id == server_id)
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
         db_model = result.scalar_one_or_none()
 
         if db_model is None:
@@ -163,14 +225,69 @@ class MCPServerRepository:
         except KeyError:
             pass  # Secret already deleted
 
+        # Delete OAuth token from vault if present (cascade delete)
+        if db_model.oauth_token_ref:
+            try:
+                await secrets_manager.delete(db_model.oauth_token_ref)
+            except KeyError:
+                pass  # OAuth token already deleted
+
         # Delete database record
         await self._session.delete(db_model)
         await self._session.commit()
 
         return True
 
+    async def update_credentials(
+        self,
+        server_id: str,
+        credentials: Dict[str, str],
+        oauth_token_ref: Optional[str] = None,
+    ) -> Optional[MCPServerInstance]:
+        """Update server credentials in vault (scoped to user if user_id is set).
+
+        Args:
+            server_id: Server ID
+            credentials: New credentials to store
+            oauth_token_ref: Optional new OAuth token reference
+
+        Returns:
+            Updated MCPServerInstance or None if not found
+        """
+        stmt = select(MCPServerModel).where(MCPServerModel.id == server_id)
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
+        db_model = result.scalar_one_or_none()
+
+        if db_model is None:
+            return None
+
+        # Update credentials in vault
+        secrets_manager = get_secrets_manager()
+        await secrets_manager.store(key=db_model.secret_ref, value=credentials)
+
+        # Delete old OAuth token if replacing with new one
+        if oauth_token_ref and db_model.oauth_token_ref and db_model.oauth_token_ref != oauth_token_ref:
+            try:
+                await secrets_manager.delete(db_model.oauth_token_ref)
+            except KeyError:
+                pass
+
+        # Update OAuth token ref if provided
+        if oauth_token_ref:
+            db_model.oauth_token_ref = oauth_token_ref
+
+        db_model.status = ServerStatus.DISCONNECTED.value
+        db_model.error_message = None
+
+        await self._session.commit()
+        await self._session.refresh(db_model)
+
+        return self._to_instance(db_model)
+
     async def get_config(self, server_id: str) -> Optional[MCPServerConfig]:
-        """Get full server config including credentials from vault.
+        """Get full server config including credentials from vault (scoped to user if user_id is set).
 
         Args:
             server_id: Server ID
@@ -178,9 +295,10 @@ class MCPServerRepository:
         Returns:
             MCPServerConfig with credentials as headers, or None if not found
         """
-        result = await self._session.execute(
-            select(MCPServerModel).where(MCPServerModel.id == server_id)
-        )
+        stmt = select(MCPServerModel).where(MCPServerModel.id == server_id)
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
         db_model = result.scalar_one_or_none()
 
         if db_model is None:
@@ -188,7 +306,41 @@ class MCPServerRepository:
 
         # Get credentials from vault
         secrets_manager = get_secrets_manager()
-        credentials = await secrets_manager.retrieve(db_model.secret_ref)
+        try:
+            credentials = await secrets_manager.retrieve(db_model.secret_ref)
+            logger.info("credentials_retrieved", secret_ref=db_model.secret_ref, keys=list(credentials.keys()) if credentials else [])
+        except KeyError as e:
+            logger.warning("credentials_not_found", secret_ref=db_model.secret_ref, error=str(e))
+            credentials = {}
+        except Exception as e:
+            logger.error("credentials_retrieval_failed", secret_ref=db_model.secret_ref, error=str(e), error_type=type(e).__name__)
+            credentials = {}
+
+        # Ensure credentials is a dict (retrieve can return None)
+        if credentials is None:
+            credentials = {}
+
+        # Get OAuth token if present and add refresh_token to credentials
+        if db_model.oauth_token_ref:
+            logger.info("oauth_token_ref_found", oauth_token_ref=db_model.oauth_token_ref)
+            try:
+                oauth_data = await secrets_manager.retrieve(db_model.oauth_token_ref)
+                logger.info("oauth_data_retrieved", keys=list(oauth_data.keys()) if oauth_data else [])
+                if oauth_data and "refresh_token" in oauth_data:
+                    # Determine the correct credential name based on template
+                    # Microsoft templates (outlook-*, sharepoint, onedrive) use MICROSOFT_REFRESH_TOKEN
+                    # Google templates (google-*) use GOOGLE_REFRESH_TOKEN
+                    template_name = db_model.template or ""
+                    if template_name.startswith("outlook") or template_name in ("sharepoint", "onedrive"):
+                        cred_name = "MICROSOFT_REFRESH_TOKEN"
+                    else:
+                        cred_name = "GOOGLE_REFRESH_TOKEN"
+                    credentials[cred_name] = oauth_data["refresh_token"]
+                    logger.info("refresh_token_added_to_credentials", credential_name=cred_name)
+            except KeyError as e:
+                logger.warning("oauth_token_not_found", oauth_token_ref=db_model.oauth_token_ref, error=str(e))
+            except Exception as e:
+                logger.error("oauth_token_retrieval_failed", oauth_token_ref=db_model.oauth_token_ref, error=str(e), error_type=type(e).__name__)
 
         # Build headers from credentials + stored headers
         headers = dict(db_model.headers_config)
@@ -201,7 +353,7 @@ class MCPServerRepository:
                     if cred_spec.name in credentials and cred_spec.header_name:
                         headers[cred_spec.header_name] = credentials[cred_spec.name]
 
-        # For custom servers, add credentials as Authorization header
+        # For custom servers, add credentials as headers
         if not db_model.template and credentials:
             # If there's a single credential that looks like a token, use Bearer
             if len(credentials) == 1:
@@ -209,11 +361,11 @@ class MCPServerRepository:
                 if key.lower() in ("token", "api_key", "bearer"):
                     headers["Authorization"] = f"Bearer {value}"
                 else:
-                    headers[f"X-{key}"] = value
+                    headers[self._credential_to_header(key)] = value
             else:
-                # Add each as X-{name} header
+                # Add each as X-{name} header with proper casing
                 for key, value in credentials.items():
-                    headers[f"X-{key}"] = value
+                    headers[self._credential_to_header(key)] = value
 
         return MCPServerConfig(
             id=db_model.id,
@@ -222,6 +374,18 @@ class MCPServerRepository:
             headers=headers,
             template=db_model.template,
         )
+
+    def _credential_to_header(self, key: str) -> str:
+        """Convert credential name to HTTP header format.
+
+        Examples:
+            GOOGLE_REFRESH_TOKEN -> X-Google-Refresh-Token
+            API_KEY -> X-Api-Key
+        """
+        # Split by underscore, title case each part, join with hyphen
+        parts = key.split("_")
+        header_name = "-".join(part.capitalize() for part in parts)
+        return f"X-{header_name}"
 
     def _to_instance(self, db_model: MCPServerModel) -> MCPServerInstance:
         """Convert database model to MCPServerInstance."""
@@ -232,6 +396,7 @@ class MCPServerRepository:
             url=db_model.url,
             status=ServerStatus(db_model.status),
             secret_ref=db_model.secret_ref,
+            oauth_token_ref=db_model.oauth_token_ref,
             created_at=db_model.created_at,
             last_used=db_model.last_used_at,
             error_message=db_model.error_message,

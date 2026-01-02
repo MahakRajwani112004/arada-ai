@@ -1,10 +1,11 @@
 """LLMAgent - Uses LLM for generating responses."""
-from typing import List
+from typing import List, Optional
 
 from src.agents.base import BaseAgent
 from src.llm import LLMClient, LLMMessage
 from src.models.agent_config import AgentConfig
 from src.models.responses import AgentContext, AgentResponse, Message
+from src.skills.models import Skill
 
 
 class LLMAgent(BaseAgent):
@@ -19,19 +20,23 @@ class LLMAgent(BaseAgent):
     - General purpose chat
     """
 
-    def __init__(self, config: AgentConfig):
-        """Initialize LLMAgent."""
-        super().__init__(config)
+    def __init__(self, config: AgentConfig, skills: Optional[List[Skill]] = None):
+        """Initialize LLMAgent with optional skills."""
+        super().__init__(config, skills=skills)
         if not config.llm_config:
             raise ValueError("LLMAgent requires llm_config")
         self._provider = LLMClient.get_provider(config.llm_config)
 
-    def _build_messages(self, context: AgentContext) -> List[LLMMessage]:
+    def _build_messages(
+        self,
+        context: AgentContext,
+        selected_skills: List = None,
+    ) -> List[LLMMessage]:
         """Build LLM messages from context."""
         messages = []
 
-        # Add system prompt
-        system_prompt = self.build_system_prompt()
+        # Add system prompt with selected skills
+        system_prompt = self.build_system_prompt(selected_skills=selected_skills)
         messages.append(LLMMessage(role="system", content=system_prompt))
 
         # Add conversation history
@@ -43,11 +48,23 @@ class LLMAgent(BaseAgent):
 
         return messages
 
-    async def execute(self, context: AgentContext) -> AgentResponse:
+    async def _execute_impl(self, context: AgentContext) -> AgentResponse:
         """Execute LLM completion."""
-        messages = self._build_messages(context)
+        # Select relevant skills for this query
+        selected_skills = await self._select_skills_for_query(
+            context.user_input,
+            user_id=context.user_id,
+        )
 
-        response = await self._provider.complete(messages)
+        messages = self._build_messages(context, selected_skills=selected_skills)
+
+        response = await self._provider.complete(
+            messages,
+            user_id=context.user_id,
+            agent_id=self.id,
+            request_id=context.request_id,
+            workflow_id=context.workflow_id,
+        )
 
         return AgentResponse(
             content=response.content,

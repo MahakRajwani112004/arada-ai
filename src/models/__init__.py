@@ -6,6 +6,7 @@ from .llm_config import LLMConfig
 from .persona import AgentExample, AgentGoal, AgentInstructions, AgentRole
 from .responses import AgentContext, AgentResponse, Message
 from .safety_config import GovernanceConfig, SafetyConfig
+from .skill_config import SkillConfig
 from .tool_config import ToolConfig
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "LLMConfig",
     "KnowledgeBaseConfig",
     "ToolConfig",
+    "SkillConfig",
     # Persona models
     "AgentRole",
     "AgentGoal",

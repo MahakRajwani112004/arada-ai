@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bot, Plug, Settings, ChevronRight, Workflow } from "lucide-react";
+import { Bot, Plug, Settings, ChevronRight, Workflow, Activity, Shield, Sparkles, Inbox } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { UserMenu } from "./user-menu";
+import { useAuth } from "@/lib/auth";
 
 interface NavItem {
   label: string;
@@ -19,9 +21,19 @@ const navItems: NavItem[] = [
     icon: <Bot className="h-4 w-4" />,
   },
   {
+    label: "Skills",
+    href: "/skills",
+    icon: <Sparkles className="h-4 w-4" />,
+  },
+  {
     label: "Workflows",
     href: "/workflows",
     icon: <Workflow className="h-4 w-4" />,
+  },
+  {
+    label: "Approvals",
+    href: "/approvals",
+    icon: <Inbox className="h-4 w-4" />,
   },
   {
     label: "Integrations",
@@ -30,12 +42,19 @@ const navItems: NavItem[] = [
     children: [
       { label: "Catalog", href: "/integrations" },
       { label: "My Servers", href: "/integrations/servers" },
+      { label: "Knowledge Bases", href: "/integrations/knowledge" },
     ],
+  },
+  {
+    label: "Monitoring",
+    href: "/monitoring",
+    icon: <Activity className="h-4 w-4" />,
   },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { user } = useAuth();
 
   return (
     <aside className="fixed left-0 top-0 z-40 h-screen w-56 border-r border-border bg-[hsl(var(--sidebar))]">
@@ -108,19 +127,39 @@ export function Sidebar() {
         </nav>
 
         {/* Footer */}
-        <div className="border-t border-border p-3">
-          <Link
-            href="/settings"
-            className={cn(
-              "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200",
-              pathname === "/settings"
-                ? "bg-primary/10 text-primary shadow-sm"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground"
-            )}
-          >
-            <Settings className="h-4 w-4" />
-            <span>Settings</span>
-          </Link>
+        <div className="border-t border-border p-3 space-y-2">
+          {/* Admin link - only for superusers */}
+          {user?.is_superuser && (
+            <Link
+              href="/admin"
+              className={cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                pathname === "/admin"
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              )}
+            >
+              <Shield className="h-4 w-4" />
+              <span>Admin</span>
+            </Link>
+          )}
+
+          {/* Settings and User in single row */}
+          <div className="flex items-center justify-between">
+            <Link
+              href="/settings"
+              className={cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                pathname === "/settings"
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              )}
+            >
+              <Settings className="h-4 w-4" />
+              <span>Settings</span>
+            </Link>
+            <UserMenu />
+          </div>
         </div>
       </div>
     </aside>

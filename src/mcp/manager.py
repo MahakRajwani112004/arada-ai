@@ -75,9 +75,11 @@ class MCPManager:
             self._clients[server_id] = client
             instance.status = ServerStatus.ACTIVE
 
+            # Get tools once and cache
+            tools = await client.list_tools()
+
             # Register tools with global registry
             if register_tools:
-                tools = await client.list_tools()
                 registry = get_registry()
 
                 for tool_info in tools:
@@ -93,7 +95,7 @@ class MCPManager:
                 "mcp_server_added",
                 server_id=server_id,
                 name=config.name,
-                tools_count=len(await client.list_tools()),
+                tools_count=len(tools),
             )
 
         except Exception as e:
@@ -221,3 +223,45 @@ async def shutdown_mcp_manager() -> None:
     if _mcp_manager:
         await _mcp_manager.shutdown()
         _mcp_manager = None
+
+
+async def reconnect_mcp_servers() -> int:
+    """Reconnect all MCP servers from database on startup.
+
+    Returns:
+        Number of servers successfully reconnected
+    """
+    from src.mcp.repository import MCPServerRepository
+    from src.storage import get_async_session
+
+    manager = get_mcp_manager()
+    connected = 0
+
+    async with get_async_session() as session:
+        repository = MCPServerRepository(session)
+        servers = await repository.list_all()
+
+        for server in servers:
+            try:
+                config = await repository.get_config(server.id)
+                if config:
+                    await manager.add_server(config)
+                    await repository.update_status(server.id, ServerStatus.ACTIVE)
+                    connected += 1
+                    logger.info(
+                        "mcp_server_reconnected",
+                        server_id=server.id,
+                        name=server.name,
+                    )
+            except Exception as e:
+                await repository.update_status(
+                    server.id, ServerStatus.ERROR, str(e)
+                )
+                logger.error(
+                    "mcp_server_reconnect_failed",
+                    server_id=server.id,
+                    error=str(e),
+                )
+
+    logger.info("mcp_servers_reconnected", total=connected)
+    return connected

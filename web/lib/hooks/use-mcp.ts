@@ -11,6 +11,8 @@ import {
   deleteServer,
   getMCPHealth,
   getOAuthUrl,
+  reconnectServer,
+  updateServerCredentials,
 } from "@/lib/api/mcp";
 import type { CreateMCPServerRequest } from "@/types/mcp";
 
@@ -96,5 +98,30 @@ export function useOAuthUrl(service: string) {
     queryKey: ["oauth", service],
     queryFn: () => getOAuthUrl(service),
     enabled: false,
+  });
+}
+
+export function useReconnectServer() {
+  return useMutation({
+    mutationFn: (serverId: string) => reconnectServer(serverId),
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+}
+
+export function useUpdateServerCredentials() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ serverId, oauthTokenRef }: { serverId: string; oauthTokenRef: string }) =>
+      updateServerCredentials(serverId, oauthTokenRef),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: mcpKeys.servers() });
+      toast.success("Credentials updated successfully");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
   });
 }

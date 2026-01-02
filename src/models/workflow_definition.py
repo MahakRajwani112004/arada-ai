@@ -5,6 +5,16 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+class SuggestedAgent(BaseModel):
+    """AI's suggestion for an agent to fulfill a step (for draft workflows)."""
+    name: str = Field(..., description="Suggested agent name")
+    description: Optional[str] = Field(None, description="Description of what the agent does")
+    goal: str = Field(..., description="What this agent should accomplish")
+    model: Optional[str] = Field(None, description="LLM model to use (e.g., gpt-4o)")
+    required_mcps: List[str] = Field(default_factory=list, description="MCP servers needed")
+    suggested_tools: List[str] = Field(default_factory=list, description="Tools the agent should use")
+
+
 class StepType(str, Enum):
     """Types of workflow steps."""
 
@@ -12,6 +22,7 @@ class StepType(str, Enum):
     PARALLEL = "parallel"
     CONDITIONAL = "conditional"
     LOOP = "loop"
+    APPROVAL = "approval"  # Human-in-the-loop approval gate
 
 
 class ErrorHandling(str, Enum):
@@ -52,14 +63,27 @@ class LoopInnerStep(BaseModel):
     timeout: int = Field(default=120, ge=1, le=600)
 
 
+class LoopMode(str, Enum):
+    """Mode for loop iteration."""
+
+    COUNT = "count"  # Iterate a fixed number of times
+    FOREACH = "foreach"  # Iterate over a collection
+    UNTIL = "until"  # Iterate until condition is met
+
+
 class WorkflowStep(BaseModel):
     """A single step in a workflow definition."""
 
     id: str = Field(..., pattern=ID_PATTERN, description="Unique step identifier")
     type: StepType = Field(default=StepType.AGENT, description="Step type")
+    name: Optional[str] = Field(None, max_length=200, description="Human-readable step name")
 
     # Agent step fields
     agent_id: Optional[str] = Field(None, pattern=ID_PATTERN)
+    suggested_agent: Optional[SuggestedAgent] = Field(
+        None,
+        description="AI suggestion for agent (for draft workflows without agent_id)"
+    )
     input: Optional[str] = Field(None, max_length=10000)
     timeout: int = Field(default=120, ge=1, le=600)
     retries: int = Field(default=0, ge=0, le=5)
@@ -79,9 +103,56 @@ class WorkflowStep(BaseModel):
     default: Optional[str] = Field(None, pattern=ID_PATTERN)
 
     # Loop step fields
-    max_iterations: int = Field(default=5, ge=1, le=20)
-    exit_condition: Optional[str] = Field(None, max_length=1000)
+    loop_mode: Optional[LoopMode] = Field(default=LoopMode.COUNT, description="Loop mode")
+    max_iterations: int = Field(default=5, ge=1, le=100)
+    over: Optional[str] = Field(
+        None, max_length=10000,
+        description="Expression to iterate over. Can be JSON array, ${steps.X.output}, or template variable"
+    )
+    item_variable: Optional[str] = Field(
+        default="item",
+        pattern=r"^[a-zA-Z][a-zA-Z0-9_]*$",
+        description="Variable name for current item in foreach mode (accessible as ${loop.item})"
+    )
+    exit_condition: Optional[str] = Field(
+        None, max_length=1000,
+        description="Expression that when 'true'/'done'/'complete' exits the loop"
+    )
+    break_condition: Optional[str] = Field(
+        None, max_length=1000,
+        description="Expression to break loop early (evaluated after each iteration)"
+    )
+    continue_condition: Optional[str] = Field(
+        None, max_length=1000,
+        description="Expression to skip to next iteration (evaluated before each step)"
+    )
+    collect_results: bool = Field(
+        default=True,
+        description="Whether to collect all iteration results into an array"
+    )
     steps: Optional[List[LoopInnerStep]] = Field(None, max_length=10)
+
+    # Approval step fields (human-in-the-loop)
+    approval_message: Optional[str] = Field(
+        None, max_length=5000,
+        description="Message to display to approvers explaining what needs approval"
+    )
+    approvers: Optional[List[str]] = Field(
+        None, max_length=50,
+        description="List of user IDs, emails, or role patterns (e.g., 'role:admin') who can approve"
+    )
+    required_approvals: int = Field(
+        default=1, ge=1, le=10,
+        description="Number of approvals required (1 for single approver)"
+    )
+    approval_timeout_seconds: Optional[int] = Field(
+        None, ge=60, le=604800,  # 1 min to 7 days
+        description="Timeout in seconds for approval (None = no timeout)"
+    )
+    on_reject: Optional[str] = Field(
+        default="fail",
+        description="Action on rejection: 'fail', 'skip', or step_id to jump to"
+    )
 
     @field_validator("on_error")
     @classmethod
@@ -97,8 +168,9 @@ class WorkflowStep(BaseModel):
     def validate_step_type_fields(self) -> "WorkflowStep":
         """Validate that required fields are present for each step type."""
         if self.type == StepType.AGENT:
-            if not self.agent_id:
-                raise ValueError(f"Step '{self.id}': agent step requires agent_id")
+            # Allow either agent_id (ready) or suggested_agent (draft)
+            if not self.agent_id and not self.suggested_agent:
+                raise ValueError(f"Step '{self.id}': agent step requires agent_id or suggested_agent")
 
         elif self.type == StepType.PARALLEL:
             if not self.branches or len(self.branches) == 0:
@@ -119,6 +191,23 @@ class WorkflowStep(BaseModel):
         elif self.type == StepType.LOOP:
             if not self.steps or len(self.steps) == 0:
                 raise ValueError(f"Step '{self.id}': loop step requires inner steps")
+            # Validate foreach mode requires 'over' expression
+            if self.loop_mode == LoopMode.FOREACH and not self.over:
+                raise ValueError(
+                    f"Step '{self.id}': foreach loop mode requires 'over' expression"
+                )
+            # Validate until mode requires exit_condition
+            if self.loop_mode == LoopMode.UNTIL and not self.exit_condition:
+                raise ValueError(
+                    f"Step '{self.id}': until loop mode requires 'exit_condition'"
+                )
+
+        elif self.type == StepType.APPROVAL:
+            if not self.approval_message:
+                raise ValueError(
+                    f"Step '{self.id}': approval step requires approval_message"
+                )
+            # Approvers are optional - if not set, workflow creator can approve
 
         return self
 
@@ -220,6 +309,29 @@ class WorkflowDefinition(BaseModel):
             if step.id == step_id:
                 return step
         return None
+
+    def is_ready_to_run(self) -> bool:
+        """Check if all agent steps have agent_id (not just suggested_agent)."""
+        for step in self.steps:
+            if step.type == StepType.AGENT:
+                if not step.agent_id:
+                    return False
+            elif step.type == StepType.PARALLEL and step.branches:
+                for branch in step.branches:
+                    if not branch.agent_id:
+                        return False
+        return True
+
+    def get_draft_steps(self) -> List[WorkflowStep]:
+        """Get all steps that have suggested_agent but no agent_id."""
+        return [
+            step for step in self.steps
+            if step.type == StepType.AGENT and not step.agent_id and step.suggested_agent
+        ]
+
+    def get_missing_agent_ids(self) -> List[str]:
+        """Get step IDs that need agents created."""
+        return [step.id for step in self.get_draft_steps()]
 
 
 def validate_workflow_definition(data: Dict[str, Any]) -> WorkflowDefinition:

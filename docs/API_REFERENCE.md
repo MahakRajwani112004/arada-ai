@@ -1,4 +1,4 @@
-# Magure AI Platform - API Reference
+# MagoneAI Platform - API Reference
 
 Base URL: `http://localhost:8000/api/v1`
 
@@ -8,12 +8,16 @@ Base URL: `http://localhost:8000/api/v1`
 
 | Domain | Endpoints | Description |
 |--------|-----------|-------------|
-| Agents | 4 | Create, list, get, delete agents |
-| Workflow | 2 | Execute workflows, check status |
+| Agents | 5 | Create, list, get, update, delete agents |
+| Skills | 6 | Create, list, get, update, delete skills + file upload |
+| Workflows | 6 | Create, list, get, update, delete workflows + executions |
+| Workflow Execution | 2 | Execute workflows, check status |
 | MCP | 6 | Manage MCP server connections |
 | OAuth | 3 | Google OAuth flow |
+| Knowledge | 4 | Knowledge base management |
+| Auth | 3 | Authentication endpoints |
 
-**Total: 15 endpoints**
+**Total: 35+ endpoints**
 
 ---
 
@@ -136,7 +140,318 @@ DELETE /agents/{agent_id}
 
 ---
 
-## 2. Workflow API
+## 2. Skills API
+
+### List Skills
+```
+GET /skills
+```
+
+List all available skills.
+
+**Query Parameters:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| category | No | Filter by category (e.g., `domain_expertise`) |
+| status | No | Filter by status (`draft`, `published`) |
+| limit | No | Pagination limit (default: 50) |
+| offset | No | Pagination offset (default: 0) |
+
+**Response:** `200 OK`
+```json
+{
+  "skills": [
+    {
+      "id": "legal-contract-analysis",
+      "name": "Legal Contract Analysis",
+      "category": "domain_expertise",
+      "version": 1,
+      "status": "published",
+      "rating_avg": 4.5,
+      "install_count": 12
+    }
+  ],
+  "total": 1
+}
+```
+
+---
+
+### Create Skill
+```
+POST /skills
+```
+
+Create a new skill with domain expertise.
+
+**Request Body:**
+```json
+{
+  "name": "Legal Contract Analysis",
+  "category": "domain_expertise",
+  "tags": ["legal", "contracts", "review"],
+  "definition": {
+    "capability": {
+      "expertise": {
+        "domain": "legal",
+        "terminology": [
+          {
+            "term": "Force Majeure",
+            "definition": "Unforeseeable circumstances preventing fulfillment",
+            "aliases": ["act of god"]
+          }
+        ],
+        "reasoning_patterns": [
+          {
+            "name": "Contract Review Process",
+            "steps": [
+              "Identify parties and dates",
+              "Review key terms",
+              "Analyze obligations",
+              "Check liability limitations"
+            ]
+          }
+        ],
+        "examples": [
+          {
+            "input": "Review this NDA",
+            "output": "Key findings: 1. Non-compete is 3 years..."
+          }
+        ]
+      }
+    },
+    "resources": {
+      "files": [],
+      "code_snippets": []
+    },
+    "parameters": [
+      {
+        "name": "analysis_depth",
+        "type": "select",
+        "options": ["quick", "standard", "comprehensive"],
+        "default_value": "standard"
+      }
+    ]
+  }
+}
+```
+
+**Response:** `201 Created`
+```json
+{
+  "id": "skill_abc123",
+  "name": "Legal Contract Analysis",
+  "category": "domain_expertise",
+  "version": 1,
+  "status": "draft"
+}
+```
+
+---
+
+### Get Skill
+```
+GET /skills/{skill_id}
+```
+
+Get complete skill definition.
+
+**Response:** `200 OK`
+```json
+{
+  "id": "legal-contract-analysis",
+  "name": "Legal Contract Analysis",
+  "category": "domain_expertise",
+  "definition": {
+    "capability": {...},
+    "resources": {...},
+    "parameters": [...]
+  },
+  "version": 1,
+  "status": "published"
+}
+```
+
+---
+
+### Update Skill
+```
+PUT /skills/{skill_id}
+```
+
+Update an existing skill.
+
+**Request Body:** Same as Create Skill
+
+**Response:** `200 OK`
+
+---
+
+### Delete Skill
+```
+DELETE /skills/{skill_id}
+```
+
+**Response:** `204 No Content`
+
+---
+
+### Upload Skill File
+```
+POST /skills/{skill_id}/files
+```
+
+Upload a reference document or template.
+
+**Content-Type:** `multipart/form-data`
+
+**Form Data:**
+| Field | Type | Description |
+|-------|------|-------------|
+| file | File | The file to upload |
+| file_type | String | `reference` or `template` |
+| description | String | File description |
+
+**Response:** `201 Created`
+```json
+{
+  "file_id": "file_xyz123",
+  "filename": "contract-template.docx",
+  "file_type": "template",
+  "size_bytes": 45678
+}
+```
+
+---
+
+## 3. Workflows API
+
+### List Workflows
+```
+GET /workflows
+```
+
+**Response:** `200 OK`
+```json
+{
+  "workflows": [
+    {
+      "id": "customer-support-pipeline",
+      "name": "Customer Support Pipeline",
+      "description": "Multi-step customer support flow",
+      "category": "support",
+      "version": 2,
+      "created_at": "2024-01-15T10:00:00Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+---
+
+### Create Workflow
+```
+POST /workflows
+```
+
+**Request Body:**
+```json
+{
+  "name": "Customer Support Pipeline",
+  "description": "Routes and handles customer requests",
+  "category": "support",
+  "steps": [
+    {
+      "id": "classify",
+      "type": "agent",
+      "agent_id": "intent-classifier",
+      "input": "${user_input}"
+    },
+    {
+      "id": "route",
+      "type": "conditional",
+      "condition_source": "${steps.classify.intent}",
+      "conditional_branches": {
+        "billing": "billing-agent-step",
+        "technical": "tech-agent-step",
+        "general": "general-agent-step"
+      }
+    }
+  ],
+  "entry_step": "classify",
+  "connections": [
+    {"from": "classify", "to": "route"}
+  ]
+}
+```
+
+**Response:** `201 Created`
+
+---
+
+### Get Workflow
+```
+GET /workflows/{workflow_id}
+```
+
+**Response:** `200 OK` with full workflow definition
+
+---
+
+### Update Workflow
+```
+PUT /workflows/{workflow_id}
+```
+
+**Request Body:** Same as Create Workflow
+
+**Response:** `200 OK`
+
+---
+
+### Delete Workflow
+```
+DELETE /workflows/{workflow_id}
+```
+
+**Response:** `204 No Content`
+
+---
+
+### Get Workflow Executions
+```
+GET /workflows/{workflow_id}/executions
+```
+
+List execution history for a workflow.
+
+**Query Parameters:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| status | No | Filter by status (`RUNNING`, `COMPLETED`, `FAILED`) |
+| limit | No | Pagination limit |
+
+**Response:** `200 OK`
+```json
+{
+  "executions": [
+    {
+      "id": "exec_abc123",
+      "workflow_id": "customer-support-pipeline",
+      "status": "COMPLETED",
+      "started_at": "2024-01-15T10:30:00Z",
+      "completed_at": "2024-01-15T10:30:45Z",
+      "steps_executed": ["classify", "route", "billing-agent-step"]
+    }
+  ],
+  "total": 1
+}
+```
+
+---
+
+## 4. Workflow Execution API
 
 ### Execute Workflow
 ```
@@ -197,7 +512,7 @@ GET /workflow/status/{workflow_id}
 
 ---
 
-## 3. MCP API
+## 5. MCP API
 
 ### List Catalog
 ```
@@ -394,7 +709,7 @@ GET /mcp/health
 
 ---
 
-## 4. OAuth API
+## 6. OAuth API
 
 ### Start Google OAuth Flow
 ```

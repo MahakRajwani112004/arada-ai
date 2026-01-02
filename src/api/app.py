@@ -1,4 +1,7 @@
 """FastAPI Application - Main entry point."""
+from dotenv import load_dotenv
+load_dotenv()  # Load .env before any other imports read env vars
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -15,10 +18,11 @@ from src.api.errors import (
     http_exception_handler,
 )
 from src.api.middleware import RequestLoggingMiddleware
-from src.api.routers import agents, mcp, oauth, workflow, workflow_definitions
+from src.api.routers import admin, agents, approvals, auth, knowledge, mcp, monitoring, oauth, secrets, skills, workflow, workflows
+from src.monitoring import MetricsMiddleware, get_metrics_router
 from src.config.logging import get_logger, setup_logging
 from src.config.settings import get_settings
-from src.mcp import shutdown_mcp_manager
+from src.mcp import reconnect_mcp_servers, shutdown_mcp_manager
 from src.secrets import init_secrets_manager
 from src.storage import close_database, init_database
 from src.tools.builtin import register_builtin_tools
@@ -42,7 +46,9 @@ async def lifespan(app: FastAPI):
     await init_database()
     init_secrets_manager()
     register_builtin_tools()
-    logger.info("application_started", name="Magure AI Platform", version="0.1.0")
+    # Reconnect MCP servers from database
+    mcp_count = await reconnect_mcp_servers()
+    logger.info("application_started", name="Magure AI Platform", version="0.1.0", mcp_servers=mcp_count)
     yield
     # Shutdown
     await shutdown_mcp_manager()
@@ -69,6 +75,10 @@ app.add_exception_handler(Exception, generic_exception_handler)
 # Request logging middleware
 app.add_middleware(RequestLoggingMiddleware)
 
+# Prometheus metrics middleware (captures HTTP request metrics)
+if settings.monitoring_enabled:
+    app.add_middleware(MetricsMiddleware)
+
 # CORS middleware - using settings instead of hardcoded values
 app.add_middleware(
     CORSMiddleware,
@@ -79,18 +89,71 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(admin.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
+app.include_router(approvals.router, prefix="/api/v1")
+app.include_router(knowledge.router, prefix="/api/v1")
 app.include_router(mcp.router, prefix="/api/v1")
 app.include_router(oauth.router, prefix="/api/v1")
+app.include_router(secrets.router, prefix="/api/v1")
+app.include_router(skills.router, prefix="/api/v1")
 app.include_router(workflow.router, prefix="/api/v1")
+app.include_router(workflows.router, prefix="/api/v1")
+app.include_router(monitoring.router, prefix="/api/v1")
 
-app.include_router(workflow_definitions.router, prefix="/api/v1")
+# Prometheus metrics endpoint
+if settings.monitoring_enabled:
+    app.include_router(get_metrics_router())
 
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check endpoint (internal Docker healthcheck)."""
     return {"status": "healthy", "version": "0.1.0"}
+
+
+@app.get("/api/v1/health")
+async def api_health_check():
+    """
+    API health check endpoint (external).
+
+    Checks database and redis connectivity.
+    """
+    from datetime import datetime, timezone
+    from sqlalchemy import text
+    from src.storage import get_async_session
+    from redis.asyncio import Redis
+
+    db_status = "disconnected"
+    redis_status = "disconnected"
+
+    # Check database
+    try:
+        async with get_async_session() as session:
+            await session.execute(text("SELECT 1"))
+            db_status = "connected"
+    except Exception:
+        pass
+
+    # Check Redis
+    try:
+        redis = Redis.from_url(settings.redis_url)
+        await redis.ping()
+        await redis.close()
+        redis_status = "connected"
+    except Exception:
+        pass
+
+    overall = "healthy" if db_status == "connected" and redis_status == "connected" else "degraded"
+
+    return {
+        "status": overall,
+        "version": "0.1.0",
+        "database": db_status,
+        "redis": redis_status,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
 
 
 @app.get("/")

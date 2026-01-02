@@ -1,4 +1,5 @@
 """SQLAlchemy ORM models for database storage."""
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -13,6 +14,132 @@ class Base(DeclarativeBase):
     pass
 
 
+# Default hardcoded organization ID
+DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000000"
+
+
+class OrganizationModel(Base):
+    """SQLAlchemy model for organizations table."""
+
+    __tablename__ = "organizations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<OrganizationModel(id={self.id!r}, name={self.name!r})>"
+
+
+class UserModel(Base):
+    """SQLAlchemy model for users table."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_superuser: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # Organization (hardcoded to default org for now)
+    org_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        default=DEFAULT_ORG_ID,
+    )
+
+    # Tracking
+    invited_by: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True
+    )
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserModel(id={self.id!r}, email={self.email!r}, is_superuser={self.is_superuser})>"
+
+
+class UserInviteModel(Base):
+    """SQLAlchemy model for user invites table."""
+
+    __tablename__ = "user_invites"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    invite_code: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    invited_by: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False
+    )
+    org_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id"), nullable=False
+    )
+    is_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    used_by: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserInviteModel(id={self.id!r}, email={self.email!r}, is_used={self.is_used})>"
+
+
+class RefreshTokenModel(Base):
+    """SQLAlchemy model for refresh tokens."""
+
+    __tablename__ = "refresh_tokens"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    is_revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class AgentModel(Base):
     """SQLAlchemy model for agents table."""
 
@@ -20,6 +147,11 @@ class AgentModel(Base):
 
     # Primary key
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Owner - each user owns their own agents
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     # Indexed columns for queries
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
@@ -96,6 +228,11 @@ class MCPServerModel(Base):
     # Primary key
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
 
+    # Owner - each user owns their own MCP servers
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
     # Server info
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
     template: Mapped[str] = mapped_column(String(100), nullable=True, index=True)
@@ -105,6 +242,9 @@ class MCPServerModel(Base):
 
     # Vault reference for credentials (NOT the actual credentials!)
     secret_ref: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    # OAuth token reference (for cascade delete when server is removed)
+    oauth_token_ref: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     # Headers config (non-sensitive headers only)
     headers_config: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default={})
@@ -142,6 +282,11 @@ class WorkflowModel(Base):
 
     # Primary key (pattern: [a-zA-Z][a-zA-Z0-9_-]{0,99})
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Owner - each user owns their own workflows
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     # Basic info
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
@@ -204,6 +349,11 @@ class WorkflowExecutionModel(Base):
     # Primary key (format: execution-{uuid})
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
 
+    # Owner - track who executed the workflow
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
     # Reference to workflow
     workflow_id: Mapped[str] = mapped_column(
         String(100), ForeignKey("workflows.id"), nullable=False, index=True
@@ -254,3 +404,522 @@ class WorkflowExecutionModel(Base):
     def __repr__(self) -> str:
         """String representation."""
         return f"<WorkflowExecutionModel(id={self.id!r}, workflow_id={self.workflow_id!r}, status={self.status!r})>"
+
+
+class KnowledgeBaseModel(Base):
+    """SQLAlchemy model for knowledge bases.
+
+    A knowledge base is a collection of documents that can be searched
+    using vector similarity. Used by RAGAgent and FullAgent types.
+    """
+
+    __tablename__ = "knowledge_bases"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Owner - each user owns their own knowledge bases
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Basic info
+    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    # Vector store configuration
+    collection_name: Mapped[str] = mapped_column(
+        String(100), nullable=False, unique=True
+    )
+    embedding_model: Mapped[str] = mapped_column(
+        String(100), nullable=False, default="text-embedding-3-small"
+    )
+
+    # Stats
+    document_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Status: active, indexing, error
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active", index=True
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Metadata
+    created_by: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<KnowledgeBaseModel(id={self.id!r}, name={self.name!r}, docs={self.document_count})>"
+
+
+class APIKeyModel(Base):
+    """SQLAlchemy model for user API keys.
+
+    API keys are used for programmatic access to the API.
+    The key itself is hashed for security - we only store the hash.
+    """
+
+    __tablename__ = "api_keys"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Owner - each user owns their own API keys
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Key info
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    key_prefix: Mapped[str] = mapped_column(String(20), nullable=False)  # First 8 chars for display
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+
+    # Status
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Tracking
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<APIKeyModel(id={self.id!r}, name={self.name!r}, prefix={self.key_prefix!r})>"
+
+
+class LLMCredentialModel(Base):
+    """SQLAlchemy model for user LLM provider credentials.
+
+    Stores references to API keys for LLM providers (OpenAI, Anthropic, etc.)
+    that users provide for their own usage. Actual API keys are stored in vault.
+    """
+
+    __tablename__ = "llm_credentials"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Owner - each user owns their own LLM credentials
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Provider info
+    provider: Mapped[str] = mapped_column(
+        String(50), nullable=False, index=True
+    )  # openai, anthropic, azure, etc.
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    # Vault reference for API key (NOT the actual key!)
+    secret_ref: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    # Preview of the API key (first 8 chars for display)
+    api_key_preview: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Optional: custom API base URL for enterprise/proxy setups
+    api_base: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    # Status
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Tracking
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<LLMCredentialModel(id={self.id!r}, provider={self.provider!r}, user_id={self.user_id!r})>"
+
+
+class KnowledgeDocumentModel(Base):
+    """SQLAlchemy model for documents within a knowledge base.
+
+    Tracks individual documents uploaded to a knowledge base,
+    their processing status, and chunk counts.
+    """
+
+    __tablename__ = "knowledge_documents"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Reference to knowledge base
+    knowledge_base_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # File info
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(20), nullable=False)  # pdf, txt, md, docx
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)  # bytes
+    file_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # local storage path
+
+    # Processing info
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Status: pending, processing, indexed, error
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", index=True
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Document metadata
+    tags: Mapped[List[str]] = mapped_column(ARRAY(String), nullable=False, default=[])
+    category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    author: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    custom_metadata: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default={})
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    indexed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<KnowledgeDocumentModel(id={self.id!r}, filename={self.filename!r}, status={self.status!r})>"
+
+
+class DocumentTagModel(Base):
+    """SQLAlchemy model for document tag autocomplete suggestions.
+
+    Stores unique tags used across documents in a knowledge base
+    for autocomplete functionality.
+    """
+
+    __tablename__ = "document_tags"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Reference to knowledge base
+    knowledge_base_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Tag info
+    tag: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    usage_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<DocumentTagModel(kb_id={self.knowledge_base_id!r}, tag={self.tag!r}, count={self.usage_count})>"
+
+class SkillModel(Base):
+    """SQLAlchemy model for skills table.
+    Skills are domain expertise packages that enhance agent capabilities.
+    They contain terminology, reasoning patterns, examples, templates,
+    and prompt enhancements that get injected into agent prompts.
+    """
+    __tablename__ = "skills"
+    # Primary key
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    # Owner - each user owns their own skills
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Basic info
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    category: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    tags: Mapped[List[str]] = mapped_column(ARRAY(String), nullable=False, default=[])
+
+    # Full skill definition as JSONB
+    definition_json: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+    # Versioning
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    # Status: draft, published, archived
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="draft", index=True
+    )
+
+    # Marketplace
+    is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    marketplace_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    rating_avg: Mapped[Optional[float]] = mapped_column(
+        Integer, nullable=True
+    )  # Stored as int * 10 for precision
+    rating_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    install_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Metadata
+    created_by: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<SkillModel(id={self.id!r}, name={self.name!r}, category={self.category!r})>"
+
+class SkillVersionModel(Base):
+    """SQLAlchemy model for skill version history.
+    Tracks changes to skill definitions over time for rollback capability.
+    """
+
+    __tablename__ = "skill_versions"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # Reference to skill
+    skill_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("skills.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Version number
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Full skill definition at this version
+    definition_json: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+    # Change description
+    changelog: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Timestamp
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<SkillVersionModel(skill_id={self.skill_id!r}, version={self.version})>"
+
+class SkillExecutionModel(Base):
+
+    """SQLAlchemy model for skill execution tracking.
+    Tracks when skills are used by agents for analytics and A/B testing.
+    """
+    __tablename__ = "skill_executions"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    # References
+    skill_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("skills.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    agent_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Execution details
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    duration_ms: Mapped[float] = mapped_column(Integer, nullable=False)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Context
+    task_preview: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # First 500 chars of input
+ 
+    # Timestamp
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+ 
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<SkillExecutionModel(skill_id={self.skill_id!r}, success={self.success})>"
+
+
+class WorkflowApprovalModel(Base):
+    """SQLAlchemy model for workflow approval requests.
+
+    Tracks human approval gates in workflow executions.
+    Used with Temporal signals to pause and resume workflows.
+    """
+
+    __tablename__ = "workflow_approvals"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Workflow execution context
+    workflow_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    execution_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    step_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    temporal_workflow_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Approval details
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    context: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default={})
+
+    # Who can approve (user IDs, emails, or role patterns like "role:admin")
+    approvers: Mapped[List[str]] = mapped_column(ARRAY(String), nullable=False, default=[])
+    required_approvals: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    # Status: pending, approved, rejected, expired
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", index=True
+    )
+
+    # Approval tracking
+    approvals_received: Mapped[List[Dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=[]
+    )
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Timeout
+    timeout_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    responded_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # User tracking
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    responded_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<WorkflowApprovalModel(id={self.id!r}, workflow={self.workflow_id!r}, status={self.status!r})>"
+
+
+class WorkflowScheduleModel(Base):
+    """SQLAlchemy model for workflow schedules.
+
+    Tracks cron-based scheduled executions of workflows.
+    Integrates with Temporal Schedules for reliable execution.
+    """
+
+    __tablename__ = "workflow_schedules"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Reference to workflow
+    workflow_id: Mapped[str] = mapped_column(
+        String(100), ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Owner
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Schedule configuration
+    cron_expression: Mapped[str] = mapped_column(String(100), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(100), nullable=False, default="UTC")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Input for scheduled runs
+    input_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    context_json: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default={})
+
+    # Temporal integration
+    temporal_schedule_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Tracking
+    next_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    run_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<WorkflowScheduleModel(id={self.id!r}, workflow={self.workflow_id!r}, cron={self.cron_expression!r})>"

@@ -237,10 +237,19 @@ Return only the final answer, no explanation of your selection process."""
 
         provider = LLMClient.get_provider(config)
 
-        response = await provider.complete([
-            LLMMessage(role="system", content="You are a result evaluator."),
-            LLMMessage(role="user", content=prompt),
-        ])
+        # user_id is required for analytics - get from config
+        user_id = self.llm_config.get("user_id")
+        if not user_id:
+            # Fall back to a system user for internal operations
+            user_id = "system"
+
+        response = await provider.complete(
+            [
+                LLMMessage(role="system", content="You are a result evaluator."),
+                LLMMessage(role="user", content=prompt),
+            ],
+            user_id=user_id,
+        )
 
         return response.content
 

@@ -1,16 +1,22 @@
 """RAGAgent - LLM with knowledge base retrieval."""
-from typing import List
+from typing import List, Optional
 
 from src.agents.base import BaseAgent
 from src.knowledge.knowledge_base import KnowledgeBase
 from src.llm import LLMClient, LLMMessage
 from src.models.agent_config import AgentConfig
 from src.models.responses import AgentContext, AgentResponse
+from src.skills.models import Skill
 
 
 class RAGAgent(BaseAgent):
     """
     Agent that retrieves context before generating response.
+
+    Components Used:
+    - Skills: YES (injected into system prompt via build_system_prompt)
+    - Tools: NO
+    - Knowledge Base: YES (retrieval before LLM call)
 
     Use cases:
     - Question answering over documents
@@ -19,9 +25,19 @@ class RAGAgent(BaseAgent):
     - Documentation helpers
     """
 
-    def __init__(self, config: AgentConfig):
-        """Initialize RAGAgent."""
-        super().__init__(config)
+    def __init__(
+        self,
+        config: AgentConfig,
+        skills: Optional[List[Skill]] = None,
+    ):
+        """
+        Initialize RAGAgent.
+
+        Args:
+            config: Agent configuration
+            skills: List of Skill objects for domain expertise
+        """
+        super().__init__(config, skills=skills)
         if not config.llm_config:
             raise ValueError("RAGAgent requires llm_config")
         if not config.knowledge_base:
@@ -41,12 +57,13 @@ class RAGAgent(BaseAgent):
         self,
         context: AgentContext,
         retrieved_docs: List[str],
+        selected_skills: List = None,
     ) -> List[LLMMessage]:
         """Build LLM messages with retrieved context."""
         messages = []
 
-        # Build enhanced system prompt with context
-        system_prompt = self.build_system_prompt()
+        # Build enhanced system prompt with context and selected skills
+        system_prompt = self.build_system_prompt(selected_skills=selected_skills)
 
         if retrieved_docs:
             context_str = "\n\n".join([
@@ -66,9 +83,15 @@ class RAGAgent(BaseAgent):
 
         return messages
 
-    async def execute(self, context: AgentContext) -> AgentResponse:
+    async def _execute_impl(self, context: AgentContext) -> AgentResponse:
         """Execute RAG: retrieve then generate."""
         await self._ensure_kb_initialized()
+
+        # Select relevant skills for this query
+        selected_skills = await self._select_skills_for_query(
+            context.user_input,
+            user_id=context.user_id,
+        )
 
         # Retrieve relevant documents
         retrieval_result = await self._kb.search(context.user_input)
@@ -77,11 +100,19 @@ class RAGAgent(BaseAgent):
             doc.content for doc in retrieval_result.documents
         ]
 
-        # Build messages with context
-        messages = self._build_messages_with_context(context, retrieved_docs)
+        # Build messages with context and selected skills
+        messages = self._build_messages_with_context(
+            context, retrieved_docs, selected_skills=selected_skills
+        )
 
         # Generate response
-        response = await self._provider.complete(messages)
+        response = await self._provider.complete(
+            messages,
+            user_id=context.user_id,
+            agent_id=self.id,
+            request_id=context.request_id,
+            workflow_id=context.workflow_id,
+        )
 
         return AgentResponse(
             content=response.content,

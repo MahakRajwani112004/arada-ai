@@ -1,0 +1,392 @@
+"use client";
+
+import { useState, useMemo } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { ExternalLink, Play, Bot, GitBranch, Split } from "lucide-react";
+import { Header } from "@/components/layout/header";
+import { PageContainer } from "@/components/layout/page-container";
+import { WorkflowHeader } from "@/components/workflows/workflow-header";
+import { BlockedWorkflowBanner } from "@/components/workflows/blocked-workflow-banner";
+import { RunWorkflowPanel } from "@/components/workflows/execution/run-workflow-panel";
+import { ExecutionHistory } from "@/components/workflows/execution/execution-history";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import {
+  useWorkflow,
+  useWorkflowExecutions,
+  useDeleteWorkflow,
+  useExecuteWorkflow,
+} from "@/lib/hooks/use-workflows";
+import { useAgents } from "@/lib/hooks/use-agents";
+
+function WorkflowDetailSkeleton() {
+  return (
+    <div className="space-y-6">
+      <Skeleton className="h-6 w-32" />
+      <div className="rounded-lg border border-border bg-card p-6">
+        <div className="flex items-start gap-4">
+          <Skeleton className="h-12 w-12 rounded-lg" />
+          <div className="flex-1">
+            <Skeleton className="h-8 w-48" />
+            <Skeleton className="mt-2 h-4 w-96" />
+            <div className="mt-3 flex gap-2">
+              <Skeleton className="h-6 w-24" />
+              <Skeleton className="h-6 w-16" />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <Skeleton className="h-[400px] rounded-lg" />
+        </div>
+        <div className="space-y-4">
+          <Skeleton className="h-[200px] rounded-lg" />
+          <Skeleton className="h-[200px] rounded-lg" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function WorkflowDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const workflowId = params.id as string;
+
+  const [activeTab, setActiveTab] = useState("definition");
+
+  const { data: workflow, isLoading: isLoadingWorkflow, error } = useWorkflow(workflowId);
+  const { data: executionsData, isLoading: isLoadingExecutions } = useWorkflowExecutions(workflowId);
+  const { data: agentsData } = useAgents();
+  const deleteWorkflow = useDeleteWorkflow();
+  const executeWorkflow = useExecuteWorkflow();
+
+  // Compute agent configuration stats
+  const agentStats = useMemo(() => {
+    if (!workflow?.definition?.steps) {
+      return { totalSteps: 0, configuredSteps: 0, missingAgents: [] as string[] };
+    }
+
+    const existingAgentIds = new Set(agentsData?.agents?.map((a) => a.id) || []);
+    const agentSteps = workflow.definition.steps.filter(s => s.type === "agent");
+    const totalSteps = agentSteps.length;
+
+    let configuredSteps = 0;
+    const missingAgents: string[] = [];
+
+    for (const step of agentSteps) {
+      if (step.agent_id) {
+        if (existingAgentIds.has(step.agent_id)) {
+          configuredSteps++;
+        } else {
+          missingAgents.push(step.agent_id);
+        }
+      }
+      // Steps with suggested_agent but no agent_id are not configured yet
+    }
+
+    return { totalSteps, configuredSteps, missingAgents };
+  }, [workflow, agentsData]);
+
+  const { totalSteps, configuredSteps, missingAgents } = agentStats;
+  const isBlocked = missingAgents.length > 0 || configuredSteps < totalSteps;
+
+  const handleRun = (userInput: string) => {
+    executeWorkflow.mutate(
+      { workflowId, request: { user_input: userInput } },
+      {
+        onSuccess: (data) => {
+          // Could open execution panel or navigate to execution view
+          console.log("Execution started:", data);
+        },
+      }
+    );
+  };
+
+  const handleDelete = () => {
+    if (confirm("Are you sure you want to delete this workflow?")) {
+      deleteWorkflow.mutate(workflowId, {
+        onSuccess: () => router.push("/workflows"),
+      });
+    }
+  };
+
+  const handleEdit = () => {
+    router.push(`/workflows/${workflowId}/edit`);
+  };
+
+  const handleCreateAgents = () => {
+    // Navigate to agent creation with context about which agents are needed
+    // For now, navigate to agents page
+    router.push("/agents");
+  };
+
+  if (isLoadingWorkflow) {
+    return (
+      <>
+        <Header />
+        <PageContainer>
+          <WorkflowDetailSkeleton />
+        </PageContainer>
+      </>
+    );
+  }
+
+  if (error || !workflow) {
+    return (
+      <>
+        <Header />
+        <PageContainer>
+          <div className="flex flex-col items-center justify-center py-16">
+            <h2 className="text-lg font-semibold">Workflow not found</h2>
+            <p className="mt-2 text-muted-foreground">
+              The workflow you&apos;re looking for doesn&apos;t exist or was deleted.
+            </p>
+          </div>
+        </PageContainer>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Header />
+      <PageContainer>
+        <div className="space-y-6">
+          <WorkflowHeader
+            workflow={workflow}
+            isBlocked={isBlocked}
+            executionCount={executionsData?.executions?.length ?? 0}
+            totalSteps={totalSteps}
+            configuredSteps={configuredSteps}
+            onRun={() => handleRun("")}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+          />
+
+          {isBlocked && (
+            <BlockedWorkflowBanner
+              missingAgents={missingAgents}
+              onCreateAgents={handleCreateAgents}
+            />
+          )}
+
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList>
+              <TabsTrigger value="definition">Definition</TabsTrigger>
+              <TabsTrigger value="executions">
+                Executions ({executionsData?.executions?.length ?? 0})
+              </TabsTrigger>
+              <TabsTrigger value="settings">Settings</TabsTrigger>
+            </TabsList>
+
+            <div className="mt-6">
+              <TabsContent value="definition" className="mt-0">
+                <div className="grid gap-6 lg:grid-cols-3">
+                  <div className="lg:col-span-2">
+                    <Card>
+                      <CardContent className="p-6">
+                        {/* Steps Summary */}
+                        <div className="space-y-4">
+                          <div className="flex items-center justify-between">
+                            <h3 className="font-semibold">Workflow Steps</h3>
+                            <Button
+                              onClick={() => router.push(`/workflows/${workflowId}/canvas`)}
+                              className="gap-2"
+                            >
+                              <ExternalLink className="h-4 w-4" />
+                              Open Canvas Editor
+                            </Button>
+                          </div>
+
+                          {workflow.definition?.steps && workflow.definition.steps.length > 0 ? (
+                            <div className="space-y-3">
+                              {/* Step count summary */}
+                              <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                                <span>{workflow.definition.steps.length} step{workflow.definition.steps.length !== 1 ? "s" : ""}</span>
+                                {workflow.definition.steps.filter(s => s.type === "agent").length > 0 && (
+                                  <span className="flex items-center gap-1">
+                                    <Bot className="h-3.5 w-3.5" />
+                                    {workflow.definition.steps.filter(s => s.type === "agent").length} agent{workflow.definition.steps.filter(s => s.type === "agent").length !== 1 ? "s" : ""}
+                                  </span>
+                                )}
+                                {workflow.definition.steps.filter(s => s.type === "conditional").length > 0 && (
+                                  <span className="flex items-center gap-1">
+                                    <GitBranch className="h-3.5 w-3.5" />
+                                    {workflow.definition.steps.filter(s => s.type === "conditional").length} conditional
+                                  </span>
+                                )}
+                                {workflow.definition.steps.filter(s => s.type === "parallel").length > 0 && (
+                                  <span className="flex items-center gap-1">
+                                    <Split className="h-3.5 w-3.5" />
+                                    {workflow.definition.steps.filter(s => s.type === "parallel").length} parallel
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Simple step list */}
+                              <div className="rounded-lg border divide-y">
+                                {workflow.definition.steps.map((step, index) => (
+                                  <div key={step.id} className="flex items-center gap-3 p-3">
+                                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-medium">
+                                      {index + 1}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="font-medium text-sm truncate">
+                                        {step.name || step.agent_id || step.id}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground capitalize">
+                                        {step.type}
+                                      </p>
+                                    </div>
+                                    {step.type === "agent" && step.agent_id && !agentsData?.agents?.find(a => a.id === step.agent_id) && (
+                                      <span className="text-xs text-red-500">Missing agent</span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-center justify-center py-12 text-center">
+                              <div className="rounded-full bg-muted p-3 mb-3">
+                                <Play className="h-6 w-6 text-muted-foreground" />
+                              </div>
+                              <p className="text-muted-foreground mb-4">
+                                No steps defined yet
+                              </p>
+                              <Button
+                                onClick={() => router.push(`/workflows/${workflowId}/canvas`)}
+                                variant="outline"
+                              >
+                                Open Canvas to Add Steps
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                  <div className="space-y-4">
+                    <RunWorkflowPanel
+                      workflowId={workflowId}
+                      isBlocked={isBlocked}
+                      isExecuting={executeWorkflow.isPending}
+                      onRun={handleRun}
+                    />
+                    <ExecutionHistory
+                      executions={executionsData?.executions ?? []}
+                      isLoading={isLoadingExecutions}
+                    />
+                  </div>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="executions" className="mt-0">
+                <Card>
+                  <CardContent className="p-6">
+                    {executionsData?.executions && executionsData.executions.length > 0 ? (
+                      <div className="space-y-3">
+                        {executionsData.executions.map((execution) => (
+                          <div
+                            key={execution.id}
+                            className="flex items-center justify-between rounded-lg border border-border p-4 hover:bg-secondary/50 transition-colors cursor-pointer"
+                            onClick={() => router.push(`/workflows/executions/${execution.id}`)}
+                          >
+                            <div>
+                              <p className="font-medium">{execution.id}</p>
+                              <p className="text-sm text-muted-foreground">
+                                Started {new Date(execution.started_at).toLocaleString()}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <span
+                                className={`text-sm font-medium ${
+                                  execution.status === "COMPLETED"
+                                    ? "text-green-400"
+                                    : execution.status === "FAILED"
+                                    ? "text-red-400"
+                                    : execution.status === "RUNNING"
+                                    ? "text-blue-400"
+                                    : "text-gray-400"
+                                }`}
+                              >
+                                {execution.status}
+                              </span>
+                              {execution.duration_ms && (
+                                <p className="text-xs text-muted-foreground">
+                                  {(execution.duration_ms / 1000).toFixed(1)}s
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground text-center py-8">
+                        No executions yet. Run the workflow to see execution history.
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="settings" className="mt-0">
+                <Card>
+                  <CardContent className="p-6 space-y-6">
+                    <div>
+                      <h4 className="font-medium mb-2">Workflow Information</h4>
+                      <dl className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <dt className="text-muted-foreground">ID</dt>
+                          <dd className="font-mono">{workflow.id}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-muted-foreground">Version</dt>
+                          <dd>{workflow.version}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-muted-foreground">Category</dt>
+                          <dd className="capitalize">{workflow.category.replace("-", " ")}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-muted-foreground">Template</dt>
+                          <dd>{workflow.is_template ? "Yes" : "No"}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-muted-foreground">Created</dt>
+                          <dd>{new Date(workflow.created_at).toLocaleDateString()}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-muted-foreground">Updated</dt>
+                          <dd>{new Date(workflow.updated_at).toLocaleDateString()}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                    {workflow.tags && workflow.tags.length > 0 && (
+                      <div>
+                        <h4 className="font-medium mb-2">Tags</h4>
+                        <div className="flex flex-wrap gap-2">
+                          {workflow.tags.map((tag) => (
+                            <span
+                              key={tag}
+                              className="rounded-full bg-secondary px-3 py-1 text-xs"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </div>
+          </Tabs>
+        </div>
+      </PageContainer>
+    </>
+  );
+}

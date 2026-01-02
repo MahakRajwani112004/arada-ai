@@ -9,16 +9,22 @@ class AgentContext:
 
     user_input: str
     session_id: str
+    user_id: str  # Required for user-level analytics tracking
     conversation_history: List[Dict[str, str]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    request_id: Optional[str] = None  # For request correlation
+    workflow_id: Optional[str] = None  # For workflow correlation
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
             "user_input": self.user_input,
             "session_id": self.session_id,
+            "user_id": self.user_id,
             "conversation_history": self.conversation_history,
             "metadata": self.metadata,
+            "request_id": self.request_id,
+            "workflow_id": self.workflow_id,
         }
 
 

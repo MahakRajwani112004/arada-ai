@@ -1,8 +1,156 @@
 """API schemas for workflow management, generation, and execution history."""
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+
+# ==================== Trigger Types ====================
+
+
+class TriggerType(str, Enum):
+    """Types of workflow triggers."""
+    MANUAL = "manual"
+    WEBHOOK = "webhook"
+    SCHEDULE = "schedule"
+
+
+class ManualTriggerConfig(BaseModel):
+    """Configuration for manual triggers."""
+    pass  # No additional config needed
+
+
+class ScheduleTriggerConfig(BaseModel):
+    """Configuration for scheduled triggers (cron-based)."""
+    cron_expression: str = Field(
+        ...,
+        description="Cron expression (5 or 6 fields: min hour day month dow [year])",
+        examples=["0 9 * * 1-5", "*/15 * * * *", "0 0 1 * *"],
+    )
+    timezone: str = Field(
+        default="UTC",
+        description="IANA timezone name (e.g., 'America/New_York', 'Europe/London')"
+    )
+    enabled: bool = Field(default=True, description="Whether the schedule is active")
+    input: Optional[str] = Field(
+        None,
+        max_length=10000,
+        description="Static input to pass to workflow on each scheduled run"
+    )
+    context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional context to pass to workflow"
+    )
+    next_run_at: Optional[datetime] = Field(
+        None,
+        description="Next scheduled run time (computed)"
+    )
+    last_run_at: Optional[datetime] = Field(
+        None,
+        description="Last run time"
+    )
+    run_count: int = Field(default=0, description="Total number of scheduled runs")
+
+
+class WebhookTriggerConfig(BaseModel):
+    """Configuration for webhook triggers."""
+    token: str = Field(..., description="Unique token for webhook URL (not workflow_id)")
+    secret: Optional[str] = Field(None, description="HMAC signing secret for verification")
+    rate_limit: int = Field(60, ge=1, le=1000, description="Max requests per minute")
+    max_payload_kb: int = Field(100, ge=1, le=1000, description="Max payload size in KB")
+    expected_fields: List[str] = Field(default_factory=list, description="Expected fields in payload")
+
+
+class WorkflowTrigger(BaseModel):
+    """Workflow trigger configuration."""
+    type: TriggerType
+    manual_config: Optional[ManualTriggerConfig] = None
+    webhook_config: Optional[WebhookTriggerConfig] = None
+    schedule_config: Optional[ScheduleTriggerConfig] = None
+
+
+# ==================== Workflow Skeleton Schemas (Two-Phase Creation) ====================
+
+
+class SkeletonStep(BaseModel):
+    """A step in the workflow skeleton (no agent assigned yet)."""
+    id: str = Field(..., description="Unique step identifier")
+    name: str = Field(..., min_length=1, max_length=100, description="Human-readable step name")
+    role: str = Field(..., min_length=1, max_length=500, description="What this step should do")
+    order: int = Field(..., ge=0, description="Step order in the workflow")
+
+
+class WorkflowSkeleton(BaseModel):
+    """Workflow skeleton - structure without agent assignments."""
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str = Field("", max_length=1000)
+    trigger: WorkflowTrigger
+    steps: List[SkeletonStep] = Field(..., min_length=1, max_length=50)
+
+
+class GenerateSkeletonRequest(BaseModel):
+    """Request to generate a workflow skeleton from natural language."""
+    prompt: str = Field(..., min_length=10, max_length=2000)
+    context: Optional[str] = Field(None, max_length=1000)
+
+
+class SuggestedAgent(BaseModel):
+    """AI's suggestion for an agent to fulfill a step."""
+    name: str = Field(..., description="Suggested agent name")
+    description: Optional[str] = Field(None, description="Description of what the agent does")
+    goal: str = Field(..., description="What this agent should accomplish")
+    model: Optional[str] = Field(None, description="LLM model to use (e.g., gpt-4o)")
+    required_mcps: List[str] = Field(default_factory=list, description="MCP servers needed")
+    suggested_tools: List[str] = Field(default_factory=list, description="Tools the agent should use")
+
+
+class SkeletonStepWithSuggestion(BaseModel):
+    """Skeleton step with AI's agent suggestion."""
+    id: str
+    name: str
+    role: str
+    order: int
+    suggestion: Optional[SuggestedAgent] = None
+
+
+class GenerateSkeletonResponse(BaseModel):
+    """Response from skeleton generation."""
+    skeleton: WorkflowSkeleton
+    step_suggestions: List[SkeletonStepWithSuggestion] = Field(
+        default_factory=list,
+        description="Steps with AI agent suggestions"
+    )
+    mcp_dependencies: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="MCP servers needed with connection status"
+    )
+    explanation: str = Field("", description="AI explanation of the workflow structure")
+    warnings: List[str] = Field(default_factory=list)
+
+
+class StepConfiguration(BaseModel):
+    """Configuration for a single step after user review."""
+    step_id: str = Field(..., description="The skeleton step ID")
+    agent_id: Optional[str] = Field(None, description="Existing agent ID to use")
+    create_agent: Optional[SuggestedAgent] = Field(None, description="New agent to create")
+    skipped: bool = Field(False, description="Whether to skip configuring this step for now")
+    input_template: str = Field("${user_input}", description="Input template for the step")
+
+
+class ConfigureStepsRequest(BaseModel):
+    """Request to configure skeleton steps with agents."""
+    skeleton: WorkflowSkeleton
+    configurations: List[StepConfiguration]
+
+
+class ConfigureStepsResponse(BaseModel):
+    """Response after configuring steps."""
+    workflow_id: str
+    agents_created: List[str] = Field(default_factory=list)
+    agents_missing: List[str] = Field(default_factory=list, description="Steps without agents")
+    can_execute: bool
+    warnings: List[str] = Field(default_factory=list)
 
 
 # ==================== Workflow Definition Schemas ====================
@@ -15,7 +163,9 @@ class WorkflowStepSchema(BaseModel):
     type: str = Field(
         ..., description="Step type: agent, parallel, conditional, loop"
     )
+    name: Optional[str] = Field(None, max_length=200, description="Display name for the step")
     agent_id: Optional[str] = Field(None, description="Agent ID for agent steps")
+    suggested_agent: Optional[SuggestedAgent] = Field(None, description="AI suggestion for agent")
     input: Optional[str] = Field(
         "${user_input}", description="Input template with ${...} placeholders"
     )
@@ -255,40 +405,54 @@ class GenerateWorkflowResponse(BaseModel):
     explanation: str
     warnings: List[str] = []
     estimated_complexity: str
+    # Execution readiness info
+    ready_steps: List[str] = []  # Steps that can execute immediately
+    blocked_steps: List[str] = []  # Steps waiting for agent creation
+    can_execute: bool = False  # True if all steps have agents assigned
 
 
 class ApplyGeneratedWorkflowRequest(BaseModel):
-    """Request to apply a generated workflow."""
+    """Request to save a generated workflow (without auto-creating agents).
+
+    Per the plan: User creates agents separately. This just saves the workflow.
+    """
 
     workflow: WorkflowDefinitionSchema
     workflow_name: str = Field(..., min_length=1, max_length=200)
     workflow_description: str = Field("", max_length=1000)
-    workflow_category: str = Field("general", max_length=100)
-    agents_to_create: List[GeneratedAgentConfig]
-    mcps_to_setup: List[str] = Field(
-        default_factory=list, description="MCP template names to create"
-    )
+    workflow_category: str = Field("ai-generated", max_length=100)
     created_by: Optional[str] = None
 
 
-class MCPAuthRequired(BaseModel):
-    """MCP that needs OAuth authorization."""
-
-    server_id: str
-    template: str
-    auth_url: str
-
-
 class ApplyGeneratedWorkflowResponse(BaseModel):
-    """Response after applying generated workflow."""
+    """Response after saving generated workflow.
+
+    Indicates which steps are blocked due to missing agents.
+    """
 
     workflow_id: str
-    created_agents: List[str]
-    mcps_needing_auth: List[MCPAuthRequired]
-    ready_to_execute: bool
+    blocked_steps: List[str] = Field(
+        default_factory=list, description="Steps with missing agents"
+    )
+    missing_agents: List[str] = Field(
+        default_factory=list, description="Agent IDs that don't exist"
+    )
+    can_execute: bool = Field(
+        ..., description="True only if all agents exist"
+    )
+    next_action: str = Field(
+        ..., description="'create_agents' or 'ready_to_run'"
+    )
 
 
 # ==================== Workflow Execution Schemas ====================
+
+
+class ConversationMessage(BaseModel):
+    """A message in the conversation history."""
+
+    role: str = Field(..., description="Role of the message sender (user/assistant)")
+    content: str = Field(..., description="Content of the message")
 
 
 class ExecuteWorkflowRequest(BaseModel):
@@ -299,6 +463,9 @@ class ExecuteWorkflowRequest(BaseModel):
         None, description="Additional context variables for the workflow"
     )
     session_id: Optional[str] = Field(None, description="Session ID for conversation tracking")
+    conversation_history: List[ConversationMessage] = Field(
+        default_factory=list, description="Previous messages in the conversation"
+    )
 
 
 class StepExecutionResult(BaseModel):
@@ -348,3 +515,87 @@ class ValidateWorkflowResponse(BaseModel):
     warnings: List[ValidationError] = []
     missing_agents: List[str] = []
     missing_mcps: List[str] = []
+
+
+# ==================== Schedule Schemas ====================
+
+
+class CreateScheduleRequest(BaseModel):
+    """Request to create a workflow schedule."""
+
+    cron_expression: str = Field(
+        ...,
+        description="Cron expression (5 fields: min hour day month dow)",
+        examples=["0 9 * * 1-5", "*/15 * * * *"],
+    )
+    timezone: str = Field(default="UTC", description="IANA timezone name")
+    enabled: bool = Field(default=True, description="Whether the schedule is active")
+    input: Optional[str] = Field(
+        None,
+        max_length=10000,
+        description="Static input for each scheduled run"
+    )
+    context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional context for scheduled runs"
+    )
+
+
+class UpdateScheduleRequest(BaseModel):
+    """Request to update a workflow schedule."""
+
+    cron_expression: Optional[str] = Field(None, description="New cron expression")
+    timezone: Optional[str] = Field(None, description="New timezone")
+    enabled: Optional[bool] = Field(None, description="Enable or disable schedule")
+    input: Optional[str] = Field(None, max_length=10000)
+    context: Optional[Dict[str, Any]] = Field(None)
+
+
+class ScheduleResponse(BaseModel):
+    """Response containing schedule details."""
+
+    id: str
+    workflow_id: str
+    cron_expression: str
+    cron_description: str = Field("", description="Human-readable schedule description")
+    timezone: str
+    enabled: bool
+    input: Optional[str] = None
+    context: Dict[str, Any] = Field(default_factory=dict)
+    next_run_at: Optional[datetime] = None
+    last_run_at: Optional[datetime] = None
+    run_count: int = 0
+    last_error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScheduleListResponse(BaseModel):
+    """Response containing list of schedules."""
+
+    schedules: List[ScheduleResponse]
+    total: int
+
+
+class ValidateCronRequest(BaseModel):
+    """Request to validate a cron expression."""
+
+    cron_expression: str
+    timezone: str = Field(default="UTC")
+
+
+class ValidateCronResponse(BaseModel):
+    """Response from cron validation."""
+
+    is_valid: bool
+    error: Optional[str] = None
+    description: Optional[str] = None
+    next_runs: List[datetime] = Field(default_factory=list)
+
+
+class SchedulePreviewRequest(BaseModel):
+    """Request to preview schedule runs."""
+
+    cron_expression: str
+    timezone: str = Field(default="UTC")
+    count: int = Field(default=5, ge=1, le=20)
