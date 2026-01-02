@@ -1,4 +1,7 @@
-"""MCP Server Repository - database operations for MCP servers."""
+"""MCP Server Repository - database operations for MCP servers.
+
+Updated: 2026-01-02 - Added auto-migration support for agent tool references.
+"""
 
 import uuid
 from datetime import datetime, timezone

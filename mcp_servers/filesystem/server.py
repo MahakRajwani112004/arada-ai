@@ -7,6 +7,8 @@ Provides MCP tools for local filesystem operations:
 
 Credentials passed via HTTP header:
 - X-Allowed-Paths: Comma-separated list of allowed directory paths
+
+Updated: 2026-01-02 - Initial Docker build
 """
 import os
 from pathlib import Path
