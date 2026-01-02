@@ -127,7 +127,7 @@ export default function KnowledgeBaseDetailPage() {
     }
   };
 
-  const handleDocumentUpdate = (doc: KnowledgeDocument) => {
+  const handleDocumentUpdate = (_doc: KnowledgeDocument) => {
     // Invalidate queries to refresh the list with updated metadata
     queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(kbId) });
   };

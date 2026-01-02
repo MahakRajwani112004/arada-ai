@@ -25,7 +25,6 @@ from temporalio.common import TypedSearchAttributes
 
 from src.config.logging import get_logger
 from src.utils import parse_cron
-from src.workflows.agent_workflow import AgentWorkflow, AgentWorkflowInput
 
 logger = get_logger(__name__)
 

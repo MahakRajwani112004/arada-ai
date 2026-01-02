@@ -6,7 +6,6 @@ import {
   Loader2,
   Clock,
   ChevronDown,
-  ChevronRight,
   AlertCircle,
   Coins,
   Activity,
@@ -89,15 +88,23 @@ function formatCost(cost: number): string {
 }
 
 function extractMetrics(step: StepResult): StepMetrics | null {
-  const metadata = step.metadata || {};
+  const metadata = (step.metadata || {}) as {
+    tokens_used?: number;
+    input_tokens?: number;
+    output_tokens?: number;
+    cost?: number;
+    iterations?: number;
+  };
   const metrics: StepMetrics = {};
 
   // Extract token counts from metadata
   if (metadata.tokens_used || metadata.input_tokens || metadata.output_tokens) {
+    const inputTokens = metadata.input_tokens || 0;
+    const outputTokens = metadata.output_tokens || 0;
     metrics.tokens = {
-      input: metadata.input_tokens || 0,
-      output: metadata.output_tokens || 0,
-      total: metadata.tokens_used || (metadata.input_tokens || 0) + (metadata.output_tokens || 0),
+      input: inputTokens,
+      output: outputTokens,
+      total: metadata.tokens_used || inputTokens + outputTokens,
     };
   }
 
@@ -285,7 +292,7 @@ interface ExecutionSummaryProps {
   startTime?: string;
 }
 
-function ExecutionSummary({ steps, startTime }: ExecutionSummaryProps) {
+function ExecutionSummary({ steps, startTime: _startTime }: ExecutionSummaryProps) {
   const stats = useMemo(() => {
     const completed = steps.filter((s) => s.status === "COMPLETED").length;
     const failed = steps.filter((s) => s.status === "FAILED").length;
@@ -354,7 +361,7 @@ function ExecutionSummary({ steps, startTime }: ExecutionSummaryProps) {
 
 export function ExecutionTimeline({
   steps,
-  currentStepIndex,
+  currentStepIndex: _currentStepIndex,
   showGanttView = true,
   startTime,
 }: ExecutionTimelineProps) {

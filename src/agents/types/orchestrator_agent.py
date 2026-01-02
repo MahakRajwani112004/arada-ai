@@ -125,7 +125,13 @@ class OrchestratorAgent(BaseAgent):
         )
 
     async def _load_agent_tools(self) -> None:
-        """Load agent tool definitions for available agents."""
+        """Load agent tool definitions for available agents.
+
+        If auto_discover is True, discovers all available agents automatically,
+        filtering out excluded types and IDs. Otherwise uses the static
+        available_agents list from config.
+        """
+        from src.models.orchestrator_config import AgentReference
         from src.storage import PostgresAgentRepository
         from src.storage.database import get_session
 
@@ -136,39 +142,79 @@ class OrchestratorAgent(BaseAgent):
         # Get repository via session context manager
         async for session in get_session():
             repository = PostgresAgentRepository(session)
-            for agent_ref in self._orchestrator_config.available_agents:
-                config = await repository.get(agent_ref.agent_id)
-                if config:
-                    agent_tool = AgentTool(config)
-                    tool_name = f"agent:{agent_ref.agent_id}"
 
-                    self._agent_tools[tool_name] = agent_tool
+            # Determine which agents to load
+            if self._orchestrator_config.auto_discover:
+                # Auto-discover: get all agents and filter
+                all_agents = await repository.list()
+                agent_refs = []
+
+                for config in all_agents:
+                    # Skip this orchestrator itself
+                    if config.id == self._config.id:
+                        continue
+
+                    # Skip excluded agent types
+                    if config.agent_type.value in self._orchestrator_config.exclude_agent_types:
+                        continue
+
+                    # Skip explicitly excluded agent IDs
+                    if config.id in self._orchestrator_config.exclude_agent_ids:
+                        continue
+
+                    # Create AgentReference from discovered agent
+                    agent_refs.append(AgentReference(
+                        agent_id=config.id,
+                        alias=None,
+                        description=config.description,
+                    ))
+
+                    # Store config directly since we already have it
+                    self._agent_configs[config.id] = config
+            else:
+                # Use static list from config
+                agent_refs = self._orchestrator_config.available_agents
+
+            # Load agent tools for each reference
+            for agent_ref in agent_refs:
+                # Get config if we don't have it yet (for static list case)
+                if agent_ref.agent_id not in self._agent_configs:
+                    config = await repository.get(agent_ref.agent_id)
+                    if not config:
+                        continue
                     self._agent_configs[agent_ref.agent_id] = config
+                else:
+                    config = self._agent_configs[agent_ref.agent_id]
 
-                    # Build tool definition for LLM
-                    defn = agent_tool.definition
-                    description = agent_ref.description or defn.description
+                agent_tool = AgentTool(config)
+                tool_name = f"agent:{agent_ref.agent_id}"
 
-                    self._agent_tool_definitions.append(
-                        ToolDefinition(
-                            name=tool_name,
-                            description=description,
-                            parameters={
-                                "type": "object",
-                                "properties": {
-                                    "query": {
-                                        "type": "string",
-                                        "description": "The input/query to send to the agent",
-                                    },
-                                    "context": {
-                                        "type": "string",
-                                        "description": "Optional additional context",
-                                    },
+                self._agent_tools[tool_name] = agent_tool
+
+                # Build tool definition for LLM
+                defn = agent_tool.definition
+                description = agent_ref.description or defn.description
+
+                self._agent_tool_definitions.append(
+                    ToolDefinition(
+                        name=tool_name,
+                        description=description,
+                        parameters={
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "The input/query to send to the agent",
                                 },
-                                "required": ["query"],
+                                "context": {
+                                    "type": "string",
+                                    "description": "Optional additional context",
+                                },
                             },
-                        )
+                            "required": ["query"],
+                        },
                     )
+                )
             break  # Only need one iteration
 
     def _get_all_tool_definitions(self) -> List[ToolDefinition]:
@@ -620,6 +666,21 @@ Guidelines:
 - You can call multiple agents in parallel if needed
 - Synthesize results from multiple agents into a coherent response
 - If an agent fails, consider alternatives or explain the limitation
+
+## IMPORTANT: Passing Data Between Agents
+
+When one agent produces output that another agent needs, you MUST pass that data explicitly:
+
+1. **File Attachments**: When a document is generated (via generate_document tool), it returns a `download_url`.
+   To send this as an email attachment, include the FULL URL in your query to the email agent:
+   Query: "Send email to <recipient> with subject <subject>. Attach the document from this URL: <the complete download_url>"
+   The email agent will use this URL in its attachment_urls parameter.
+
+2. **Contact Resolution**: When you look up a contact's email from the knowledge base, use that exact email
+   address when calling email or calendar agents.
+
+3. **Sequential Context**: Results from previous agent calls should be included in subsequent agent queries
+   when relevant. Include the key information in the "context" parameter.
 """
 
         return base_prompt + orchestration_section

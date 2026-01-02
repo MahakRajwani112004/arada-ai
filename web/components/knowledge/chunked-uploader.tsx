@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useRef } from "react";
+import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import {
   Upload,
@@ -10,8 +10,6 @@ import {
   CheckCircle2,
   AlertCircle,
   RotateCw,
-  Pause,
-  Play,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -23,9 +21,6 @@ import {
 } from "@/types/knowledge";
 import {
   uploadFileChunked,
-  resumeUpload,
-  cancelUpload,
-  needsChunkedUpload,
   type UploadProgress,
   type UploadCompleteResult,
 } from "@/lib/upload-client";
@@ -177,11 +172,11 @@ export function ChunkedUploader({
   const clearCompleted = () => {
     setUploads((prev) => {
       const newMap = new Map(prev);
-      for (const [key, upload] of newMap) {
+      Array.from(newMap.entries()).forEach(([key, upload]) => {
         if (upload.result || upload.error) {
           newMap.delete(key);
         }
-      }
+      });
       return newMap;
     });
   };
@@ -276,7 +271,7 @@ interface UploadItemProps {
 }
 
 function UploadItem({
-  fileKey,
+  fileKey: _fileKey,
   upload,
   onCancel,
   onRetry,

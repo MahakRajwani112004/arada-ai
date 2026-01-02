@@ -76,7 +76,7 @@ export function useRespondToApproval() {
       approvalId: string;
       request: ApprovalRespondRequest;
     }) => respondToApproval(approvalId, request),
-    onSuccess: (response, { approvalId, request }) => {
+    onSuccess: (response, { approvalId: _approvalId, request }) => {
       // Invalidate all approval queries
       queryClient.invalidateQueries({ queryKey: approvalKeys.all });
 

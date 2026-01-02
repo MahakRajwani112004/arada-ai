@@ -133,6 +133,7 @@ async def execute_agent_as_tool(
             workflow_input.knowledge_collection = config.knowledge_base.collection_name
             workflow_input.embedding_model = config.knowledge_base.embedding_model
             workflow_input.top_k = config.knowledge_base.top_k
+            workflow_input.similarity_threshold = config.knowledge_base.similarity_threshold
 
         # Add tool config - but filter out agent: tools to prevent infinite loops
         if config.tools:

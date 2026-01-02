@@ -55,7 +55,8 @@ export function useSchedule(workflowId: string) {
     queryFn: () => getSchedule(workflowId),
     retry: (failureCount, error) => {
       // Don't retry on 404 (no schedule exists)
-      if ((error as any)?.response?.status === 404) {
+      const httpError = error as { response?: { status?: number } };
+      if (httpError?.response?.status === 404) {
         return false;
       }
       return failureCount < 3;

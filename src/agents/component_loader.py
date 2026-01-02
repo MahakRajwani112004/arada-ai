@@ -340,9 +340,9 @@ class ComponentValidator:
                 result.add_error(
                     f"OrchestratorAgent '{config.id}' requires orchestrator_config"
                 )
-            elif not config.orchestrator_config.available_agents:
+            elif not config.orchestrator_config.available_agents and not config.orchestrator_config.auto_discover:
                 result.add_warning(
-                    f"OrchestratorAgent '{config.id}' has no available_agents - "
+                    f"OrchestratorAgent '{config.id}' has no available_agents and auto_discover is False - "
                     "it cannot orchestrate anything"
                 )
 

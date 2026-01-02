@@ -116,17 +116,39 @@ async def execute_agent(
     # Add orchestrator config if present
     if config.orchestrator_config:
         workflow_input.orchestrator_mode = config.orchestrator_config.mode.value
-        workflow_input.orchestrator_available_agents = [
-            {
-                "agent_id": a.agent_id,
-                "alias": a.alias,
-                "description": a.description,
-            }
-            for a in config.orchestrator_config.available_agents
-        ]
         workflow_input.orchestrator_max_parallel = config.orchestrator_config.max_parallel
         workflow_input.orchestrator_max_depth = config.orchestrator_config.max_depth
         workflow_input.orchestrator_aggregation = config.orchestrator_config.default_aggregation.value
+
+        # Auto-discover agents if enabled
+        if config.orchestrator_config.auto_discover:
+            all_agents = await repository.list()
+            exclude_types = set(config.orchestrator_config.exclude_agent_types or [])
+            exclude_ids = set(config.orchestrator_config.exclude_agent_ids or [])
+            exclude_ids.add(config.id)  # Always exclude self
+
+            discovered_agents = []
+            for agent in all_agents:
+                if agent.id in exclude_ids:
+                    continue
+                if agent.agent_type.value in exclude_types:
+                    continue
+                discovered_agents.append({
+                    "agent_id": agent.id,
+                    "alias": agent.name,
+                    "description": agent.description or agent.name,
+                })
+
+            workflow_input.orchestrator_available_agents = discovered_agents
+        else:
+            workflow_input.orchestrator_available_agents = [
+                {
+                    "agent_id": a.agent_id,
+                    "alias": a.alias,
+                    "description": a.description,
+                }
+                for a in config.orchestrator_config.available_agents
+            ]
 
     # Add workflow definition if provided in request (for WORKFLOW mode)
     if request.workflow_definition:

@@ -197,6 +197,7 @@ services:
       MCP_GOOGLE_GMAIL_URL: http://mcp-google-gmail:8000/mcp
       MCP_OUTLOOK_CALENDAR_URL: http://mcp-outlook-calendar:8000/mcp
       MCP_OUTLOOK_EMAIL_URL: http://mcp-outlook-email:8000/mcp
+      MCP_FILESYSTEM_URL: http://mcp-filesystem:8000/mcp
       # Google OAuth
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
@@ -232,6 +233,7 @@ services:
     depends_on:
       - api
       - vault
+      - minio
     environment:
       DATABASE_URL: postgresql+asyncpg://magone:${DB_PASSWORD:-dev_password}@postgres:5432/magone_db
       TEMPORAL_HOST: temporal:7233
@@ -243,6 +245,12 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SECRET_KEY: ${SECRET_KEY:-dev_secret_key_change_in_production}
+      # MinIO for document storage (same as API)
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: magure
+      MINIO_SECRET_KEY: magure_minio_secret
+      MINIO_BUCKET: knowledge-documents
+      MINIO_SECURE: "false"
       # Vault for secrets management
       VAULT_PROVIDER: hashicorp
       VAULT_URL: http://vault:8200
@@ -321,6 +329,8 @@ services:
       dockerfile: outlook-calendar/Dockerfile
     container_name: magone-mcp-outlook-calendar
     restart: unless-stopped
+    ports:
+      - "8006:8000"
     environment:
       MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
       MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
@@ -341,10 +351,32 @@ services:
       dockerfile: outlook-email/Dockerfile
     container_name: magone-mcp-outlook-email
     restart: unless-stopped
+    ports:
+      - "8005:8000"
     environment:
       MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
       MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
       MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # MCP Server - Filesystem
+  # ============================================
+  mcp-filesystem:
+    build:
+      context: ./mcp_servers
+      dockerfile: filesystem/Dockerfile
+    container_name: magone-mcp-filesystem
+    restart: unless-stopped
+    ports:
+      - "8007:8000"
+    volumes:
+      - mcp_filesystem_data:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -432,3 +464,4 @@ volumes:
   prometheus_data:
   grafana_data:
   loki_data:
+  mcp_filesystem_data:

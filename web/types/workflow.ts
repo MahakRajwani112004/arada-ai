@@ -2,7 +2,7 @@
 
 // ==================== Step Types ====================
 
-export type StepType = "agent" | "parallel" | "conditional" | "loop" | "tool";
+export type StepType = "agent" | "parallel" | "conditional" | "loop" | "tool" | "approval";
 
 export type AggregationType = "all" | "first" | "merge" | "best";
 
@@ -38,6 +38,13 @@ export interface WorkflowStep {
   continue_condition?: string; // Continue condition
   collect_results?: boolean; // Whether to collect all iteration results
   steps?: Record<string, unknown>[];
+
+  // Approval step fields
+  approval_message?: string;
+  approvers?: string[];
+  required_approvals?: number;
+  approval_timeout_seconds?: number;
+  on_reject?: OnErrorAction;
 }
 
 export interface WorkflowDefinition {
@@ -116,10 +123,12 @@ export type StepExecutionStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED"
 
 export interface StepResult {
   step_id: string;
+  step_name?: string;
   status: StepExecutionStatus;
   output?: unknown;
   error?: string;
   duration_ms?: number;
+  metadata?: Record<string, unknown>;
 }
 
 // Legacy alias for backwards compatibility

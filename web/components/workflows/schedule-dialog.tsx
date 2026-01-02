@@ -137,8 +137,9 @@ export function ScheduleDialog({
         toast.success("Schedule created successfully");
       }
       onOpenChange(false);
-    } catch (error: any) {
-      toast.error(error?.message || "Failed to save schedule");
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to save schedule";
+      toast.error(errorMessage);
     }
   };
 
@@ -147,8 +148,9 @@ export function ScheduleDialog({
       await deleteSchedule.mutateAsync();
       toast.success("Schedule deleted");
       onOpenChange(false);
-    } catch (error: any) {
-      toast.error(error?.message || "Failed to delete schedule");
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to delete schedule";
+      toast.error(errorMessage);
     }
   };
 

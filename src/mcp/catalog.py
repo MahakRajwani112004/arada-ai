@@ -15,6 +15,7 @@ MCP_OUTLOOK_EMAIL_URL = os.getenv("MCP_OUTLOOK_EMAIL_URL", "http://localhost:800
 MCP_SHAREPOINT_URL = os.getenv("MCP_SHAREPOINT_URL", "http://localhost:8006/mcp")
 MCP_ONEDRIVE_URL = os.getenv("MCP_ONEDRIVE_URL", "http://localhost:8007/mcp")
 MCP_SLACK_URL = os.getenv("MCP_SLACK_URL", "http://localhost:8008/mcp")
+MCP_FILESYSTEM_URL = os.getenv("MCP_FILESYSTEM_URL", "http://localhost:8007/mcp")
 
 
 def _google_refresh_token_spec() -> CredentialSpec:
@@ -206,7 +207,7 @@ MCP_SERVER_CATALOG: Dict[str, MCPServerTemplate] = {
     "filesystem": MCPServerTemplate(
         id="filesystem",
         name="Filesystem",
-        url_template=None,  # Must provide custom URL
+        url_template=MCP_FILESYSTEM_URL,
         auth_type="none",
         scopes=[],
         credentials_required=[

@@ -9,6 +9,7 @@ import {
   Check,
   AlertTriangle,
   ChevronDown,
+  UserCheck,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -56,6 +57,11 @@ const stepTypeConfig: Record<
     label: "Tool",
     icon: <Wrench className="h-4 w-4" />,
     color: "bg-green-500/10 text-green-400 border-green-500/20",
+  },
+  approval: {
+    label: "Approval",
+    icon: <UserCheck className="h-4 w-4" />,
+    color: "bg-amber-500/10 text-amber-400 border-amber-500/20",
   },
 };
 

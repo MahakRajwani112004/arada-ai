@@ -277,13 +277,17 @@ class MCPServerRepository:
             logger.error("credentials_retrieval_failed", secret_ref=db_model.secret_ref, error=str(e), error_type=type(e).__name__)
             credentials = {}
 
+        # Ensure credentials is a dict (retrieve can return None)
+        if credentials is None:
+            credentials = {}
+
         # Get OAuth token if present and add refresh_token to credentials
         if db_model.oauth_token_ref:
             logger.info("oauth_token_ref_found", oauth_token_ref=db_model.oauth_token_ref)
             try:
                 oauth_data = await secrets_manager.retrieve(db_model.oauth_token_ref)
                 logger.info("oauth_data_retrieved", keys=list(oauth_data.keys()) if oauth_data else [])
-                if "refresh_token" in oauth_data:
+                if oauth_data and "refresh_token" in oauth_data:
                     # Add as GOOGLE_REFRESH_TOKEN for Google services
                     credentials["GOOGLE_REFRESH_TOKEN"] = oauth_data["refresh_token"]
                     logger.info("refresh_token_added_to_credentials")

@@ -55,7 +55,7 @@ async def retrieve_knowledge(input: RetrieveInput) -> RetrieveOutput:
         collection_name=input.collection_name,
         embedding_model=input.embedding_model,
         top_k=input.top_k,
-        similarity_threshold=input.similarity_threshold,
+        similarity_threshold=input.similarity_threshold if input.similarity_threshold is not None else 0.7,
     )
 
     # Initialize knowledge base

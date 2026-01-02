@@ -387,7 +387,7 @@ async def get_oauth_reconnect_url(
 
     auth_url, _ = flow.authorization_url(
         access_type="offline",
-        prompt="consent",
+        prompt="select_account",
         state=state,
     )
 

@@ -71,6 +71,7 @@ dependencies = [
     # Document Processing
     "pypdf>=5.0.0",
     "python-docx>=1.1.0",
+    "reportlab>=4.2.0",          # PDF generation
     "pymupdf>=1.24.0",           # Enhanced PDF processing with tables/images
     "pymupdf4llm>=0.0.17",       # PDF to Markdown for LLM/RAG
     "python-pptx>=1.0.0",        # PowerPoint processing
