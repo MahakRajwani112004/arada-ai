@@ -214,8 +214,8 @@ export function CanvasExecutionPanel({
                     variant="secondary"
                     className={cn(
                       "text-[10px]",
-                      step.status === "completed" && "bg-green-500/10 text-green-600",
-                      step.status === "failed" && "bg-red-500/10 text-red-600"
+                      step.status === "COMPLETED" && "bg-green-500/10 text-green-600",
+                      step.status === "FAILED" && "bg-red-500/10 text-red-600"
                     )}
                   >
                     {step.status}
