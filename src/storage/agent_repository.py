@@ -227,3 +227,97 @@ class PostgresAgentRepository(BaseAgentRepository):
         result = await self.session.execute(stmt)
         model = result.scalar_one_or_none()
         return model is not None
+
+    async def migrate_mcp_tool_references(
+        self,
+        old_server_id: str,
+        new_server_id: str,
+    ) -> int:
+        """Migrate agent tool references from old MCP server ID to new one.
+
+        This is used when an MCP server is reconnected/recreated and gets a new ID.
+        Updates all agents that reference tools from the old server.
+
+        Args:
+            old_server_id: The old MCP server ID (e.g., "srv_abc123")
+            new_server_id: The new MCP server ID (e.g., "srv_def456")
+
+        Returns:
+            Number of agents updated
+        """
+        # Find all active agents for this user that have tools referencing the old server
+        stmt = select(AgentModel).where(AgentModel.is_active == True)
+        if self.user_id:
+            stmt = stmt.where(AgentModel.user_id == self.user_id)
+
+        result = await self.session.execute(stmt)
+        models = result.scalars().all()
+
+        updated_count = 0
+        for model in models:
+            config = model.config_json
+            tools = config.get("tools", [])
+            if not tools:
+                continue
+
+            # Check if any tool references the old server
+            updated_tools = []
+            has_updates = False
+            for tool in tools:
+                tool_id = tool.get("tool_id", "")
+                if tool_id.startswith(f"{old_server_id}:"):
+                    # Replace old server ID with new one
+                    tool_name = tool_id.split(":", 1)[1]
+                    tool["tool_id"] = f"{new_server_id}:{tool_name}"
+                    has_updates = True
+                updated_tools.append(tool)
+
+            if has_updates:
+                config["tools"] = updated_tools
+                model.config_json = config
+                model.updated_at = datetime.now(timezone.utc)
+                updated_count += 1
+
+        if updated_count > 0:
+            await self.session.flush()
+
+        return updated_count
+
+    async def find_agents_with_stale_mcp_tools(
+        self,
+        valid_server_ids: List[str],
+    ) -> List[tuple]:
+        """Find agents that have tool references to non-existent MCP servers.
+
+        Args:
+            valid_server_ids: List of currently valid MCP server IDs
+
+        Returns:
+            List of tuples: (agent_id, stale_server_ids)
+        """
+        stmt = select(AgentModel).where(AgentModel.is_active == True)
+        if self.user_id:
+            stmt = stmt.where(AgentModel.user_id == self.user_id)
+
+        result = await self.session.execute(stmt)
+        models = result.scalars().all()
+
+        stale_agents = []
+        for model in models:
+            config = model.config_json
+            tools = config.get("tools", [])
+            if not tools:
+                continue
+
+            stale_servers = set()
+            for tool in tools:
+                tool_id = tool.get("tool_id", "")
+                if ":" in tool_id:
+                    server_id = tool_id.split(":", 1)[0]
+                    if server_id.startswith("srv_") and server_id not in valid_server_ids:
+                        stale_servers.add(server_id)
+
+            if stale_servers:
+                stale_agents.append((model.id, list(stale_servers)))
+
+        return stale_agents

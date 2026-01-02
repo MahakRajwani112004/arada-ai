@@ -26,6 +26,7 @@ from src.mcp.models import ServerStatus
 from src.mcp.repository import MCPServerRepository
 from src.secrets import get_secrets_manager
 from src.storage import get_session
+from src.storage.agent_repository import PostgresAgentRepository
 
 logger = get_logger(__name__)
 
@@ -38,6 +39,14 @@ async def get_mcp_repository(
 ) -> MCPServerRepository:
     """Get MCP server repository with database session and user context."""
     return MCPServerRepository(session, user_id=user.id)
+
+
+async def get_agent_repository(
+    session: AsyncSession = Depends(get_session),
+    user: UserModel = Depends(get_current_user),
+) -> PostgresAgentRepository:
+    """Get agent repository with database session and user context."""
+    return PostgresAgentRepository(session, user_id=user.id)
 
 
 # ========== Catalog Endpoints ==========
@@ -127,6 +136,7 @@ async def get_catalog_template(template_id: str) -> CatalogTemplateSchema:
 async def create_server(
     request: Union[CreateServerFromTemplateRequest, CreateCustomServerRequest],
     repository: MCPServerRepository = Depends(get_mcp_repository),
+    agent_repository: PostgresAgentRepository = Depends(get_agent_repository),
     manager: MCPManager = Depends(get_mcp_manager),
 ) -> MCPServerResponse:
     """Create a new MCP server configuration.
@@ -138,6 +148,9 @@ async def create_server(
     For template-based servers with OAuth, you can provide `oauth_token_ref` instead of raw credentials.
     The token_ref is obtained from the OAuth callback endpoint.
     """
+    # Track old server ID for migration (template-based only)
+    old_server_id = None
+
     # Determine if this is template-based or custom
     if isinstance(request, CreateServerFromTemplateRequest):
         # Template-based server
@@ -146,6 +159,16 @@ async def create_server(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Template '{request.template}' not found in catalog",
+            )
+
+        # Check for existing server with same template (for agent tool migration)
+        existing_server = await repository.get_by_template(request.template)
+        if existing_server:
+            old_server_id = existing_server.id
+            logger.info(
+                "existing_mcp_server_found",
+                template=request.template,
+                old_server_id=old_server_id,
             )
 
         # Resolve credentials from oauth_token_ref if provided
@@ -231,6 +254,29 @@ async def create_server(
             name=instance.name,
             template=instance.template,
         )
+
+        # Auto-migrate agent tool references from old server to new server
+        if old_server_id and old_server_id != instance.id:
+            try:
+                migrated_count = await agent_repository.migrate_mcp_tool_references(
+                    old_server_id=old_server_id,
+                    new_server_id=instance.id,
+                )
+                if migrated_count > 0:
+                    logger.info(
+                        "agent_tools_migrated",
+                        old_server_id=old_server_id,
+                        new_server_id=instance.id,
+                        agents_updated=migrated_count,
+                    )
+            except Exception as e:
+                # Don't fail server creation if migration fails
+                logger.warning(
+                    "agent_tools_migration_failed",
+                    old_server_id=old_server_id,
+                    new_server_id=instance.id,
+                    error=str(e),
+                )
     except Exception as e:
         # Update status to error but don't fail the request
         instance = await repository.update_status(
@@ -322,9 +368,26 @@ async def get_server(
 async def delete_server(
     server_id: str,
     repository: MCPServerRepository = Depends(get_mcp_repository),
+    agent_repository: PostgresAgentRepository = Depends(get_agent_repository),
     manager: MCPManager = Depends(get_mcp_manager),
 ) -> None:
     """Delete an MCP server configuration."""
+    # Check for agents with tools from this server before deletion
+    all_server_ids = await repository.get_all_server_ids()
+    # Remove the server being deleted from valid IDs
+    remaining_server_ids = [sid for sid in all_server_ids if sid != server_id]
+    stale_agents = await agent_repository.find_agents_with_stale_mcp_tools(remaining_server_ids)
+
+    # Log warning if agents have tools from this server (they will become stale)
+    affected_agents = [agent_id for agent_id, servers in stale_agents if server_id in servers]
+    if affected_agents:
+        logger.warning(
+            "mcp_server_delete_affects_agents",
+            server_id=server_id,
+            affected_agent_ids=affected_agents,
+            message="These agents have tools that will become stale after this deletion",
+        )
+
     # Remove from manager first (disconnects and unregisters tools)
     await manager.remove_server(server_id)
 
@@ -336,7 +399,7 @@ async def delete_server(
             detail=f"MCP server '{server_id}' not found",
         )
 
-    logger.info("mcp_server_deleted", server_id=server_id)
+    logger.info("mcp_server_deleted", server_id=server_id, affected_agents=len(affected_agents))
 
 
 # ========== Reconnect Endpoints ==========

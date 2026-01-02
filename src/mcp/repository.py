@@ -127,6 +127,45 @@ class MCPServerRepository:
 
         return [self._to_instance(m) for m in db_models]
 
+    async def get_by_template(self, template: str) -> Optional[MCPServerInstance]:
+        """Get MCP server by template (scoped to user if user_id is set).
+
+        Returns the most recently created server for the given template.
+        Used to find existing servers when detecting reconnections.
+
+        Args:
+            template: Template ID (e.g., "outlook-email", "google-calendar")
+
+        Returns:
+            MCPServerInstance or None if not found
+        """
+        stmt = (
+            select(MCPServerModel)
+            .where(MCPServerModel.template == template)
+            .order_by(MCPServerModel.created_at.desc())
+        )
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
+        db_model = result.scalar_one_or_none()
+
+        if db_model is None:
+            return None
+
+        return self._to_instance(db_model)
+
+    async def get_all_server_ids(self) -> List[str]:
+        """Get all MCP server IDs (scoped to user if user_id is set).
+
+        Returns:
+            List of server IDs
+        """
+        stmt = select(MCPServerModel.id)
+        if self._user_id:
+            stmt = stmt.where(MCPServerModel.user_id == self._user_id)
+        result = await self._session.execute(stmt)
+        return [row[0] for row in result.all()]
+
     async def update_status(
         self,
         server_id: str,
@@ -288,9 +327,16 @@ class MCPServerRepository:
                 oauth_data = await secrets_manager.retrieve(db_model.oauth_token_ref)
                 logger.info("oauth_data_retrieved", keys=list(oauth_data.keys()) if oauth_data else [])
                 if oauth_data and "refresh_token" in oauth_data:
-                    # Add as GOOGLE_REFRESH_TOKEN for Google services
-                    credentials["GOOGLE_REFRESH_TOKEN"] = oauth_data["refresh_token"]
-                    logger.info("refresh_token_added_to_credentials")
+                    # Determine the correct credential name based on template
+                    # Microsoft templates (outlook-*, sharepoint, onedrive) use MICROSOFT_REFRESH_TOKEN
+                    # Google templates (google-*) use GOOGLE_REFRESH_TOKEN
+                    template_name = db_model.template or ""
+                    if template_name.startswith("outlook") or template_name in ("sharepoint", "onedrive"):
+                        cred_name = "MICROSOFT_REFRESH_TOKEN"
+                    else:
+                        cred_name = "GOOGLE_REFRESH_TOKEN"
+                    credentials[cred_name] = oauth_data["refresh_token"]
+                    logger.info("refresh_token_added_to_credentials", credential_name=cred_name)
             except KeyError as e:
                 logger.warning("oauth_token_not_found", oauth_token_ref=db_model.oauth_token_ref, error=str(e))
             except Exception as e:
