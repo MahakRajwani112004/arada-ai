@@ -16,39 +16,46 @@ from src.storage.schedule_repository import ScheduleRepository
 
 async def get_repository(
     session: AsyncSession = Depends(get_session),
-    current_user: CurrentUser = None,
+    current_user: CurrentUser = ...,  # Required - no default
 ) -> AsyncGenerator[PostgresAgentRepository, None]:
-    """Get agent repository with database session, scoped to current user."""
-    user_id = current_user.id if current_user else None
-    yield PostgresAgentRepository(session, user_id=user_id)
+    """Get agent repository with database session, scoped to current user.
+
+    Authentication is required - all agent operations are user-scoped.
+    """
+    yield PostgresAgentRepository(session, user_id=current_user.id)
 
 
 async def get_user_repository(
     session: AsyncSession = Depends(get_session),
-    current_user: CurrentUser = None,
+    current_user: CurrentUser = ...,  # Required - no default
 ) -> AsyncGenerator[PostgresAgentRepository, None]:
-    """Get agent repository scoped to current user (requires auth)."""
-    if current_user is None:
-        raise ValueError("Authentication required")
+    """Get agent repository scoped to current user (requires auth).
+
+    Alias for get_repository - kept for backward compatibility.
+    """
     yield PostgresAgentRepository(session, user_id=current_user.id)
 
 
 async def get_workflow_repository(
     session: AsyncSession = Depends(get_session),
-    current_user: CurrentUser = None,
+    current_user: CurrentUser = ...,  # Required - no default
 ) -> AsyncGenerator[WorkflowRepository, None]:
-    """Get workflow repository with database session, scoped to current user."""
-    user_id = current_user.id if current_user else None
-    yield WorkflowRepository(session, user_id=user_id)
+    """Get workflow repository with database session, scoped to current user.
+
+    Authentication is required - all workflow operations are user-scoped.
+    """
+    yield WorkflowRepository(session, user_id=current_user.id)
 
 
 async def get_mcp_repository(
     session: AsyncSession = Depends(get_session),
-    current_user: CurrentUser = None,
+    current_user: CurrentUser = ...,  # Required - no default
 ) -> AsyncGenerator[MCPServerRepository, None]:
-    """Get MCP server repository with database session, scoped to current user."""
-    user_id = current_user.id if current_user else None
-    yield MCPServerRepository(session, user_id=user_id)
+    """Get MCP server repository with database session, scoped to current user.
+
+    Authentication is required - all MCP server operations are user-scoped.
+    """
+    yield MCPServerRepository(session, user_id=current_user.id)
 
 
 def get_mcp_manager() -> MCPManager:
@@ -58,11 +65,24 @@ def get_mcp_manager() -> MCPManager:
 
 async def get_skill_repository(
     session: AsyncSession = Depends(get_session),
-    current_user: CurrentUser = None,
+    current_user: CurrentUser = ...,  # Required - no default
 ) -> AsyncGenerator[SkillRepository, None]:
-    """Get skill repository with database session, scoped to current user."""
-    user_id = current_user.id if current_user else None
-    yield SkillRepository(session, user_id=user_id)
+    """Get skill repository with database session, scoped to current user.
+
+    Authentication is required - all skill operations are user-scoped.
+    """
+    yield SkillRepository(session, user_id=current_user.id)
+
+
+async def get_authenticated_skill_repository(
+    session: AsyncSession = Depends(get_session),
+    current_user: CurrentUser = ...,  # Required - no default
+) -> AsyncGenerator[SkillRepository, None]:
+    """Get skill repository that requires authentication.
+
+    Use this for endpoints that modify skills (create, update, delete, upload files).
+    """
+    yield SkillRepository(session, user_id=current_user.id)
 
 
 async def get_approval_repository(

@@ -129,30 +129,25 @@ class QdrantStore:
         self,
         collection_name: str,
         document_id: str,
-    ) -> int:
-        """Delete all points belonging to a specific document.
+    ) -> bool:
+        """Delete all vectors associated with a document.
 
         Args:
-            collection_name: The collection to delete from
-            document_id: The document ID to match in payload
+            collection_name: Name of the collection
+            document_id: Document ID to filter by (stored in payload.document_id)
 
         Returns:
-            Number of points deleted (approximate)
+            True if deletion was successful
         """
-        # Create filter for document_id in payload
-        delete_filter = Filter(
-            must=[
-                FieldCondition(
-                    key="document_id",
-                    match=MatchValue(value=document_id),
-                )
-            ]
-        )
-
-        # Delete points matching the filter
-        result = await self.client.delete(
+        await self.client.delete(
             collection_name=collection_name,
-            points_selector=delete_filter,
+            points_selector=Filter(
+                must=[
+                    FieldCondition(
+                        key="document_id",
+                        match=MatchValue(value=document_id),
+                    )
+                ]
+            ),
         )
-
-        return result.operation_id if result else 0
+        return True

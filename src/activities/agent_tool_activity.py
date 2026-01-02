@@ -69,16 +69,23 @@ async def execute_agent_as_tool(
             error=f"Maximum agent nesting depth ({input.max_depth}) exceeded",
         )
 
+    # Temporal client reference for cleanup
+    client = None
+
     try:
         # Import here to avoid circular dependencies
         from src.storage import PostgresAgentRepository
         from src.storage.database import get_session
 
-        # Get agent configuration using async context manager
+        # Get agent configuration using async context manager properly
+        config = None
         async for session in get_session():
-            repository = PostgresAgentRepository(session)
-            config = await repository.get(input.agent_id)
-            break  # Only need one iteration
+            try:
+                repository = PostgresAgentRepository(session)
+                config = await repository.get(input.agent_id)
+            finally:
+                # Session cleanup handled by async generator
+                break
 
         if not config:
             return AgentToolExecutionOutput(
@@ -88,7 +95,7 @@ async def execute_agent_as_tool(
                 error=f"Agent not found: {input.agent_id}",
             )
 
-        # Connect to Temporal
+        # Connect to Temporal (will be closed in finally block)
         temporal_host = os.getenv("TEMPORAL_HOST", "localhost:7233")
         client = await Client.connect(temporal_host)
 
@@ -184,6 +191,13 @@ async def execute_agent_as_tool(
             agent_id=input.agent_id,
             error=str(e),
         )
+    finally:
+        # Always close the Temporal client to prevent resource leaks
+        if client is not None:
+            try:
+                await client.close()
+            except Exception as close_error:
+                activity.logger.warning(f"Failed to close Temporal client: {close_error}")
 
 
 @dataclass

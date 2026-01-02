@@ -405,6 +405,10 @@ class GenerateWorkflowResponse(BaseModel):
     explanation: str
     warnings: List[str] = []
     estimated_complexity: str
+    # Execution readiness info
+    ready_steps: List[str] = []  # Steps that can execute immediately
+    blocked_steps: List[str] = []  # Steps waiting for agent creation
+    can_execute: bool = False  # True if all steps have agents assigned
 
 
 class ApplyGeneratedWorkflowRequest(BaseModel):

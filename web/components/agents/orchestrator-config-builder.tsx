@@ -23,6 +23,11 @@ interface OrchestratorConfigBuilderProps {
 
 const ORCHESTRATION_MODES = [
   {
+    value: "fanout",
+    label: "Fanout",
+    description: "Classify query, run relevant agents in parallel, synthesize results",
+  },
+  {
     value: "llm_driven",
     label: "LLM Driven",
     description: "LLM decides which agents to call based on the task",

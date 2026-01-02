@@ -73,10 +73,14 @@ class ToolAgent(BaseAgent):
                 available_tools=list(available),
             )
 
-    def _build_messages(self, context: AgentContext) -> List[LLMMessage]:
+    def _build_messages(
+        self,
+        context: AgentContext,
+        selected_skills: List = None,
+    ) -> List[LLMMessage]:
         """Build LLM messages from context."""
         messages = []
-        system_prompt = self.build_system_prompt()
+        system_prompt = self.build_system_prompt(selected_skills=selected_skills)
         messages.append(LLMMessage(role="system", content=system_prompt))
 
         for msg in context.conversation_history:
@@ -90,7 +94,13 @@ class ToolAgent(BaseAgent):
         import structlog
         logger = structlog.get_logger(__name__)
 
-        messages = self._build_messages(context)
+        # Select relevant skills for this query
+        selected_skills = await self._select_skills_for_query(
+            context.user_input,
+            user_id=context.user_id,
+        )
+
+        messages = self._build_messages(context, selected_skills=selected_skills)
 
         # Debug logging for tools
         logger.info(

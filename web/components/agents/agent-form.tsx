@@ -79,6 +79,20 @@ function toFormData(detail?: AgentDetail): AgentFormData {
       (detail.llm_config?.provider as "openai" | "anthropic") ?? "openai",
     llmModel: detail.llm_config?.model ?? "gpt-4o",
     temperature: detail.llm_config?.temperature ?? 0.7,
+    // Load agent type and configs for editing
+    agentType: detail.agent_type as AgentFormData["agentType"],
+    orchestratorConfig: detail.orchestrator_config ?? undefined,
+    // Convert backend routing_table (Record<string, string>) to RouterConfig format
+    routerConfig: detail.routing_table
+      ? {
+          routing_table: Object.fromEntries(
+            Object.entries(detail.routing_table).map(([intent, agentId]) => [
+              intent,
+              { target_agent: agentId },
+            ])
+          ),
+        }
+      : undefined,
   };
 }
 
@@ -104,24 +118,27 @@ export function AgentForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Use existing ID when editing, generate new one when creating
+    // Use existing ID when editing, generate UUID-based one when creating
+    // Using UUID prevents race conditions when two users create agents with same name
     const agentId =
       isEditing && initialData
         ? initialData.id
-        : formData.name
-            .toLowerCase()
-            .replace(/\s+/g, "-")
-            .replace(/[^a-z0-9-]/g, "");
+        : `agent_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
+
+    // Determine agent type: use explicit selection or auto-detect
+    const agentType = formData.agentType
+      ? formData.agentType
+      : detectAgentType(
+          formData.goal,
+          formData.selectedTools,
+          !!formData.knowledgeBase
+        );
 
     const agent: AgentCreate = {
       id: agentId,
       name: formData.name,
       description: formData.description || `${formData.name} agent`,
-      agent_type: detectAgentType(
-        formData.goal,
-        formData.selectedTools,
-        !!formData.knowledgeBase
-      ),
+      agent_type: agentType,
       role: {
         title: formData.roleTitle || "AI Assistant",
         expertise:
@@ -153,7 +170,7 @@ export function AgentForm({
           formData.rules.length > 0
             ? formData.rules
             : ["Be helpful and accurate"],
-        prohibited_actions: [],
+        prohibited: [],
         output_format: "Natural language response",
       },
       examples: formData.examples,
@@ -175,6 +192,16 @@ export function AgentForm({
         blocked_topics: [],
         blocked_patterns: [],
       },
+      // Include orchestrator config if agent type is OrchestratorAgent
+      orchestrator_config:
+        agentType === "OrchestratorAgent" && formData.orchestratorConfig
+          ? formData.orchestratorConfig
+          : undefined,
+      // Include router config if agent type is RouterAgent
+      router_config:
+        agentType === "RouterAgent" && formData.routerConfig
+          ? formData.routerConfig
+          : undefined,
     };
 
     if (isEditing && initialData) {

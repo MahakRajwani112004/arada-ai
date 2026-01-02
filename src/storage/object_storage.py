@@ -17,11 +17,15 @@ logger = get_logger(__name__)
 
 @dataclass
 class StorageConfig:
-    """Configuration for object storage."""
+    """Configuration for object storage.
+
+    Note: access_key and secret_key should always be provided via environment
+    variables in production. The defaults are only for local development.
+    """
 
     endpoint: str = "localhost:9000"
-    access_key: str = "magure"
-    secret_key: str = "magure_minio_secret"
+    access_key: str = ""  # Required - must be set via env var
+    secret_key: str = ""  # Required - must be set via env var
     bucket_name: str = "knowledge-documents"
     secure: bool = False  # Use HTTPS
 
@@ -172,11 +176,24 @@ _storage_instance: Optional[ObjectStorage] = None
 
 
 def get_storage_config() -> StorageConfig:
-    """Get storage config from environment."""
+    """Get storage config from environment.
+
+    Raises:
+        ValueError: If required credentials are not configured
+    """
+    access_key = os.getenv("MINIO_ACCESS_KEY")
+    secret_key = os.getenv("MINIO_SECRET_KEY")
+
+    if not access_key or not secret_key:
+        raise ValueError(
+            "MinIO credentials not configured. "
+            "Set MINIO_ACCESS_KEY and MINIO_SECRET_KEY environment variables."
+        )
+
     return StorageConfig(
         endpoint=os.getenv("MINIO_ENDPOINT", "localhost:9000"),
-        access_key=os.getenv("MINIO_ACCESS_KEY", "magure"),
-        secret_key=os.getenv("MINIO_SECRET_KEY", "magure_minio_secret"),
+        access_key=access_key,
+        secret_key=secret_key,
         bucket_name=os.getenv("MINIO_BUCKET", "knowledge-documents"),
         secure=os.getenv("MINIO_SECURE", "false").lower() == "true",
     )

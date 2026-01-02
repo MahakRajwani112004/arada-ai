@@ -1,28 +1,40 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Send, Bot, User, Loader2, Maximize2, Minimize2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useExecuteWorkflow } from "@/lib/hooks/use-agents";
+import { WorkflowResponse } from "@/types/agent";
 
 interface Message {
+  id: string;
   role: "user" | "assistant";
   content: string;
+  clarificationOptions?: string[];
 }
 
 interface AgentChatProps {
   agentId: string;
 }
 
+// Generate unique message ID
+const generateMessageId = () => crypto.randomUUID();
+
 export function AgentChat({ agentId }: AgentChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isExpanded, setIsExpanded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<Message[]>(messages);
   const executeWorkflow = useExecuteWorkflow();
+
+  // Keep ref in sync with state to avoid stale closures
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -32,33 +44,55 @@ export function AgentChat({ agentId }: AgentChatProps) {
     scrollToBottom();
   }, [messages]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || executeWorkflow.isPending) return;
-
-    const userMessage: Message = { role: "user", content: input.trim() };
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
-
-    const response = await executeWorkflow.mutateAsync({
-      agent_id: agentId,
-      user_input: input.trim(),
-      conversation_history: messages,
-    });
-
+  // Extract shared response handling logic
+  const handleWorkflowResponse = useCallback((response: WorkflowResponse) => {
     if (response.success) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: response.content },
+        {
+          id: generateMessageId(),
+          role: "assistant",
+          content: response.content,
+          clarificationOptions: response.requires_clarification
+            ? response.clarification_options
+            : undefined,
+        },
       ]);
     } else {
       setMessages((prev) => [
         ...prev,
         {
+          id: generateMessageId(),
           role: "assistant",
           content: response.error || "An error occurred. Please try again.",
         },
       ]);
+    }
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || executeWorkflow.isPending) return;
+
+    const userMessage: Message = {
+      id: generateMessageId(),
+      role: "user",
+      content: input.trim(),
+    };
+    const currentMessages = messagesRef.current;
+    setMessages((prev) => [...prev, userMessage]);
+    setInput("");
+
+    try {
+      const response = await executeWorkflow.mutateAsync({
+        agent_id: agentId,
+        user_input: input.trim(),
+        conversation_history: currentMessages,
+      });
+      handleWorkflowResponse(response);
+    } catch (error) {
+      // Error is handled by mutation's onError, but we catch to prevent unhandled rejection
+      console.error("Workflow execution failed:", error);
     }
   };
 
@@ -66,6 +100,31 @@ export function AgentChat({ agentId }: AgentChatProps) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e);
+    }
+  };
+
+  const handleClarificationClick = async (option: string) => {
+    if (executeWorkflow.isPending) return;
+
+    const userMessage: Message = {
+      id: generateMessageId(),
+      role: "user",
+      content: option,
+    };
+    // Use ref to get current messages to avoid stale closure
+    const currentMessages = [...messagesRef.current, userMessage];
+    setMessages((prev) => [...prev, userMessage]);
+
+    try {
+      const response = await executeWorkflow.mutateAsync({
+        agent_id: agentId,
+        user_input: option,
+        conversation_history: currentMessages,
+      });
+      handleWorkflowResponse(response);
+    } catch (error) {
+      // Error is handled by mutation's onError, but we catch to prevent unhandled rejection
+      console.error("Workflow execution failed:", error);
     }
   };
 
@@ -84,9 +143,9 @@ export function AgentChat({ agentId }: AgentChatProps) {
           </div>
         ) : (
           <div className="space-y-4">
-            {messages.map((message, i) => (
+            {messages.map((message) => (
               <div
-                key={i}
+                key={message.id}
                 className={cn(
                   "flex gap-3",
                   message.role === "user" && "flex-row-reverse"
@@ -106,20 +165,39 @@ export function AgentChat({ agentId }: AgentChatProps) {
                     <Bot className="h-4 w-4" />
                   )}
                 </div>
-                <div
-                  className={cn(
-                    "max-w-[80%] rounded-lg px-4 py-2",
-                    message.role === "user"
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-secondary text-secondary-foreground"
-                  )}
-                >
-                  <div className={cn(
-                    "text-sm prose prose-sm max-w-none [&>*]:!text-inherit",
-                    message.role === "assistant" && "dark:prose-invert"
-                  )}>
-                    <ReactMarkdown>{message.content}</ReactMarkdown>
+                <div className="flex flex-col gap-2 max-w-[80%]">
+                  <div
+                    className={cn(
+                      "rounded-lg px-4 py-2",
+                      message.role === "user"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-secondary text-secondary-foreground"
+                    )}
+                  >
+                    <div className={cn(
+                      "text-sm prose prose-sm max-w-none [&>*]:!text-inherit",
+                      message.role === "assistant" && "dark:prose-invert"
+                    )}>
+                      <ReactMarkdown>{message.content}</ReactMarkdown>
+                    </div>
                   </div>
+                  {/* Clarification options as quick-reply buttons */}
+                  {message.clarificationOptions && message.clarificationOptions.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {message.clarificationOptions.map((option) => (
+                        <Button
+                          key={option}
+                          variant="outline"
+                          size="sm"
+                          className="text-xs"
+                          onClick={() => handleClarificationClick(option)}
+                          disabled={executeWorkflow.isPending}
+                        >
+                          {option}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

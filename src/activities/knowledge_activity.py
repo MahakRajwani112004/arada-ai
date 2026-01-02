@@ -50,13 +50,16 @@ async def retrieve_knowledge(input: RetrieveInput) -> RetrieveOutput:
         f"top_k={input.top_k}"
     )
 
-    # Build config
-    config = KnowledgeBaseConfig(
-        collection_name=input.collection_name,
-        embedding_model=input.embedding_model,
-        top_k=input.top_k,
-        similarity_threshold=input.similarity_threshold if input.similarity_threshold is not None else 0.7,
-    )
+    # Build config - use default threshold if not provided
+    config_kwargs = {
+        "collection_name": input.collection_name,
+        "embedding_model": input.embedding_model,
+        "top_k": input.top_k,
+    }
+    if input.similarity_threshold is not None:
+        config_kwargs["similarity_threshold"] = input.similarity_threshold
+
+    config = KnowledgeBaseConfig(**config_kwargs)
 
     # Initialize knowledge base
     kb = KnowledgeBase(config)
@@ -64,11 +67,11 @@ async def retrieve_knowledge(input: RetrieveInput) -> RetrieveOutput:
     try:
         await kb.initialize()
 
-        # Search
+        # Search - use config threshold if input is None
         result = await kb.search(
             query=input.query,
             top_k=input.top_k,
-            score_threshold=input.similarity_threshold,
+            score_threshold=input.similarity_threshold or config.similarity_threshold,
         )
 
         documents = [

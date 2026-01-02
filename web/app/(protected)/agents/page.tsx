@@ -55,6 +55,14 @@ export default function AgentsPage() {
         <PageHeader
           title="Agents"
           description="Create and manage your AI agents"
+          actions={
+            <Button asChild className="gap-2">
+              <Link href="/agents/new">
+                <Plus className="h-4 w-4" />
+                Create Agent
+              </Link>
+            </Button>
+          }
         />
 
         {isLoading && (

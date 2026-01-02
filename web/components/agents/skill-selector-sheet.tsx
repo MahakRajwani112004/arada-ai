@@ -31,7 +31,8 @@ export function SkillSelectorSheet({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
-  const { data: skillsData, isLoading } = useSkills({ status: "published" });
+  // Show all user's skills (draft + published) - they can use their own drafts
+  const { data: skillsData, isLoading } = useSkills();
 
   const skills = skillsData?.skills || [];
 

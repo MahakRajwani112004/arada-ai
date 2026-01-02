@@ -106,6 +106,12 @@ class FullAgent(BaseAgent):
         await self._ensure_kb_initialized()
 
         try:
+            # Step 0: Select relevant skills for this query
+            selected_skills = await self._select_skills_for_query(
+                context.user_input,
+                user_id=context.user_id,
+            )
+
             # Step 1: Retrieve relevant documents
             retrieval_result = await self._kb.search(context.user_input)
             retrieved_docs = [doc.content for doc in retrieval_result.documents]
@@ -114,10 +120,13 @@ class FullAgent(BaseAgent):
                 "full_agent_kb_retrieval",
                 agent_id=self.id,
                 docs_retrieved=len(retrieved_docs),
+                skills_selected=len(selected_skills),
             )
 
-            # Step 2: Build initial messages with retrieved context
-            messages = self._build_messages(context, retrieved_docs)
+            # Step 2: Build initial messages with retrieved context and skills
+            messages = self._build_messages(
+                context, retrieved_docs, selected_skills=selected_skills
+            )
 
             # Step 3: Get tool definitions for native function calling
             tool_definitions = self._registry.get_openai_tools(self._enabled_tools)
@@ -237,12 +246,13 @@ class FullAgent(BaseAgent):
         self,
         context: AgentContext,
         retrieved_docs: List[str],
+        selected_skills: List = None,
     ) -> List[LLMMessage]:
-        """Build messages with retrieved context and skills."""
+        """Build messages with retrieved context and selected skills."""
         messages = []
 
-        # Build system prompt (includes skills via build_system_prompt)
-        system_prompt = self.build_system_prompt()
+        # Build system prompt with selected skills
+        system_prompt = self.build_system_prompt(selected_skills=selected_skills)
 
         # Add retrieved documents to system prompt
         if retrieved_docs:

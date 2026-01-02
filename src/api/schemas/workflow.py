@@ -8,15 +8,18 @@ class MessageSchema(BaseModel):
     """Schema for conversation message."""
 
     role: str = Field(..., pattern="^(user|assistant|system)$")
-    content: str
+    content: str = Field(..., max_length=50000)  # 50k chars per message
 
 
 class ExecuteAgentRequest(BaseModel):
     """Request to execute an agent."""
 
-    agent_id: str = Field(..., min_length=1)
-    user_input: str = Field(..., min_length=1)
-    conversation_history: List[MessageSchema] = []
+    agent_id: str = Field(..., min_length=1, max_length=100)
+    user_input: str = Field(..., min_length=1, max_length=10000)  # 10k chars max
+    conversation_history: List[MessageSchema] = Field(
+        default_factory=list,
+        max_length=100  # Max 100 messages in history
+    )
     session_id: Optional[str] = None
     # Optional reference to a saved workflow from the workflows table
     # If provided, execution history will be saved
@@ -42,6 +45,11 @@ class ExecuteAgentResponse(BaseModel):
     error: Optional[str] = None
     metadata: Dict[str, Any] = {}
     workflow_id: Optional[str] = None
+
+    # Clarification fields - for interactive follow-up questions
+    requires_clarification: bool = False
+    clarification_question: Optional[str] = None
+    clarification_options: Optional[List[str]] = None
 
 
 class WorkflowStatusRequest(BaseModel):

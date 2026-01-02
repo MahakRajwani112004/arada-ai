@@ -23,7 +23,8 @@ from src.storage.object_storage import get_storage
 logger = get_logger(__name__)
 
 # Maximum preview size for DB storage (chars)
-MAX_PREVIEW_SIZE = 4000
+# ~10K chars ≈ 2.5K tokens - enough for most FAQs/docs
+MAX_PREVIEW_SIZE = 10000
 
 # Maximum file size in bytes (10 MB)
 MAX_FILE_SIZE = 10 * 1024 * 1024
