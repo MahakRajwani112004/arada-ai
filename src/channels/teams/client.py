@@ -112,10 +112,17 @@ class TeamsClient:
         """
         token = await self._get_access_token()
 
-        # Build activity payload
+        # Build activity payload with required fields
         activity = {
             "type": "message",
             "text": message,
+            "from": {
+                "id": self.app_id,
+                "name": "MagoneAI Bot",
+            },
+            "conversation": {
+                "id": conversation_id,
+            },
         }
 
         if reply_to_id:
@@ -161,6 +168,17 @@ class TeamsClient:
         """
         token = await self._get_access_token()
 
+        # Ensure required fields are present
+        if "from" not in activity:
+            activity["from"] = {
+                "id": self.app_id,
+                "name": "MagoneAI Bot",
+            }
+        if "conversation" not in activity:
+            activity["conversation"] = {
+                "id": conversation_id,
+            }
+
         url = f"{service_url.rstrip('/')}/{self.CONNECTOR_API_VERSION}/conversations/{conversation_id}/activities"
 
         async with httpx.AsyncClient() as client:
@@ -190,7 +208,16 @@ class TeamsClient:
         await self.send_activity(
             service_url=service_url,
             conversation_id=conversation_id,
-            activity={"type": "typing"},
+            activity={
+                "type": "typing",
+                "from": {
+                    "id": self.app_id,
+                    "name": "MagoneAI Bot",
+                },
+                "conversation": {
+                    "id": conversation_id,
+                },
+            },
         )
 
     async def reply_to_activity(
@@ -216,6 +243,13 @@ class TeamsClient:
         activity = {
             "type": "message",
             "text": message,
+            "from": {
+                "id": self.app_id,
+                "name": "MagoneAI Bot",
+            },
+            "conversation": {
+                "id": conversation_id,
+            },
         }
 
         url = (
