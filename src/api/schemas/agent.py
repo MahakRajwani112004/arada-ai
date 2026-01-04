@@ -1,7 +1,7 @@
 """API schemas for agents."""
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.models.enums import AgentType, SafetyLevel
 
@@ -188,3 +188,98 @@ class GenerateAgentResponse(BaseModel):
     instructions: AgentInstructionsSchema
     examples: List[AgentExampleSchema] = []
     suggested_agent_type: AgentType
+
+
+# ============================================================================
+# Agent Overview Tab - Stats & Executions
+# ============================================================================
+
+
+class AgentStatsResponse(BaseModel):
+    """Response containing agent performance statistics."""
+
+    agent_id: str
+    time_range: str  # "24h", "7d", "30d", "90d"
+
+    # Performance metrics
+    total_executions: int
+    successful_executions: int
+    failed_executions: int
+    success_rate: float  # 0.0 to 1.0
+    avg_latency_ms: float
+    p95_latency_ms: float
+
+    # Cost metrics
+    total_cost_cents: int
+    total_tokens: int
+
+    # Trends (percentage change vs previous period)
+    executions_trend: float  # +12.5 means 12.5% increase
+    success_trend: float
+    latency_trend: float
+    cost_trend: float
+
+
+class ExecutionSummary(BaseModel):
+    """Summary of a single execution."""
+
+    id: str
+    status: str  # "completed", "failed"
+    timestamp: str  # ISO format
+    duration_ms: int
+    input_preview: Optional[str] = None
+    output_preview: Optional[str] = None
+    error_type: Optional[str] = None
+    error_message: Optional[str] = None
+    total_tokens: int = 0
+    total_cost_cents: int = 0
+
+
+class AgentExecutionsResponse(BaseModel):
+    """Response containing list of agent executions."""
+
+    executions: List[ExecutionSummary]
+    total: int
+    has_more: bool
+
+
+class ExecutionDetailResponse(BaseModel):
+    """Full execution details including metadata."""
+
+    id: str
+    agent_id: str
+    agent_type: str
+    timestamp: str  # ISO format
+    status: str  # "completed", "failed"
+    duration_ms: int
+    input_preview: Optional[str] = None
+    output_preview: Optional[str] = None
+    total_tokens: int = 0
+    total_cost_cents: int = 0
+    llm_calls_count: int = 0
+    tool_calls_count: int = 0
+    error_type: Optional[str] = None
+    error_message: Optional[str] = None
+    workflow_id: Optional[str] = None
+    execution_metadata: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class UsageDataPoint(BaseModel):
+    """Single data point for usage chart."""
+
+    timestamp: str  # ISO format
+    executions: int
+    successful: int
+    failed: int
+    avg_latency_ms: float
+    total_cost_cents: int
+
+
+class AgentUsageHistoryResponse(BaseModel):
+    """Response containing usage history for charts."""
+
+    data: List[UsageDataPoint]
+    granularity: str  # "hour" or "day"
+    time_range: str

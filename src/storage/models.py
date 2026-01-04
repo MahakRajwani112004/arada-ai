@@ -1034,3 +1034,115 @@ class TeamsMessageModel(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+
+# =============================================================================
+# Agent Conversation Models (Persistent Chat History)
+# =============================================================================
+
+
+class AgentConversationModel(Base):
+    """SQLAlchemy model for agent chat sessions.
+
+    Stores persistent conversation sessions between users and agents.
+    Used for both the main /chat page and agent-specific chat tabs.
+    """
+
+    __tablename__ = "agent_conversations"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    agent_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("agents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Session metadata
+    title: Mapped[str] = mapped_column(
+        String(255), nullable=False, default="New Conversation"
+    )
+    is_auto_title: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Stats (denormalized for performance)
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_message_preview: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True
+    )
+    last_message_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Status
+    is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<AgentConversationModel(id={self.id!r}, agent_id={self.agent_id!r}, title={self.title!r})>"
+
+
+class AgentMessageModel(Base):
+    """SQLAlchemy model for messages within agent conversations.
+
+    Stores individual messages in a conversation with execution traceability.
+    Links to workflow executions for debugging and analytics.
+    """
+
+    __tablename__ = "agent_messages"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    conversation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Message content
+    role: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )  # 'user', 'assistant', 'system'
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Execution traceability
+    workflow_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    execution_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+    # Metadata (token usage, tool calls, etc.)
+    metadata_json: Mapped[Dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+
+    # Timestamp
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        """String representation."""
+        return f"<AgentMessageModel(id={self.id!r}, conversation_id={self.conversation_id!r}, role={self.role!r})>"

@@ -9,13 +9,23 @@ import {
   updateAgent,
   deleteAgent,
   executeWorkflow,
+  getAgentStats,
+  getAgentExecutions,
+  getAgentUsageHistory,
 } from "@/lib/api/agents";
-import type { AgentCreate, WorkflowRequest } from "@/types/agent";
+import type { AgentCreate, TimeRange, WorkflowRequest } from "@/types/agent";
 
 export const agentKeys = {
   all: ["agents"] as const,
   list: () => [...agentKeys.all, "list"] as const,
   detail: (id: string) => [...agentKeys.all, "detail", id] as const,
+  // Overview tab keys
+  stats: (id: string, timeRange: TimeRange) =>
+    [...agentKeys.all, "stats", id, timeRange] as const,
+  executions: (id: string, options?: { limit?: number; offset?: number; status?: string }) =>
+    [...agentKeys.all, "executions", id, options] as const,
+  usageHistory: (id: string, timeRange: TimeRange, granularity: string) =>
+    [...agentKeys.all, "usage-history", id, timeRange, granularity] as const,
 };
 
 export function useAgents() {
@@ -93,5 +103,48 @@ export function useExecuteWorkflow() {
     onError: (error: Error) => {
       toast.error(error.message);
     },
+  });
+}
+
+// ============================================================================
+// Agent Overview Tab Hooks
+// ============================================================================
+
+export function useAgentStats(agentId: string, timeRange: TimeRange = "7d") {
+  return useQuery({
+    queryKey: agentKeys.stats(agentId, timeRange),
+    queryFn: () => getAgentStats(agentId, timeRange),
+    enabled: !!agentId,
+    staleTime: 30 * 1000, // Consider fresh for 30 seconds
+    refetchInterval: 60 * 1000, // Refresh every minute
+  });
+}
+
+export function useAgentExecutions(
+  agentId: string,
+  options?: {
+    limit?: number;
+    offset?: number;
+    status?: "completed" | "failed";
+  }
+) {
+  return useQuery({
+    queryKey: agentKeys.executions(agentId, options),
+    queryFn: () => getAgentExecutions(agentId, options),
+    enabled: !!agentId,
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useAgentUsageHistory(
+  agentId: string,
+  timeRange: TimeRange = "7d",
+  granularity: "hour" | "day" = "day"
+) {
+  return useQuery({
+    queryKey: agentKeys.usageHistory(agentId, timeRange, granularity),
+    queryFn: () => getAgentUsageHistory(agentId, timeRange, granularity),
+    enabled: !!agentId,
+    staleTime: 60 * 1000, // Consider fresh for 1 minute
   });
 }

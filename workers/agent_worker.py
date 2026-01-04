@@ -17,6 +17,7 @@ from src.activities.agent_tool_activity import (
     execute_agent_as_tool,
     get_agent_tool_definitions,
 )
+from src.activities.analytics_activity import record_agent_execution
 from src.activities.hallucination_checker_activity import check_hallucination
 from src.activities.input_sanitizer_activity import sanitize_input, sanitize_tool_result
 from src.activities.knowledge_activity import retrieve_knowledge
@@ -128,6 +129,8 @@ async def create_worker() -> Worker:
         # Sanitization activities
         sanitize_input,
         sanitize_tool_result,
+        # Analytics
+        record_agent_execution,
     ]
 
     worker = Worker(

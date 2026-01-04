@@ -18,7 +18,7 @@ from src.api.errors import (
     http_exception_handler,
 )
 from src.api.middleware import RequestLoggingMiddleware
-from src.api.routers import admin, agents, approvals, auth, knowledge, mcp, monitoring, oauth, secrets, skills, teams, workflow, workflows
+from src.api.routers import admin, agents, approvals, auth, conversations, knowledge, mcp, monitoring, oauth, secrets, skills, teams, workflow, workflows
 from src.monitoring import MetricsMiddleware, get_metrics_router
 from src.config.logging import get_logger, setup_logging
 from src.config.settings import get_settings
@@ -102,6 +102,8 @@ app.include_router(workflow.router, prefix="/api/v1")
 app.include_router(workflows.router, prefix="/api/v1")
 app.include_router(monitoring.router, prefix="/api/v1")
 app.include_router(teams.router, prefix="/api/v1")
+app.include_router(conversations.router, prefix="/api/v1")
+app.include_router(conversations.agents_router, prefix="/api/v1")
 
 # Prometheus metrics endpoint
 if settings.monitoring_enabled:

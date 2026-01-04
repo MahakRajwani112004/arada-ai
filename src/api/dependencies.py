@@ -12,6 +12,7 @@ from src.storage import PostgresAgentRepository, get_session
 from src.storage.workflow_repository import WorkflowRepository
 from src.storage.approval_repository import ApprovalRepository
 from src.storage.schedule_repository import ScheduleRepository
+from src.storage.conversation_repository import PostgresConversationRepository
 
 
 async def get_repository(
@@ -101,3 +102,14 @@ async def get_schedule_repository(
     """Get schedule repository with database session, scoped to current user."""
     user_id = current_user.id if current_user else None
     yield ScheduleRepository(session, user_id=user_id)
+
+
+async def get_conversation_repository(
+    session: AsyncSession = Depends(get_session),
+    current_user: CurrentUser = ...,  # Required - no default
+) -> AsyncGenerator[PostgresConversationRepository, None]:
+    """Get conversation repository with database session, scoped to current user.
+
+    Authentication is required - all conversation operations are user-scoped.
+    """
+    yield PostgresConversationRepository(session, user_id=current_user.id)

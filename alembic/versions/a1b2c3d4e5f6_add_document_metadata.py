@@ -27,7 +27,7 @@ def upgrade() -> None:
     )
     op.add_column(
         'knowledge_documents',
-        sa.Column('category', sa.String(100), nullable=True, index=True)
+        sa.Column('category', sa.String(100), nullable=True)
     )
     op.add_column(
         'knowledge_documents',

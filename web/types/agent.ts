@@ -223,3 +223,119 @@ export interface GenerateAgentResponse {
   examples: AgentExample[];
   suggested_agent_type: AgentType;
 }
+
+// ============================================================================
+// Agent Overview Tab Types
+// ============================================================================
+
+export type TimeRange = "24h" | "7d" | "30d" | "90d";
+
+export interface AgentStats {
+  agent_id: string;
+  time_range: TimeRange;
+
+  // Performance metrics
+  total_executions: number;
+  successful_executions: number;
+  failed_executions: number;
+  success_rate: number; // 0.0 to 1.0
+  avg_latency_ms: number;
+  p95_latency_ms: number;
+
+  // Cost metrics
+  total_cost_cents: number;
+  total_tokens: number;
+
+  // Trends (percentage change vs previous period)
+  executions_trend: number;
+  success_trend: number;
+  latency_trend: number;
+  cost_trend: number;
+}
+
+export interface ExecutionSummary {
+  id: string;
+  status: "completed" | "failed";
+  timestamp: string; // ISO format
+  duration_ms: number;
+  input_preview: string | null;
+  output_preview: string | null;
+  error_type: string | null;
+  error_message: string | null;
+  total_tokens: number;
+  total_cost_cents: number;
+}
+
+export interface AgentExecutionsResponse {
+  executions: ExecutionSummary[];
+  total: number;
+  has_more: boolean;
+}
+
+export interface UsageDataPoint {
+  timestamp: string; // ISO format
+  executions: number;
+  successful: number;
+  failed: number;
+  avg_latency_ms: number;
+  total_cost_cents: number;
+}
+
+export interface AgentUsageHistory {
+  data: UsageDataPoint[];
+  granularity: "hour" | "day";
+  time_range: TimeRange;
+}
+
+// Full execution details with metadata
+export interface ExecutionDetail {
+  id: string;
+  agent_id: string;
+  agent_type: AgentType;
+  timestamp: string;
+  status: "completed" | "failed";
+  duration_ms: number;
+  input_preview: string | null;
+  output_preview: string | null;
+  total_tokens: number;
+  total_cost_cents: number;
+  llm_calls_count: number;
+  tool_calls_count: number;
+  error_type: string | null;
+  error_message: string | null;
+  workflow_id: string | null;
+  execution_metadata: ExecutionMetadata | null;
+}
+
+export interface ExecutionMetadata {
+  model?: string;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+  tool_calls?: ToolCallDetail[];
+  agent_results?: AgentCallResult[];
+  iterations?: number;
+  mode?: string;
+  // Add other potential fields
+  [key: string]: unknown;
+}
+
+export interface ToolCallDetail {
+  tool: string;
+  args: Record<string, unknown>;
+  result: {
+    success: boolean;
+    output: unknown;
+    error?: string;
+  };
+}
+
+export interface AgentCallResult {
+  agent_id: string;
+  content: string;
+  success: boolean;
+  error?: string;
+  metadata?: Record<string, unknown>;
+}

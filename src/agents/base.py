@@ -71,6 +71,7 @@ class BaseAgent(ABC):
         success = True
         error_type = None
         error_message = None
+        response: Optional[AgentResponse] = None
 
         try:
             # Call the actual implementation
@@ -94,6 +95,17 @@ class BaseAgent(ABC):
             request_id = context.request_id
             workflow_id = context.workflow_id
 
+            # Extract input/output previews for analytics
+            input_preview = context.user_input[:200] if context.user_input else None
+            output_preview = response.content[:500] if response and response.content else None
+
+            # Extract token/cost from response metadata if available
+            total_tokens = 0
+            total_cost_cents = 0
+            if response and response.metadata:
+                total_tokens = response.metadata.get("total_tokens", 0)
+                total_cost_cents = response.metadata.get("total_cost_cents", 0)
+
             # Record Prometheus metrics
             if settings.monitoring_enabled:
                 self._record_prometheus_metrics(
@@ -114,6 +126,10 @@ class BaseAgent(ABC):
                         workflow_id=workflow_id,
                         error_type=error_type,
                         error_message=error_message,
+                        input_preview=input_preview,
+                        output_preview=output_preview,
+                        total_tokens=total_tokens,
+                        total_cost_cents=total_cost_cents,
                     )
                 )
 
@@ -170,6 +186,12 @@ class BaseAgent(ABC):
         workflow_id: Optional[str],
         error_type: Optional[str],
         error_message: Optional[str],
+        # Overview tab fields (MVP)
+        input_preview: Optional[str] = None,
+        output_preview: Optional[str] = None,
+        total_tokens: int = 0,
+        total_cost_cents: int = 0,
+        parent_execution_id: Optional[str] = None,
     ) -> None:
         """Record analytics to PostgreSQL."""
         try:
@@ -186,6 +208,12 @@ class BaseAgent(ABC):
                 workflow_id=workflow_id,
                 error_type=error_type,
                 error_message=error_message,
+                # Overview tab fields (MVP)
+                input_preview=input_preview,
+                output_preview=output_preview,
+                total_tokens=total_tokens,
+                total_cost_cents=total_cost_cents,
+                parent_execution_id=parent_execution_id,
             )
         except Exception as e:
             # Analytics should never break the main flow

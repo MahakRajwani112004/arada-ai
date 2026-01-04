@@ -3,9 +3,14 @@ import type {
   Agent,
   AgentCreate,
   AgentDetail,
+  AgentExecutionsResponse,
   AgentListResponse,
+  AgentStats,
+  AgentUsageHistory,
+  ExecutionDetail,
   GenerateAgentRequest,
   GenerateAgentResponse,
+  TimeRange,
   WorkflowRequest,
   WorkflowResponse,
   WorkflowStatusResponse,
@@ -47,5 +52,62 @@ export async function executeWorkflow(request: WorkflowRequest): Promise<Workflo
 
 export async function getWorkflowStatus(workflowId: string): Promise<WorkflowStatusResponse> {
   const response = await apiClient.get<WorkflowStatusResponse>(`/workflow/status/${workflowId}`);
+  return response.data;
+}
+
+// ============================================================================
+// Agent Overview Tab API Functions
+// ============================================================================
+
+export async function getAgentStats(
+  agentId: string,
+  timeRange: TimeRange = "7d"
+): Promise<AgentStats> {
+  const response = await apiClient.get<AgentStats>(
+    `/agents/${agentId}/stats`,
+    { params: { time_range: timeRange } }
+  );
+  return response.data;
+}
+
+export async function getAgentExecutions(
+  agentId: string,
+  options?: {
+    limit?: number;
+    offset?: number;
+    status?: "completed" | "failed" | null;
+  }
+): Promise<AgentExecutionsResponse> {
+  const response = await apiClient.get<AgentExecutionsResponse>(
+    `/agents/${agentId}/executions`,
+    {
+      params: {
+        limit: options?.limit ?? 20,
+        offset: options?.offset ?? 0,
+        status_filter: options?.status,
+      },
+    }
+  );
+  return response.data;
+}
+
+export async function getAgentUsageHistory(
+  agentId: string,
+  timeRange: TimeRange = "7d",
+  granularity: "hour" | "day" = "day"
+): Promise<AgentUsageHistory> {
+  const response = await apiClient.get<AgentUsageHistory>(
+    `/agents/${agentId}/usage-history`,
+    { params: { time_range: timeRange, granularity } }
+  );
+  return response.data;
+}
+
+export async function getExecutionDetail(
+  executionId: string
+): Promise<ExecutionDetail> {
+  const response = await apiClient.get<ExecutionDetail>(
+    `/agents/executions/${executionId}`
+  );
   return response.data;
 }

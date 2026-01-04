@@ -41,6 +41,11 @@ from .tool_activity import (
     get_tool_definitions,
 )
 from .scheduled_workflow_activity import execute_scheduled_workflow
+from .analytics_activity import (
+    RecordAgentExecutionInput,
+    RecordAgentExecutionOutput,
+    record_agent_execution,
+)
 
 __all__ = [
     "llm_completion",
@@ -75,4 +80,8 @@ __all__ = [
     "SanitizeToolResultOutput",
     # Scheduled workflow execution
     "execute_scheduled_workflow",
+    # Analytics
+    "record_agent_execution",
+    "RecordAgentExecutionInput",
+    "RecordAgentExecutionOutput",
 ]

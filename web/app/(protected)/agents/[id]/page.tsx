@@ -1,15 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Trash2, Bot, MessageSquare, Workflow, Pencil } from "lucide-react";
+import { ArrowLeft, Trash2, Bot, MessageSquare, Workflow, BarChart3, Settings } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { PageContainer } from "@/components/layout/page-container";
 import { AgentChat } from "@/components/agents/agent-chat";
 import { AgentForm } from "@/components/agents/agent-form";
+import { AgentOverview } from "@/components/agents/agent-overview";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -68,6 +70,8 @@ const defaultConfig = {
   color: "bg-gray-500/10 text-gray-400 border-gray-500/20",
 };
 
+type TabValue = "overview" | "chat" | "config";
+
 export default function AgentDetailPage({
   params,
 }: {
@@ -76,14 +80,36 @@ export default function AgentDetailPage({
   const { id } = params;
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [isEditing, setIsEditing] = useState(searchParams.get("edit") === "true");
+
+  // Determine initial tab from URL
+  const getInitialTab = useCallback((): TabValue => {
+    if (searchParams.get("edit") === "true") return "config";
+    const tab = searchParams.get("tab");
+    if (tab === "chat" || tab === "config" || tab === "overview") return tab;
+    return "overview"; // Default to overview
+  }, [searchParams]);
+
+  const [activeTab, setActiveTab] = useState<TabValue>(getInitialTab());
   const { data: agent, isLoading, error } = useAgent(id);
   const deleteAgent = useDeleteAgent();
 
-  // Update isEditing when URL changes
+  // Update tab when URL changes
   useEffect(() => {
-    setIsEditing(searchParams.get("edit") === "true");
-  }, [searchParams]);
+    setActiveTab(getInitialTab());
+  }, [getInitialTab]);
+
+  const handleTabChange = (value: string) => {
+    const tab = value as TabValue;
+    setActiveTab(tab);
+    // Update URL without full navigation
+    if (tab === "config") {
+      router.replace(`/agents/${id}?edit=true`, { scroll: false });
+    } else if (tab === "chat") {
+      router.replace(`/agents/${id}?tab=chat`, { scroll: false });
+    } else {
+      router.replace(`/agents/${id}`, { scroll: false });
+    }
+  };
 
   const handleDelete = async () => {
     await deleteAgent.mutateAsync(id);
@@ -166,20 +192,6 @@ export default function AgentDetailPage({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                if (isEditing) {
-                  router.push(`/agents/${id}`);
-                } else {
-                  router.push(`/agents/${id}?edit=true`);
-                }
-              }}
-            >
-              <Pencil className="mr-2 h-4 w-4" />
-              {isEditing ? "Cancel Edit" : "Edit"}
-            </Button>
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="outline" size="sm" className="text-destructive">
@@ -209,15 +221,38 @@ export default function AgentDetailPage({
           </div>
         </div>
 
-        {isEditing ? (
-          <AgentForm
-            initialData={agent}
-            isEditing={true}
-            onCancel={() => router.push(`/agents/${id}`)}
-          />
-        ) : (
-          <AgentChat agentId={id} />
-        )}
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+          <TabsList className="mb-6">
+            <TabsTrigger value="overview" className="gap-2">
+              <BarChart3 className="h-4 w-4" />
+              Overview
+            </TabsTrigger>
+            <TabsTrigger value="chat" className="gap-2">
+              <MessageSquare className="h-4 w-4" />
+              Chat
+            </TabsTrigger>
+            <TabsTrigger value="config" className="gap-2">
+              <Settings className="h-4 w-4" />
+              Configuration
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="overview" className="mt-0">
+            <AgentOverview agent={agent} />
+          </TabsContent>
+
+          <TabsContent value="chat" className="mt-0">
+            <AgentChat agentId={id} />
+          </TabsContent>
+
+          <TabsContent value="config" className="mt-0">
+            <AgentForm
+              initialData={agent}
+              isEditing={true}
+              onCancel={() => handleTabChange("overview")}
+            />
+          </TabsContent>
+        </Tabs>
       </PageContainer>
     </>
   );

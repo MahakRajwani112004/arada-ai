@@ -1,9 +1,10 @@
 """SQLAlchemy ORM models for monitoring analytics."""
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from sqlalchemy import Boolean, DateTime, Integer, String, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.storage.models import Base
@@ -131,6 +132,40 @@ class AgentExecutionModel(Base):
     success: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     error_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    # === Overview Tab Fields (MVP) ===
+
+    # Input/output previews for display in execution list
+    input_preview: Mapped[Optional[str]] = mapped_column(
+        String(200), nullable=True,
+        comment="First 200 chars of sanitized user input"
+    )
+    output_preview: Mapped[Optional[str]] = mapped_column(
+        String(500), nullable=True,
+        comment="First 500 chars of agent output"
+    )
+
+    # Token and cost tracking at execution level
+    total_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0,
+        comment="Total tokens used in this execution"
+    )
+    total_cost_cents: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0,
+        comment="Total cost in cents for this execution"
+    )
+
+    # Parent execution for nested agent calls (orchestrator -> sub-agent)
+    parent_execution_id: Mapped[Optional[str]] = mapped_column(
+        String(36), nullable=True, index=True,
+        comment="Parent execution ID for nested agent calls"
+    )
+
+    # Full execution metadata (tool calls, agent results, etc.)
+    execution_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSONB, nullable=True,
+        comment="Full execution metadata including tool_calls, agent_results, etc."
+    )
 
     def __repr__(self) -> str:
         """String representation."""

@@ -1,7 +1,7 @@
 """Analytics Service - high-level interface for recording and querying analytics."""
 import asyncio
 from functools import lru_cache
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from src.config.logging import get_logger
 from src.config.settings import get_settings
@@ -100,6 +100,14 @@ class AnalyticsService:
         tool_calls_count: int = 0,
         error_type: Optional[str] = None,
         error_message: Optional[str] = None,
+        # Overview tab fields (MVP)
+        input_preview: Optional[str] = None,
+        output_preview: Optional[str] = None,
+        total_tokens: int = 0,
+        total_cost_cents: int = 0,
+        parent_execution_id: Optional[str] = None,
+        # Full execution details
+        execution_metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Record agent execution to database.
@@ -125,6 +133,13 @@ class AnalyticsService:
                     tool_calls_count=tool_calls_count,
                     error_type=error_type,
                     error_message=error_message,
+                    # Overview tab fields (MVP)
+                    input_preview=input_preview,
+                    output_preview=output_preview,
+                    total_tokens=total_tokens,
+                    total_cost_cents=total_cost_cents,
+                    parent_execution_id=parent_execution_id,
+                    execution_metadata=execution_metadata,
                 )
 
             logger.debug(
@@ -184,6 +199,16 @@ class AnalyticsService:
         async with get_async_session() as session:
             repo = AnalyticsRepository(session)
             return await repo.get_agent_stats_by_type(user_id, hours)
+
+    async def get_execution_detail(
+        self,
+        execution_id: str,
+        user_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Get full execution details including metadata."""
+        async with get_async_session() as session:
+            repo = AnalyticsRepository(session)
+            return await repo.get_execution_detail(execution_id, user_id)
 
 
 # Singleton instance
