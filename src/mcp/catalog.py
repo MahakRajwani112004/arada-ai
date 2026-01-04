@@ -16,6 +16,7 @@ MCP_SHAREPOINT_URL = os.getenv("MCP_SHAREPOINT_URL", "http://localhost:8006/mcp"
 MCP_ONEDRIVE_URL = os.getenv("MCP_ONEDRIVE_URL", "http://localhost:8007/mcp")
 MCP_SLACK_URL = os.getenv("MCP_SLACK_URL", "http://localhost:8008/mcp")
 MCP_FILESYSTEM_URL = os.getenv("MCP_FILESYSTEM_URL", "http://localhost:8007/mcp")
+MCP_WEB_SEARCH_URL = os.getenv("MCP_WEB_SEARCH_URL", "http://localhost:8008/mcp")
 
 
 def _google_refresh_token_spec() -> CredentialSpec:
@@ -219,6 +220,15 @@ MCP_SERVER_CATALOG: Dict[str, MCPServerTemplate] = {
             ),
         ],
         tools=["read_file", "write_file", "list_directory"],
+    ),
+    "web-search": MCPServerTemplate(
+        id="web-search",
+        name="Web Search",
+        url_template=MCP_WEB_SEARCH_URL,
+        auth_type="none",
+        scopes=[],
+        credentials_required=[],
+        tools=["search_web", "fetch_page_content"],
     ),
 }
 
