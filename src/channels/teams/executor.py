@@ -84,14 +84,17 @@ class TeamsWorkflowExecutor:
 
         try:
             # Load agent config from database
-            stmt = select(AgentModel).where(AgentModel.id == agent_id)
+            stmt = select(AgentModel).where(
+                AgentModel.id == agent_id,
+                AgentModel.is_active == True,
+            )
             result = await self.session.execute(stmt)
             agent_model = result.scalar_one_or_none()
 
             if not agent_model:
                 logger.warning("teams_agent_not_found", agent_id=agent_id)
                 return {
-                    "response": f"Agent '{agent_id}' not found.",
+                    "response": f"Agent '{agent_id}' not found or is inactive.",
                     "success": False,
                     "error": "Agent not found",
                 }

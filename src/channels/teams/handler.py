@@ -380,6 +380,9 @@ class TeamsHandler:
             return "I received your message but workflow execution is not configured."
 
         try:
+            # Load conversation history (last 20 messages)
+            conversation_history = await self._load_conversation_history(conversation.id)
+
             # Execute the agent workflow
             result = await self.workflow_executor.execute(
                 agent_id=agent_id,
@@ -389,6 +392,7 @@ class TeamsHandler:
                     "conversation_id": conversation.id,
                     "conversation_type": conversation.conversation_type,
                 },
+                conversation_history=conversation_history,
             )
 
             return result.get("response", "I processed your request but have no response.")
@@ -396,3 +400,32 @@ class TeamsHandler:
         except Exception as e:
             logger.exception("teams_agent_execution_failed", error=str(e))
             return f"I encountered an error processing your request: {str(e)}"
+
+    async def _load_conversation_history(
+        self, conversation_id: str, limit: int = 20
+    ) -> list:
+        """Load recent conversation history for context.
+
+        Args:
+            conversation_id: Teams conversation DB ID
+            limit: Maximum messages to load
+
+        Returns:
+            List of message dicts in OpenAI format
+        """
+        stmt = (
+            select(TeamsMessageModel)
+            .where(TeamsMessageModel.conversation_id == conversation_id)
+            .order_by(TeamsMessageModel.created_at.desc())
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        messages = result.scalars().all()
+
+        # Convert to OpenAI format and reverse to chronological order
+        history = []
+        for msg in reversed(messages):
+            role = "assistant" if msg.is_from_bot else "user"
+            history.append({"role": role, "content": msg.content})
+
+        return history
