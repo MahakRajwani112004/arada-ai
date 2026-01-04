@@ -224,6 +224,9 @@ class TeamsClient:
                 )
             response.raise_for_status()
 
+        # Handle empty responses (typing indicators return 201/202 with no body)
+        if response.status_code in (201, 202) or not response.content:
+            return {"status": response.status_code}
         return response.json()
 
     async def send_typing_indicator(
