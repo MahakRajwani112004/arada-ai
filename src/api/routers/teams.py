@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.dependencies import CurrentUser
 from src.channels.teams.handler import TeamsHandler
+from src.channels.teams.executor import TeamsWorkflowExecutor
 from src.config.logging import get_logger
 from src.storage.database import get_session
 from src.storage.models import TeamsConfigurationModel, TeamsConversationModel
@@ -120,8 +121,9 @@ async def teams_webhook(
             logger.error("teams_password_not_found", config_id=config_id)
             raise HTTPException(status_code=500, detail="Teams credentials not configured")
 
-        # Create handler and process activity
-        handler = TeamsHandler(session=session)
+        # Create workflow executor and handler
+        workflow_executor = TeamsWorkflowExecutor(session=session, user_id=config.user_id)
+        handler = TeamsHandler(session=session, workflow_executor=workflow_executor)
         response = await handler.handle_activity(
             activity=activity,
             config=config,
