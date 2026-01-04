@@ -238,16 +238,67 @@ class TeamsWorkflowExecutor:
             workflow_input.orchestrator_max_parallel = agent_config.orchestrator_config.max_parallel
             workflow_input.orchestrator_max_depth = agent_config.orchestrator_config.max_depth
             workflow_input.orchestrator_aggregation = agent_config.orchestrator_config.default_aggregation.value
-            workflow_input.orchestrator_available_agents = [
-                {
-                    "agent_id": a.agent_id,
-                    "alias": a.alias,
-                    "description": a.description,
-                }
-                for a in agent_config.orchestrator_config.available_agents
-            ]
+
+            # Auto-discover agents if enabled
+            if agent_config.orchestrator_config.auto_discover:
+                discovered_agents = await self._discover_agents(agent_config)
+                workflow_input.orchestrator_available_agents = discovered_agents
+            else:
+                workflow_input.orchestrator_available_agents = [
+                    {
+                        "agent_id": a.agent_id,
+                        "alias": a.alias,
+                        "description": a.description,
+                    }
+                    for a in agent_config.orchestrator_config.available_agents
+                ]
 
         return workflow_input
+
+    async def _discover_agents(self, agent_config: AgentConfig) -> list:
+        """Auto-discover available agents for orchestrator.
+
+        Args:
+            agent_config: Orchestrator agent configuration
+
+        Returns:
+            List of agent dicts with agent_id, alias, description
+        """
+        from src.models.agent_config import AgentConfig as AgentConfigModel
+
+        # Get all active agents
+        stmt = select(AgentModel).where(AgentModel.is_active == True)
+        result = await self.session.execute(stmt)
+        all_agents = result.scalars().all()
+
+        # Get exclusion lists
+        orch_config = agent_config.orchestrator_config
+        exclude_types = set(orch_config.exclude_agent_types or [])
+        exclude_ids = set(orch_config.exclude_agent_ids or [])
+        exclude_ids.add(agent_config.id)  # Always exclude self
+
+        discovered_agents = []
+        for agent_model in all_agents:
+            if agent_model.id in exclude_ids:
+                continue
+
+            # Parse config to get agent_type
+            try:
+                config = AgentConfigModel.model_validate(agent_model.config_json)
+                if config.agent_type.value in exclude_types:
+                    continue
+
+                discovered_agents.append({
+                    "agent_id": agent_model.id,
+                    "alias": config.name,
+                    "description": config.description or config.name,
+                })
+            except Exception as e:
+                logger.warning("teams_agent_discovery_skip", agent_id=agent_model.id, error=str(e))
+                continue
+
+        logger.info("teams_agents_discovered", count=len(discovered_agents))
+        return discovered_agents
 
     async def _load_skills(self, agent_config: AgentConfig) -> List[Skill]:
         """Load skills from database for agent config.
