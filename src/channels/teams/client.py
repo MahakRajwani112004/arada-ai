@@ -131,6 +131,13 @@ class TeamsClient:
         # Build URL
         url = f"{service_url.rstrip('/')}/{self.CONNECTOR_API_VERSION}/conversations/{conversation_id}/activities"
 
+        logger.debug(
+            "teams_send_message_request",
+            url=url,
+            activity=activity,
+            service_url=service_url,
+        )
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 url,
@@ -140,6 +147,15 @@ class TeamsClient:
                     "Content-Type": "application/json",
                 },
             )
+            if response.status_code >= 400:
+                error_body = response.text
+                logger.error(
+                    "teams_send_message_failed",
+                    status_code=response.status_code,
+                    error_body=error_body,
+                    url=url,
+                    activity=activity,
+                )
             response.raise_for_status()
 
         result = response.json()
@@ -181,6 +197,13 @@ class TeamsClient:
 
         url = f"{service_url.rstrip('/')}/{self.CONNECTOR_API_VERSION}/conversations/{conversation_id}/activities"
 
+        logger.debug(
+            "teams_send_activity_request",
+            url=url,
+            activity_type=activity.get("type"),
+            service_url=service_url,
+        )
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 url,
@@ -190,6 +213,15 @@ class TeamsClient:
                     "Content-Type": "application/json",
                 },
             )
+            if response.status_code >= 400:
+                error_body = response.text
+                logger.error(
+                    "teams_send_activity_failed",
+                    status_code=response.status_code,
+                    error_body=error_body,
+                    url=url,
+                    activity_type=activity.get("type"),
+                )
             response.raise_for_status()
 
         return response.json()
