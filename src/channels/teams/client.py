@@ -17,8 +17,9 @@ class TeamsClient:
     Handles authentication and message sending to Teams conversations.
     """
 
-    # Bot Framework OAuth endpoint
-    OAUTH_URL = "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
+    # Bot Framework OAuth endpoint templates
+    OAUTH_URL_MULTI_TENANT = "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
+    OAUTH_URL_SINGLE_TENANT = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
 
     # Bot Connector API base URL (service URL from conversation reference)
     CONNECTOR_API_VERSION = "v3"
@@ -44,6 +45,16 @@ class TeamsClient:
         self._access_token: Optional[str] = None
         self._token_expires_at: Optional[datetime] = None
 
+    def _get_oauth_url(self) -> str:
+        """Get the appropriate OAuth URL based on tenant configuration.
+
+        For single-tenant bots, uses the specific tenant ID.
+        For multi-tenant bots, uses the botframework.com tenant.
+        """
+        if self.tenant_id:
+            return self.OAUTH_URL_SINGLE_TENANT.format(tenant_id=self.tenant_id)
+        return self.OAUTH_URL_MULTI_TENANT
+
     async def _get_access_token(self) -> str:
         """Get or refresh access token for Bot Framework API.
 
@@ -55,10 +66,14 @@ class TeamsClient:
             if datetime.now(timezone.utc) < self._token_expires_at:
                 return self._access_token
 
+        # Get the appropriate OAuth URL for this bot's configuration
+        oauth_url = self._get_oauth_url()
+        logger.debug("teams_oauth_request", oauth_url=oauth_url, tenant_id=self.tenant_id)
+
         # Request new token
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                self.OAUTH_URL,
+                oauth_url,
                 data={
                     "grant_type": "client_credentials",
                     "client_id": self.app_id,
