@@ -31,6 +31,8 @@
         "risk_assessment": "arada-risk-agent",
         "executive_summary": "arada-executive-reporter",
         "data_query": "arada-data-agent",
+        "visualization_request": "arada-visualization-agent",
+        "chart_request": "arada-visualization-agent",
         "default": "arada-orchestrator"
       }
     },
@@ -86,6 +88,10 @@
           {
             "agent_id": "arada-data-agent",
             "description": "Queries raw data and performs filtering"
+          },
+          {
+            "agent_id": "arada-visualization-agent",
+            "description": "Creates charts and visual representations of data"
           }
         ],
         "max_parallel": 3,
@@ -222,7 +228,8 @@
         "max_tokens": 2500
       },
       "tools": [
-        {"tool_id": "real_estate_query", "enabled": true}
+        {"tool_id": "real_estate_query", "enabled": true},
+        {"tool_id": "chart_generator", "enabled": true}
       ]
     },
     {
@@ -443,6 +450,51 @@
       },
       "tools": [
         {"tool_id": "real_estate_query", "enabled": true}
+      ]
+    },
+    {
+      "id": "arada-visualization-agent",
+      "name": "Visualization Agent",
+      "description": "Creates charts and visual representations of data",
+      "agent_type": "ToolAgent",
+      "role": {
+        "title": "Data Visualization Specialist",
+        "expertise": ["data visualization", "charting", "visual analytics"],
+        "personality": ["creative", "clear", "insightful"],
+        "communication_style": "visual"
+      },
+      "goal": {
+        "objective": "Transform data into clear, insightful visualizations",
+        "success_criteria": ["Appropriate chart type selected", "Clear labels and titles", "Key insights highlighted"],
+        "constraints": ["Choose chart type based on data nature", "Include data insights"]
+      },
+      "instructions": {
+        "steps": [
+          "1. Analyze the data to determine the best visualization type",
+          "2. Query data if needed using real_estate_query",
+          "3. Use chart_generator to create the visualization",
+          "4. Provide insights derived from the visual",
+          "5. Suggest follow-up analyses if relevant"
+        ],
+        "rules": [
+          "Use bar charts for category comparisons",
+          "Use line charts for trends over time",
+          "Use pie charts for proportions/market share",
+          "Always include a title and axis labels",
+          "Highlight key insights in the chart"
+        ],
+        "output_format": "ASCII chart visualization with data insights and chart configuration"
+      },
+      "llm_config": {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "temperature": 0.2,
+        "max_tokens": 2500
+      },
+      "tools": [
+        {"tool_id": "chart_generator", "enabled": true},
+        {"tool_id": "real_estate_query", "enabled": true},
+        {"tool_id": "kpi_calculator", "enabled": true}
       ]
     }
   ],

@@ -116,7 +116,7 @@ export default function CSVSQLPage() {
       } else {
         toast.error(result.error || "Failed to get sample data");
       }
-    } catch (error) {
+    } catch (_error) {
       toast.error("Failed to get sample data");
     }
   };

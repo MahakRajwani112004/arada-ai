@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import httpx
@@ -11,15 +12,23 @@ import httpx
 async def load_arada_agents(
     api_base_url: str = "http://localhost:8000",
     config_path: str | None = None,
+    auth_token: str | None = None,
 ):
     """Load Arada AI agents from configuration file.
 
     Args:
         api_base_url: Base URL of the MagoneAI API
         config_path: Path to the agent configuration JSON file
+        auth_token: JWT auth token (or set MAGONE_AUTH_TOKEN env var)
     """
     if config_path is None:
         config_path = Path(__file__).parent.parent / "src/agents/configs/arada_ai_agents.json"
+
+    # Get auth token
+    token = auth_token or os.getenv("MAGONE_AUTH_TOKEN")
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
     # Load configuration
     with open(config_path) as f:
@@ -30,7 +39,7 @@ async def load_arada_agents(
 
     print(f"Loading {len(agents)} Arada AI agents...")
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(headers=headers, timeout=30.0) as client:
         # Load each agent
         for agent in agents:
             try:
@@ -73,6 +82,7 @@ async def load_arada_agents(
     print("  - arada-risk-agent: Risk identification")
     print("  - arada-executive-reporter: Executive summaries")
     print("  - arada-data-agent: Data queries")
+    print("  - arada-visualization-agent: Charts and visualizations")
 
     print("\nTo use Arada AI, send requests to:")
     print(f"  POST {api_base_url}/api/v1/workflow/execute")
@@ -114,7 +124,12 @@ if __name__ == "__main__":
         default=None,
         help="Path to real estate bookings CSV file",
     )
+    parser.add_argument(
+        "--token",
+        default=None,
+        help="JWT auth token (or set MAGONE_AUTH_TOKEN env var)",
+    )
 
     args = parser.parse_args()
 
-    asyncio.run(load_arada_agents(args.api_url, args.config))
+    asyncio.run(load_arada_agents(args.api_url, args.config, args.token))
