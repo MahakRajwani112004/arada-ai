@@ -237,6 +237,7 @@ services:
       MCP_OUTLOOK_CALENDAR_URL: http://mcp-outlook-calendar:8000/mcp
       MCP_OUTLOOK_EMAIL_URL: http://mcp-outlook-email:8000/mcp
       MCP_FILESYSTEM_URL: http://mcp-filesystem:8000/mcp
+      MCP_WEB_SEARCH_URL: http://mcp-web-search:8000/mcp
       # Google OAuth (optional)
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
@@ -323,6 +324,7 @@ services:
       MCP_OUTLOOK_CALENDAR_URL: http://mcp-outlook-calendar:8000/mcp
       MCP_OUTLOOK_EMAIL_URL: http://mcp-outlook-email:8000/mcp
       MCP_FILESYSTEM_URL: http://mcp-filesystem:8000/mcp
+      MCP_WEB_SEARCH_URL: http://mcp-web-search:8000/mcp
       # MinIO / Object Storage
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-magure}
@@ -553,6 +555,22 @@ services:
     restart: unless-stopped
     volumes:
       - mcp_filesystem_data:/data
+    networks:
+      - magure-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # MCP Server - Web Search
+  # ============================================
+  mcp-web-search:
+    image: ${DOCKER_REGISTRY:-magureme}/magoneai-mcp-web-search:${IMAGE_TAG:-latest}
+    container_name: magure-mcp-web-search
+    restart: unless-stopped
     networks:
       - magure-network
     healthcheck:

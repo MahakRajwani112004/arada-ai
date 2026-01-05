@@ -79,6 +79,11 @@ with workflow.unsafe.imports_passed_through():
         execute_tool,
         get_tool_definitions,
     )
+    from src.activities.analytics_activity import (
+        RecordAgentExecutionInput,
+        RecordAgentExecutionOutput,
+        record_agent_execution,
+    )
     from src.models.enums import AgentType
     from src.models.orchestrator_config import AggregationStrategy, OrchestratorMode
     from src.models.workflow_definition import (
@@ -260,6 +265,12 @@ class AgentWorkflow:
             f"Starting agent workflow: id={input.agent_id}, type={input.agent_type}"
         )
 
+        # Track execution time using workflow.now() for determinism
+        start_time = workflow.now()
+        result: Optional[AgentWorkflowOutput] = None
+        error_type: Optional[str] = None
+        error_message: Optional[str] = None
+
         try:
             # Input safety check
             safety_result = await self._check_safety(
@@ -339,7 +350,7 @@ class AgentWorkflow:
             )
 
             if not output_safety.is_safe:
-                return AgentWorkflowOutput(
+                result = AgentWorkflowOutput(
                     content="I generated a response but it was filtered for safety.",
                     agent_id=input.agent_id,
                     agent_type=input.agent_type,
@@ -347,18 +358,53 @@ class AgentWorkflow:
                     error="Output safety violation",
                     metadata={"filtered": True},
                 )
-
-            return result
+                error_type = "SafetyViolation"
+                error_message = "Output safety violation"
 
         except Exception as e:
             workflow.logger.error(f"Workflow error: {e}")
-            return AgentWorkflowOutput(
+            result = AgentWorkflowOutput(
                 content="An error occurred while processing your request.",
                 agent_id=input.agent_id,
                 agent_type=input.agent_type,
                 success=False,
                 error=str(e),
             )
+            error_type = type(e).__name__
+            error_message = str(e)[:500]
+
+        finally:
+            # Record analytics
+            end_time = workflow.now()
+            latency_ms = int((end_time - start_time).total_seconds() * 1000)
+            try:
+                # Extract metadata for analytics (including tool_calls, agent_results, etc.)
+                execution_metadata = result.metadata if result and result.metadata else {}
+
+                await workflow.execute_activity(
+                    record_agent_execution,
+                    RecordAgentExecutionInput(
+                        user_id=input.user_id,
+                        agent_id=input.agent_id,
+                        agent_type=input.agent_type,
+                        latency_ms=latency_ms,
+                        success=result.success if result else False,
+                        request_id=None,
+                        workflow_id=workflow.info().workflow_id,
+                        error_type=error_type,
+                        error_message=error_message,
+                        input_preview=input.user_input[:200] if input.user_input else None,
+                        output_preview=result.content[:500] if result and result.content else None,
+                        total_tokens=execution_metadata.get("total_tokens", 0) if execution_metadata else 0,
+                        total_cost_cents=execution_metadata.get("total_cost_cents", 0) if execution_metadata else 0,
+                        execution_metadata=execution_metadata,
+                    ),
+                    start_to_close_timeout=timedelta(seconds=10),
+                )
+            except Exception as analytics_error:
+                workflow.logger.warning(f"Failed to record analytics: {analytics_error}")
+
+        return result
 
     async def _check_safety(
         self,

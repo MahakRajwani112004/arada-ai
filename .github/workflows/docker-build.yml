@@ -60,6 +60,7 @@ jobs:
       mcp-outlook-calendar: ${{ steps.filter.outputs.mcp-outlook-calendar }}
       mcp-outlook-email: ${{ steps.filter.outputs.mcp-outlook-email }}
       mcp-filesystem: ${{ steps.filter.outputs.mcp-filesystem }}
+      mcp-web-search: ${{ steps.filter.outputs.mcp-web-search }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -97,6 +98,9 @@ jobs:
             mcp-filesystem:
               - 'mcp_servers/base.py'
               - 'mcp_servers/filesystem/**'
+            mcp-web-search:
+              - 'mcp_servers/base.py'
+              - 'mcp_servers/web-search/**'
 
   # ============================================
   # Build API Image
@@ -557,11 +561,68 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ============================================
+  # Build MCP Web Search Image
+  # ============================================
+  build-mcp-web-search:
+    name: Build MCP Web Search Image
+    needs: changes
+    if: needs.changes.outputs.mcp-web-search == 'true' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.DOCKER_NAMESPACE }}/magoneai-mcp-web-search
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Build and push MCP Web Search image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./mcp_servers
+          file: ./mcp_servers/web-search/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============================================
   # Create Release (on tag push)
   # ============================================
   release:
     name: Create Release
-    needs: [changes, build-api, build-worker, build-web, build-mcp-google-calendar, build-mcp-google-gmail, build-mcp-outlook-calendar, build-mcp-outlook-email, build-mcp-filesystem]
+    needs: [changes, build-api, build-worker, build-web, build-mcp-google-calendar, build-mcp-google-gmail, build-mcp-outlook-calendar, build-mcp-outlook-email, build-mcp-filesystem, build-mcp-web-search]
     if: always() && !failure() && !cancelled() && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

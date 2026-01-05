@@ -13,13 +13,18 @@ logger = get_logger(__name__)
 from src.api.schemas.agent import (
     AgentDetailResponse,
     AgentExampleSchema,
+    AgentExecutionsResponse,
     AgentGoalSchema,
     AgentInstructionsSchema,
     AgentListResponse,
     AgentReferenceSchema,
     AgentResponse,
     AgentRoleSchema,
+    AgentStatsResponse,
+    AgentUsageHistoryResponse,
     CreateAgentRequest,
+    ExecutionDetailResponse,
+    ExecutionSummary,
     GenerateAgentRequest,
     GenerateAgentResponse,
     KnowledgeBaseConfigSchema,
@@ -28,6 +33,7 @@ from src.api.schemas.agent import (
     SafetyConfigSchema,
     SkillConfigSchema,
     ToolConfigSchema,
+    UsageDataPoint,
 )
 from src.auth.dependencies import CurrentUser
 from src.models.agent_config import AgentConfig
@@ -41,7 +47,10 @@ from src.models.tool_config import ToolConfig
 from src.models.skill_config import SkillConfig
 from src.api.dependencies import get_user_repository
 from src.storage import BaseAgentRepository
+from src.storage.database import get_session
 from src.llm.client import LLMClient, LLMMessage
+from src.monitoring.analytics.repository import AnalyticsRepository
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -568,3 +577,209 @@ async def delete_agent(
         agent_id=agent_id,
         user_id=current_user.id,
     )
+
+
+# ============================================================================
+# Agent Overview Tab - Stats & Executions Endpoints
+# ============================================================================
+
+TIME_RANGE_HOURS = {
+    "24h": 24,
+    "7d": 168,
+    "30d": 720,
+    "90d": 2160,
+}
+
+
+@router.get("/{agent_id}/stats", response_model=AgentStatsResponse)
+async def get_agent_stats(
+    agent_id: str,
+    current_user: CurrentUser,
+    time_range: str = "7d",
+    repository: BaseAgentRepository = Depends(get_user_repository),
+    session: AsyncSession = Depends(get_session),
+) -> AgentStatsResponse:
+    """Get performance statistics for an agent.
+
+    Args:
+        agent_id: Agent ID
+        time_range: Time range - "24h", "7d", "30d", or "90d"
+    """
+    # Verify agent exists
+    config = await repository.get(agent_id)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{agent_id}' not found",
+        )
+
+    # Parse time range
+    hours = TIME_RANGE_HOURS.get(time_range, 168)
+
+    # Get stats from analytics repository
+    analytics_repo = AnalyticsRepository(session)
+    stats = await analytics_repo.get_agent_overview_stats(
+        user_id=current_user.id,
+        agent_id=agent_id,
+        hours=hours,
+    )
+
+    return AgentStatsResponse(
+        agent_id=agent_id,
+        time_range=time_range,
+        total_executions=stats["total_executions"],
+        successful_executions=stats["successful_executions"],
+        failed_executions=stats["failed_executions"],
+        success_rate=stats["success_rate"],
+        avg_latency_ms=stats["avg_latency_ms"],
+        p95_latency_ms=stats["p95_latency_ms"],
+        total_cost_cents=stats["total_cost_cents"],
+        total_tokens=stats["total_tokens"],
+        executions_trend=stats["executions_trend"],
+        success_trend=stats["success_trend"],
+        latency_trend=stats["latency_trend"],
+        cost_trend=stats["cost_trend"],
+    )
+
+
+@router.get("/{agent_id}/executions", response_model=AgentExecutionsResponse)
+async def get_agent_executions(
+    agent_id: str,
+    current_user: CurrentUser,
+    limit: int = 20,
+    offset: int = 0,
+    status_filter: str = None,
+    repository: BaseAgentRepository = Depends(get_user_repository),
+    session: AsyncSession = Depends(get_session),
+) -> AgentExecutionsResponse:
+    """Get execution history for an agent.
+
+    Args:
+        agent_id: Agent ID
+        limit: Max number of executions to return (default 20)
+        offset: Offset for pagination (default 0)
+        status_filter: Filter by status - "completed", "failed", or None for all
+    """
+    # Verify agent exists
+    config = await repository.get(agent_id)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{agent_id}' not found",
+        )
+
+    # Get executions from analytics repository
+    analytics_repo = AnalyticsRepository(session)
+    executions, total = await analytics_repo.get_agent_executions(
+        user_id=current_user.id,
+        agent_id=agent_id,
+        limit=limit,
+        offset=offset,
+        status_filter=status_filter,
+    )
+
+    return AgentExecutionsResponse(
+        executions=[
+            ExecutionSummary(
+                id=e["id"],
+                status=e["status"],
+                timestamp=e["timestamp"],
+                duration_ms=e["duration_ms"],
+                input_preview=e["input_preview"],
+                output_preview=e["output_preview"],
+                error_type=e["error_type"],
+                error_message=e["error_message"],
+                total_tokens=e["total_tokens"],
+                total_cost_cents=e["total_cost_cents"],
+            )
+            for e in executions
+        ],
+        total=total,
+        has_more=(offset + limit) < total,
+    )
+
+
+@router.get("/{agent_id}/usage-history", response_model=AgentUsageHistoryResponse)
+async def get_agent_usage_history(
+    agent_id: str,
+    current_user: CurrentUser,
+    time_range: str = "7d",
+    granularity: str = "day",
+    repository: BaseAgentRepository = Depends(get_user_repository),
+    session: AsyncSession = Depends(get_session),
+) -> AgentUsageHistoryResponse:
+    """Get usage history for charts.
+
+    Args:
+        agent_id: Agent ID
+        time_range: Time range - "24h", "7d", "30d", or "90d"
+        granularity: Data granularity - "hour" or "day"
+    """
+    # Verify agent exists
+    config = await repository.get(agent_id)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{agent_id}' not found",
+        )
+
+    # Parse time range
+    hours = TIME_RANGE_HOURS.get(time_range, 168)
+
+    # For 24h, use hourly granularity by default
+    if time_range == "24h" and granularity != "hour":
+        granularity = "hour"
+
+    # Get usage history from analytics repository
+    analytics_repo = AnalyticsRepository(session)
+    data = await analytics_repo.get_agent_usage_history(
+        user_id=current_user.id,
+        agent_id=agent_id,
+        hours=hours,
+        granularity=granularity,
+    )
+
+    return AgentUsageHistoryResponse(
+        data=[
+            UsageDataPoint(
+                timestamp=d["timestamp"],
+                executions=d["executions"],
+                successful=d["successful"],
+                failed=d["failed"],
+                avg_latency_ms=d["avg_latency_ms"],
+                total_cost_cents=d["total_cost_cents"],
+            )
+            for d in data
+        ],
+        granularity=granularity,
+        time_range=time_range,
+    )
+
+
+@router.get("/executions/{execution_id}", response_model=ExecutionDetailResponse)
+async def get_execution_detail(
+    execution_id: str,
+    current_user: CurrentUser,
+    session: AsyncSession = Depends(get_session),
+) -> ExecutionDetailResponse:
+    """Get full execution details including metadata.
+
+    Returns detailed information about a specific execution including:
+    - Tool calls made and their results
+    - Sub-agent calls (for orchestrator agents)
+    - LLM usage and tokens
+    - Error details if failed
+    """
+    analytics_repo = AnalyticsRepository(session)
+    detail = await analytics_repo.get_execution_detail(
+        execution_id=execution_id,
+        user_id=current_user.id,
+    )
+
+    if not detail:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Execution '{execution_id}' not found",
+        )
+
+    return ExecutionDetailResponse(**detail)

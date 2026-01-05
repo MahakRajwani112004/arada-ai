@@ -198,6 +198,7 @@ services:
       MCP_OUTLOOK_CALENDAR_URL: http://mcp-outlook-calendar:8000/mcp
       MCP_OUTLOOK_EMAIL_URL: http://mcp-outlook-email:8000/mcp
       MCP_FILESYSTEM_URL: http://mcp-filesystem:8000/mcp
+      MCP_WEB_SEARCH_URL: http://mcp-web-search:8000/mcp
       # Google OAuth
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
@@ -377,6 +378,24 @@ services:
       - "8007:8000"
     volumes:
       - mcp_filesystem_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # MCP Server - Web Search
+  # ============================================
+  mcp-web-search:
+    build:
+      context: ./mcp_servers
+      dockerfile: web-search/Dockerfile
+    container_name: magone-mcp-web-search
+    restart: unless-stopped
+    ports:
+      - "8008:8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

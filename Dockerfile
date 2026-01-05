@@ -46,6 +46,8 @@ RUN pip install --no-cache-dir /wheels/* && rm -rf /wheels
 # Copy application code
 COPY --chown=magone:magone src/ ./src/
 COPY --chown=magone:magone pyproject.toml ./
+COPY --chown=magone:magone alembic.ini ./
+COPY --chown=magone:magone alembic/ ./alembic/
 
 # Install the package in editable mode
 RUN pip install --no-cache-dir -e .
