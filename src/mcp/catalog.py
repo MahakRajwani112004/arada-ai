@@ -20,6 +20,9 @@ MCP_FILESYSTEM_URL = os.getenv("MCP_FILESYSTEM_URL", "http://localhost:8007/mcp"
 # Arada Real Estate Analytics
 MCP_ARADA_SQL_URL = os.getenv("MCP_ARADA_SQL_URL", "http://localhost:8002/mcp")
 
+# CSV-SQL - Generic CSV to SQL conversion
+MCP_CSV_SQL_URL = os.getenv("MCP_CSV_SQL_URL", "http://localhost:8003/mcp")
+
 
 def _google_refresh_token_spec() -> CredentialSpec:
     """Google refresh token credential spec."""
@@ -232,6 +235,16 @@ MCP_SERVER_CATALOG: Dict[str, MCPServerTemplate] = {
             ),
         ],
         tools=["read_file", "write_file", "list_directory"],
+    ),
+    # ========== DATA SERVICES ==========
+    "csv-sql": MCPServerTemplate(
+        id="csv-sql",
+        name="CSV to SQL",
+        url_template=MCP_CSV_SQL_URL,
+        auth_type="none",
+        scopes=[],
+        credentials_required=[],  # No credentials needed - uses user_id from auth
+        tools=["upload_csv", "list_tables", "get_table_schema", "execute_sql", "delete_table", "get_sample_data"],
     ),
 }
 

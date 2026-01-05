@@ -112,6 +112,25 @@ services:
       timeout: 5s
       retries: 5
 
+  # CSV-SQL MCP Server - Generic CSV to SQL conversion
+  mcp-csv-sql:
+    build:
+      context: ../mcp_servers
+      dockerfile: csv-sql/Dockerfile
+    container_name: magure-mcp-csv-sql
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      CSV_SQL_DATABASE_URL: postgresql://magure:magure_dev_password@postgres:5432/magure_db
+    ports:
+      - "8003:8003"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
 volumes:
   postgres_data:
   redis_data:
