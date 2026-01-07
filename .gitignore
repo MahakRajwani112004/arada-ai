@@ -1,98 +1,24 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-/lib/
-/lib64/
-!web/lib/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual environments
-.venv/
-venv/
-ENV/
-env/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-.project
-.pydevproject
-.settings/
-
-# Environment variables
-.env
-.env.local
-.env.*.local
-*.env
-
 # Logs
+logs
 *.log
-logs/
-/tmp/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Database
-*.db
-*.sqlite3
+node_modules
+dist
+dist-ssr
+*.local
 
-# Secrets and credentials
-/secrets/
-!src/secrets/
-*.pem
-*.key
-credentials.json
-token.json
-
-# OS files
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Data files
-data/
-*.csv
-*.parquet
-
-# MCP server data
-mcp_servers/*/data/
-
-# Build artifacts
-*.manifest
-*.spec
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-*.temp
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

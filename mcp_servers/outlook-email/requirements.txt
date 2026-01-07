@@ -1,6 +1,0 @@
-# Outlook Email MCP Server
-fastapi>=0.109.0
-uvicorn>=0.27.0
-python-dotenv>=1.0.0
-structlog>=24.1.0
-httpx>=0.27.0
