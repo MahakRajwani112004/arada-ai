@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "framework": "vite",
+  "buildCommand": "cd arada-ai-fe && npm install && npm run build",
+  "outputDirectory": "arada-ai-fe/dist",
+  "installCommand": "echo 'skip'"
+}
